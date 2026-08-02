@@ -48,7 +48,6 @@ The goal is to reduce the time required to understand large repositories from ho
 - Tokio
 - Git2
 - PTY Terminal
-- SQLite (local metadata)
 
 ---
 

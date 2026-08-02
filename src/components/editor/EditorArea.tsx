@@ -1,13 +1,23 @@
-import { X, ChevronRight, File, Sparkles, SplitSquareHorizontal, GitCompareArrows } from "lucide-react";
+import { useEffect } from "react";
+import { X, ChevronRight, File, Sparkles, SplitSquareHorizontal, GitCompareArrows, TriangleAlert } from "lucide-react";
 import { useUIStore, tabKey } from "../../store/uiStore";
-import { mockFiles, extraWorkingFiles, fallbackFile } from "../../lib/mockData";
+import { useWorkspaceStore } from "../../store/workspaceStore";
+import { detectLanguage } from "../../lib/lang";
 import { CodeEditor } from "./CodeEditor";
 import { DiffView } from "./DiffView";
 
 export function EditorArea() {
   const { openTabs, activeTabKey, setActiveTab, closeTab, addChip, chatVisible, toggleChat } =
     useUIStore();
+  const workspacePath = useUIStore((s) => s.workspacePath);
+  const { fileContents, fileErrors, loadFile } = useWorkspaceStore();
   const activeTab = openTabs.find((t) => tabKey(t) === activeTabKey) ?? null;
+
+  // Load the active file's content on demand.
+  const activePath = activeTab?.kind === "file" ? activeTab.path : null;
+  useEffect(() => {
+    if (activePath && workspacePath) void loadFile(workspacePath, activePath);
+  }, [activePath, workspacePath, loadFile]);
 
   const explainInAgent = () => {
     if (activeTab?.kind !== "file") return;
@@ -16,10 +26,8 @@ export function EditorArea() {
     if (!chatVisible) toggleChat();
   };
 
-  const file =
-    activeTab?.kind === "file"
-      ? (mockFiles[activeTab.path] ?? extraWorkingFiles[activeTab.path] ?? fallbackFile)
-      : null;
+  const content = activePath ? fileContents[activePath] : undefined;
+  const loadError = activePath ? fileErrors[activePath] : undefined;
 
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-base">
@@ -76,7 +84,7 @@ export function EditorArea() {
 
       {activeTab?.kind === "diff" ? (
         <DiffView path={activeTab.path} />
-      ) : activeTab && file ? (
+      ) : activeTab && content !== undefined ? (
         <>
           {/* Breadcrumb */}
           <div className="flex h-7 shrink-0 items-center gap-1 border-b border-line px-3 text-[11.5px] text-fg-3">
@@ -86,14 +94,22 @@ export function EditorArea() {
                 <span className={i === arr.length - 1 ? "text-fg-2" : ""}>{seg}</span>
               </span>
             ))}
-            <ChevronRight size={11} />
-            <span className="text-fg-2">login</span>
           </div>
 
           <div className="min-h-0 flex-1">
-            <CodeEditor language={file.language} value={file.content} />
+            <CodeEditor language={detectLanguage(activeTab.path)} value={content} />
           </div>
         </>
+      ) : activeTab && loadError ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 text-fg-3">
+          <TriangleAlert size={24} strokeWidth={1.5} className="text-yellow" />
+          <p className="font-mono text-[12px]">{activeTab.path}</p>
+          <p className="max-w-96 text-center text-[11.5px]">{loadError}</p>
+        </div>
+      ) : activeTab ? (
+        <div className="flex flex-1 items-center justify-center text-[12px] text-fg-3">
+          Loading {activeTab.path}…
+        </div>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-fg-3">
           <Sparkles size={28} strokeWidth={1.2} />

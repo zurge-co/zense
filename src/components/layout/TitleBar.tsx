@@ -4,6 +4,7 @@ import { useUIStore } from "../../store/uiStore";
 export function TitleBar() {
   const { toggleSidebar, toggleBottom, toggleChat, sidebarVisible, bottomVisible, chatVisible } =
     useUIStore();
+  const workspaceName = useUIStore((s) => s.workspaceName);
 
   return (
     <div
@@ -13,7 +14,7 @@ export function TitleBar() {
       <div data-tauri-drag-region className="flex items-center gap-2 text-xs text-fg-2">
         <span className="font-semibold text-fg">zense</span>
         <span className="text-fg-3">—</span>
-        <span>acme/api-gateway</span>
+        <span>{workspaceName ?? "no workspace"}</span>
         <span className="ml-2 flex items-center gap-1 rounded bg-panel-2 px-1.5 py-0.5 text-[11px] text-fg-2">
           <GitBranch size={11} />
           main

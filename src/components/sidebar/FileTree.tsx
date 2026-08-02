@@ -8,13 +8,17 @@ import {
   Star,
   ListTree,
 } from "lucide-react";
-import { fileTree, outlineSymbols, type FileNode } from "../../lib/mockData";
+import { outlineSymbols, type FileNode } from "../../lib/mockData";
 import { useUIStore } from "../../store/uiStore";
+import { useWorkspaceStore } from "../../store/workspaceStore";
 
 export function FileTree() {
+  const fileTree = useWorkspaceStore((s) => s.fileTree);
+  const workspaceName = useUIStore((s) => s.workspaceName);
+
   return (
     <div className="pb-4">
-      <Section title="api-gateway" defaultOpen>
+      <Section title={workspaceName ?? "workspace"} defaultOpen>
         {fileTree.map((node) => (
           <TreeNode key={node.path} node={node} depth={0} />
         ))}

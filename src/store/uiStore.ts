@@ -37,6 +37,10 @@ export interface SentEntry {
 
 interface UIState {
   screen: Screen;
+  workspacePath: string | null;
+  workspaceName: string | null;
+  /** Incremented to request focus on the composer input. */
+  composerFocusNonce: number;
   activity: Activity;
   mainView: MainView;
   sidebarVisible: boolean;
@@ -59,7 +63,15 @@ interface UIState {
   contextChips: ContextChip[];
   sentLog: SentEntry[];
 
+  // Terminal
+  /** Shell command for new terminals; empty = default login shell ($SHELL -l). */
+  shellProfile: string;
+  /** Height of the bottom (terminal) panel in px. */
+  bottomHeight: number;
+
   setScreen: (s: Screen) => void;
+  /** Open a workspace folder, optionally focusing a panel ("agent" composer or "terminal"). */
+  openWorkspace: (path: string, opts?: { focus?: "agent" | "terminal" }) => void;
   setActivity: (a: Activity) => void;
   toggleSidebar: () => void;
   toggleChat: () => void;
@@ -76,6 +88,8 @@ interface UIState {
   setAgentCommand: (cmd: string) => void;
   setAttachCode: (v: boolean) => void;
   setAutoOpenTerminal: (v: boolean) => void;
+  setShellProfile: (v: string) => void;
+  setBottomHeight: (h: number) => void;
   setComposerDraft: (d: string) => void;
   addChip: (chip: ContextChip) => void;
   removeChip: (index: number) => void;
@@ -84,24 +98,23 @@ interface UIState {
   sendToAgent: () => void;
 }
 
-let nextSentId = 1;
-
 const now = () =>
   new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-const initialTab: EditorTab = { kind: "file", path: "src/auth/login.ts" };
-
 export const useUIStore = create<UIState>((set) => ({
   screen: "welcome",
+  workspacePath: null,
+  workspaceName: null,
+  composerFocusNonce: 0,
   activity: "git",
   mainView: "editor",
   sidebarVisible: true,
   chatVisible: true,
   bottomVisible: true,
 
-  openTabs: [initialTab],
-  activeTabKey: tabKey(initialTab),
-  selectedFile: initialTab.path,
+  openTabs: [],
+  activeTabKey: null,
+  selectedFile: null,
   diffMode: "split",
 
   settingsOpen: false,
@@ -110,11 +123,13 @@ export const useUIStore = create<UIState>((set) => ({
   agentCommand: "claude",
   attachCode: true,
   autoOpenTerminal: true,
+  shellProfile: "",
+  bottomHeight: 192,
   composerDraft: "",
   contextChips: [{ path: "src/auth/login.ts", range: { start: 9, end: 20 } }],
   sentLog: [
     {
-      id: nextSentId++,
+      id: 1,
       time: "14:32",
       text: "Explain how the authentication flow works in this repo.",
       chips: [{ path: "src/auth/login.ts" }, { path: "src/middleware/auth.ts" }],
@@ -122,6 +137,22 @@ export const useUIStore = create<UIState>((set) => ({
   ],
 
   setScreen: (screen) => set({ screen }),
+  openWorkspace: (path, opts) =>
+    set((s) => ({
+      screen: "workspace" as Screen,
+      workspacePath: path,
+      workspaceName: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
+      chatVisible: opts?.focus === "agent" ? true : s.chatVisible,
+      bottomVisible: opts?.focus === "terminal" ? true : s.bottomVisible,
+      composerFocusNonce:
+        opts?.focus === "agent" ? s.composerFocusNonce + 1 : s.composerFocusNonce,
+      // A new workspace invalidates everything file-related.
+      openTabs: [],
+      activeTabKey: null,
+      selectedFile: null,
+      contextChips: [],
+      sentLog: [],
+    })),
   setActivity: (activity) =>
     set((s) => {
       if (activity === "graph") {
@@ -185,6 +216,8 @@ export const useUIStore = create<UIState>((set) => ({
   setAgentCommand: (agentCommand) => set({ agentCommand }),
   setAttachCode: (attachCode) => set({ attachCode }),
   setAutoOpenTerminal: (autoOpenTerminal) => set({ autoOpenTerminal }),
+  setShellProfile: (shellProfile) => set({ shellProfile }),
+  setBottomHeight: (bottomHeight) => set({ bottomHeight }),
   setComposerDraft: (composerDraft) => set({ composerDraft }),
   addChip: (chip) =>
     set((s) => ({
@@ -223,14 +256,13 @@ export const useUIStore = create<UIState>((set) => ({
     set((s) => {
       const text = s.composerDraft.trim();
       if (!text && s.contextChips.length === 0) return s;
+      // Derive the id from existing entries so a persisted log can't collide.
+      const id = Math.max(0, ...s.sentLog.map((e) => e.id)) + 1;
       return {
-        sentLog: [
-          ...s.sentLog,
-          { id: nextSentId++, time: now(), text, chips: s.contextChips },
-        ],
+        sentLog: [...s.sentLog, { id, time: now(), text, chips: s.contextChips }],
         composerDraft: "",
         contextChips: [],
-        // Mock behavior: jump to the terminal where the agent would run.
+        // Reveal the terminal where the agent runs (piping happens in agentPipe).
         bottomVisible: s.autoOpenTerminal ? true : s.bottomVisible,
       };
     }),

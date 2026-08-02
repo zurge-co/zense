@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { TerminalSquare, X, AtSign, SendHorizonal, FileCode, Clock } from "lucide-react";
 import { useUIStore, chipLabel } from "../../store/uiStore";
-import { allFiles } from "../../lib/mockData";
+import { useWorkspaceStore } from "../../store/workspaceStore";
+import { sendPromptToAgent } from "../../lib/agentPipe";
 
 export function ComposerPanel() {
   const {
@@ -11,7 +12,6 @@ export function ComposerPanel() {
     contextChips,
     addChip,
     removeChip,
-    sendToAgent,
     toggleChat,
     agentCommand,
     openSettings,
@@ -20,13 +20,14 @@ export function ComposerPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
+  const fileIndex = useWorkspaceStore((s) => s.fileIndex);
 
   // Active @-query at the end of the draft, e.g. "explain @auth/lo" → "auth/lo"
   const mentionMatch = composerDraft.match(/@([^\s@]*)$/);
   const mentionQuery = mentionMatch?.[1] ?? null;
   const suggestions =
     mentionQuery !== null
-      ? allFiles.filter((f) => f.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
+      ? fileIndex.filter((f) => f.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
       : [];
 
   useEffect(() => {
@@ -34,6 +35,12 @@ export function ComposerPanel() {
   }, [sentLog.length]);
 
   useEffect(() => setMentionIdx(0), [mentionQuery]);
+
+  // Focus the input when a workspace is opened with "Open with Agent".
+  const composerFocusNonce = useUIStore((s) => s.composerFocusNonce);
+  useEffect(() => {
+    if (composerFocusNonce > 0) inputRef.current?.focus();
+  }, [composerFocusNonce]);
 
   const pickMention = (path: string) => {
     addChip({ path });
@@ -44,7 +51,9 @@ export function ComposerPanel() {
   const canSend = composerDraft.trim().length > 0 || contextChips.length > 0;
 
   const submit = () => {
-    if (canSend) sendToAgent();
+    if (canSend) {
+      sendPromptToAgent().catch((err) => console.error("send to agent failed:", err));
+    }
   };
 
   return (

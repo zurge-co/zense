@@ -1,9 +1,32 @@
+import { useEffect, useState } from "react";
 import { FolderOpen, MessageSquare, TerminalSquare, Clock, Sparkles } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
-import { recentWorkspaces } from "../../lib/mockData";
+import {
+  formatRelativeTime,
+  loadRecents,
+  openFolderFlow,
+  touchRecent,
+  type RecentWorkspace,
+} from "../../lib/workspace";
 
 export function WelcomeScreen() {
-  const { setScreen } = useUIStore();
+  const { openWorkspace } = useUIStore();
+  const [recents, setRecents] = useState<RecentWorkspace[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadRecents().then((r) => {
+      if (!cancelled) setRecents(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const openRecent = (w: RecentWorkspace) => {
+    void touchRecent(w.path);
+    openWorkspace(w.path);
+  };
 
   return (
     <div className="flex h-full flex-col bg-base">
@@ -30,28 +53,50 @@ export function WelcomeScreen() {
                 Recent Workspaces
               </div>
               <div className="space-y-0.5">
-                {recentWorkspaces.map((w) => (
-                  <button
-                    key={w.path}
-                    onClick={() => setScreen("workspace")}
-                    className="group flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-hover"
-                  >
-                    <span>
-                      <span className="block text-[13px] text-fg">{w.name}</span>
-                      <span className="block font-mono text-[10.5px] text-fg-3">{w.path}</span>
-                    </span>
-                    <span className="text-[10.5px] text-fg-3 group-hover:text-fg-2">{w.lastOpened}</span>
-                  </button>
-                ))}
+                {recents === null ? (
+                  <p className="px-2 py-1.5 text-[12px] text-fg-3">Loading…</p>
+                ) : recents.length === 0 ? (
+                  <p className="px-2 py-1.5 text-[12px] text-fg-3">No recent workspaces</p>
+                ) : (
+                  recents.map((w) => (
+                    <button
+                      key={w.path}
+                      onClick={() => openRecent(w)}
+                      className="group flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-hover"
+                    >
+                      <span>
+                        <span className="block text-[13px] text-fg">{w.name}</span>
+                        <span className="block font-mono text-[10.5px] text-fg-3">{w.path}</span>
+                      </span>
+                      <span className="text-[10.5px] text-fg-3 group-hover:text-fg-2">
+                        {formatRelativeTime(w.lastOpenedAt)}
+                      </span>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
 
             {/* Actions */}
             <div className="space-y-1.5">
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-fg-3">Start</div>
-              <Action icon={FolderOpen} label="Open Folder…" hint="⌘O" onClick={() => setScreen("workspace")} primary />
-              <Action icon={MessageSquare} label="Open with Agent" onClick={() => setScreen("workspace")} />
-              <Action icon={TerminalSquare} label="Open with Terminal" onClick={() => setScreen("workspace")} />
+              <Action
+                icon={FolderOpen}
+                label="Open Folder…"
+                hint="⌘O"
+                onClick={() => void openFolderFlow()}
+                primary
+              />
+              <Action
+                icon={MessageSquare}
+                label="Open with Agent"
+                onClick={() => void openFolderFlow("agent")}
+              />
+              <Action
+                icon={TerminalSquare}
+                label="Open with Terminal"
+                onClick={() => void openFolderFlow("terminal")}
+              />
             </div>
           </div>
 

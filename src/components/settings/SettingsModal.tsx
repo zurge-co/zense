@@ -202,24 +202,29 @@ function ShortcutsSection() {
 }
 
 function TerminalSection() {
-  const shells = ["zsh (default)", "bash", "fish", "PowerShell"];
+  const { shellProfile, setShellProfile } = useUIStore();
   return (
     <div>
-      <Row label="Default shell profile">
-        <select className="rounded border border-line bg-base px-2 py-1 text-[12px] text-fg outline-none">
-          {shells.map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </select>
+      <Row
+        label="Shell command"
+        hint="Used for new terminals — e.g. zsh, bash, fish, nu. Empty = default login shell ($SHELL -l)"
+      >
+        <input
+          value={shellProfile}
+          onChange={(e) => setShellProfile(e.target.value)}
+          placeholder="$SHELL -l"
+          spellCheck={false}
+          className="w-48 rounded border border-line bg-base px-2 py-1 font-mono text-[12px] text-fg outline-none placeholder:text-fg-3 focus:border-accent"
+        />
       </Row>
-      <Row label="Font size">
+      <Row label="Font size" hint="UI placeholder — not wired yet">
         <select className="rounded border border-line bg-base px-2 py-1 text-[12px] text-fg outline-none">
           <option>12</option>
           <option>13</option>
           <option>14</option>
         </select>
       </Row>
-      <Row label="Cursor blink">
+      <Row label="Cursor blink" hint="Always on for now">
         <Toggle on />
       </Row>
     </div>

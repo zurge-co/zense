@@ -277,19 +277,6 @@ export const outlineSymbols: Record<string, SymbolItem[]> = {
   ],
 };
 
-export const terminalLines = [
-  { text: "zense dev — workspace: acme/api-gateway", cls: "text-fg-3" },
-  { text: "$ cargo check", cls: "text-fg" },
-  { text: "    Checking api-gateway v0.8.2 (/Users/dev/acme/api-gateway)", cls: "text-fg-2" },
-  { text: "warning: unused import: `std::env`", cls: "text-yellow" },
-  { text: "  --> src/graph/builder.rs:3:5", cls: "text-fg-3" },
-  { text: "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.12s", cls: "text-green" },
-  { text: "$ git status --short", cls: "text-fg" },
-  { text: " M src/auth/login.ts", cls: "text-yellow" },
-  { text: " M src/middleware/auth.ts", cls: "text-yellow" },
-  { text: "?? src/auth/refresh.ts", cls: "text-green" },
-];
-
 export const gitChanges = [
   { status: "M", file: "src/auth/login.ts" },
   { status: "M", file: "src/middleware/auth.ts" },
@@ -351,8 +338,17 @@ export const shortcutGroups: { title: string; items: { keys: string; action: str
     ],
   },
   {
+    title: "Terminal",
+    items: [
+      { keys: "⌘`", action: "New terminal" },
+      { keys: "⌘W", action: "Close active terminal tab" },
+      { keys: "double-click tab", action: "Rename terminal" },
+    ],
+  },
+  {
     title: "General",
     items: [
+      { keys: "⌘O", action: "Open folder" },
       { keys: "⌘,", action: "Open settings" },
       { keys: "Esc", action: "Close modal / popup" },
     ],
@@ -382,21 +378,6 @@ export function getSnippet(path: string, start: number, end: number): string {
     .slice(start - 1, end)
     .join("\n");
 }
-
-/** Mock of an agent CLI session living in the terminal. */
-export const agentTerminalLines = [
-  { text: "$ claude", cls: "text-fg" },
-  { text: "✻ Welcome to Claude Code", cls: "text-accent-2" },
-  { text: "", cls: "" },
-  { text: "> Explain how the authentication flow works in this repo.", cls: "text-fg" },
-  { text: "  @src/auth/login.ts @src/middleware/auth.ts", cls: "text-fg-3" },
-  { text: "", cls: "" },
-  { text: "⏺ The authentication flow starts in src/auth/login.ts. The login()", cls: "text-fg-2" },
-  { text: "  handler validates credentials via verifyCredentials(), then issues", cls: "text-fg-2" },
-  { text: "  a JWT through token.rs. Requests are guarded by authMiddleware.", cls: "text-fg-2" },
-  { text: "", cls: "" },
-  { text: "✻ Coded for 24s", cls: "text-fg-3" },
-];
 
 export const graphTypes = ["Function calls", "Module dependency", "Package dependency", "Reference graph"];
 
