@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import type * as monaco from "monaco-editor";
 import {
@@ -9,20 +9,69 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
-import { mockFiles, extraWorkingFiles, headFiles, diffStats } from "../../lib/mockData";
+import { useGitStore } from "../../store/gitStore";
+import { gitDiffFile } from "../../lib/git";
+import { detectLanguage } from "../../lib/lang";
 import { defineTheme } from "./monacoSetup";
 
 export function DiffView({ path }: { path: string }) {
-  const { diffMode, toggleDiffMode } = useUIStore();
+  const { diffMode, toggleDiffMode, workspacePath } = useUIStore();
+  const { status, diffSummary } = useGitStore();
 
-  const working = mockFiles[path] ?? extraWorkingFiles[path];
-  const language = working?.language ?? "plaintext";
-  const modified = working?.content ?? "";
-  const original = headFiles[path] ?? "";
-  const stats = diffStats[path] ?? { adds: 0, dels: 0 };
+  const entry = status.files.find((f) => f.path === path);
+  const staged = entry?.unstaged ? false : true;
+  const language = detectLanguage(path);
+
+  const [content, setContent] = useState<{
+    original: string;
+    modified: string;
+    isBinary: boolean;
+    isNonUtf8: boolean;
+  } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setContent(null);
+    setLoadError(null);
+    if (!workspacePath) {
+      setContent({
+        original: "// old version\n",
+        modified: "// mock content\n",
+        isBinary: false,
+        isNonUtf8: false,
+      });
+      return;
+    }
+    gitDiffFile(workspacePath, path, staged)
+      .then((d) => {
+        if (cancelled) return;
+        const nonUtf8 =
+          !d.isBinary &&
+          (d.original.includes("�") || d.modified.includes("�"));
+        setContent({
+          original: d.original,
+          modified: d.modified,
+          isBinary: d.isBinary,
+          isNonUtf8: nonUtf8,
+        });
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspacePath, path, staged]);
+
+  const statsEntry = [...diffSummary.staged, ...diffSummary.unstaged].find(
+    (e) => e.path === path
+  );
 
   const diffRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
-  const [changes, setChanges] = useState<readonly monaco.editor.ILineChange[]>([]);
+  const [changes, setChanges] = useState<readonly monaco.editor.ILineChange[]>(
+    []
+  );
   const [changeIdx, setChangeIdx] = useState(0);
 
   const jump = (dir: 1 | -1) => {
@@ -34,26 +83,31 @@ export function DiffView({ path }: { path: string }) {
     diffRef.current?.getModifiedEditor().revealLineInCenter(line);
   };
 
+  const placeholderClass =
+    "flex h-full items-center justify-center text-fg-muted text-[12.5px]";
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Diff toolbar */}
-      <div className="flex h-8 shrink-0 items-center gap-3 border-b border-line bg-panel px-3 text-[11.5px]">
-        <span className="flex items-center gap-1.5 text-fg-2">
-          <span className="text-fg-3">HEAD</span>
-          <span className="text-fg-3">⟷</span>
+      <div className="flex h-8 shrink-0 items-center gap-3 border-b border-border bg-panel px-3 text-[11.5px]">
+        <span className="flex items-center gap-1.5 text-fg-muted">
+          <span className="text-fg-muted">HEAD</span>
+          <span className="text-fg-muted">⟷</span>
           <span className="text-fg">Working Tree</span>
         </span>
 
-        <span className="font-mono">
-          <span className="text-green">+{stats.adds}</span>{" "}
-          <span className="text-red">−{stats.dels}</span>
-        </span>
+        {statsEntry && (
+          <span className="font-mono">
+            <span className="text-green">+{statsEntry.additions}</span>{" "}
+            <span className="text-danger">−{statsEntry.deletions}</span>
+          </span>
+        )}
 
-        <div className="flex items-center gap-0.5 text-fg-3">
+        <div className="flex items-center gap-0.5 text-fg-muted">
           <button
             title="Previous change"
             onClick={() => jump(-1)}
-            className="rounded p-1 hover:bg-hover hover:text-fg-2 disabled:opacity-30"
+            className="rounded p-1 hover:bg-hover hover:text-fg disabled:opacity-30"
             disabled={changes.length === 0}
           >
             <ChevronUp size={13} />
@@ -64,7 +118,7 @@ export function DiffView({ path }: { path: string }) {
           <button
             title="Next change"
             onClick={() => jump(1)}
-            className="rounded p-1 hover:bg-hover hover:text-fg-2 disabled:opacity-30"
+            className="rounded p-1 hover:bg-hover hover:text-fg disabled:opacity-30"
             disabled={changes.length === 0}
           >
             <ChevronDown size={13} />
@@ -76,7 +130,7 @@ export function DiffView({ path }: { path: string }) {
         <button
           onClick={toggleDiffMode}
           title={diffMode === "split" ? "Switch to inline view" : "Switch to side-by-side view"}
-          className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-2 hover:bg-hover"
+          className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-muted hover:bg-hover"
         >
           {diffMode === "split" ? <Columns2 size={13} /> : <Rows2 size={13} />}
           {diffMode === "split" ? "Side-by-side" : "Inline"}
@@ -84,7 +138,7 @@ export function DiffView({ path }: { path: string }) {
 
         <button
           title="Summarize this diff with AI"
-          className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-accent-2 hover:bg-accent/20"
+          className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20"
         >
           <Sparkles size={12} />
           AI Summary
@@ -93,36 +147,50 @@ export function DiffView({ path }: { path: string }) {
 
       {/* Diff editor */}
       <div className="min-h-0 flex-1">
-        <DiffEditor
-          language={language}
-          original={original}
-          modified={modified}
-          theme="zense-dark"
-          beforeMount={defineTheme}
-          onMount={(editor) => {
-            diffRef.current = editor;
-            setChangeIdx(0);
-            const update = () => setChanges(editor.getLineChanges() ?? []);
-            editor.onDidUpdateDiff(update);
-            update();
-          }}
-          options={{
-            readOnly: true,
-            renderSideBySide: diffMode === "split",
-            fontSize: 12.5,
-            fontFamily: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace",
-            minimap: { enabled: false },
-            lineNumbersMinChars: 3,
-            scrollBeyondLastLine: false,
-            padding: { top: 8 },
-            contextmenu: false,
-            folding: false,
-            glyphMargin: false,
-            lineDecorationsWidth: 8,
-            scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-            renderOverviewRuler: true,
-          }}
-        />
+        {loadError ? (
+          <div className={placeholderClass}>
+            Failed to load diff: {loadError}
+          </div>
+        ) : content === null ? (
+          <div className={placeholderClass}>Loading diff…</div>
+        ) : content.isBinary ? (
+          <div className={placeholderClass}>
+            Binary file — no text diff available
+          </div>
+        ) : content.isNonUtf8 ? (
+          <div className={placeholderClass}>This file is not UTF-8 text</div>
+        ) : (
+          <DiffEditor
+            language={language}
+            original={content.original}
+            modified={content.modified}
+            theme="zense-dark"
+            beforeMount={defineTheme}
+            onMount={(editor) => {
+              diffRef.current = editor;
+              setChangeIdx(0);
+              const update = () => setChanges(editor.getLineChanges() ?? []);
+              editor.onDidUpdateDiff(update);
+              update();
+            }}
+            options={{
+              readOnly: true,
+              renderSideBySide: diffMode === "split",
+              fontSize: 12.5,
+              fontFamily: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace",
+              minimap: { enabled: false },
+              lineNumbersMinChars: 3,
+              scrollBeyondLastLine: false,
+              padding: { top: 8 },
+              contextmenu: false,
+              folding: false,
+              glyphMargin: false,
+              lineDecorationsWidth: 8,
+              scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+              renderOverviewRuler: true,
+            }}
+          />
+        )}
       </div>
     </div>
   );

@@ -4,8 +4,9 @@
 >
 > **Legend:** `[x]` = done · `[ ]` = todo · `~` = mock/UI-only (รอ function จริง)
 >
-> **Phase ปัจจุบัน:** UI v1 (commit `0f13a16`) + Terminal/Agent Composer จริง (PTY + pipe) + file system จริง (tree/index/เปิดไฟล์) + settings persist
-> **Phase ถัดไป:** เติม function จริงที่เหลือ (git2, search) + manual test กับ agent CLI จริง
+> **Phase ปัจจุบัน:** UI v2 — 3 panels (Review / History / Explorer) + real git2 source control + real file system
+>
+> **เปลี่ยนแปลงครั้งล่าสุด:** ตัด Terminal / Agent Composer / Search / Code Graph / Prompt Library ออก ลด scope เหลือ code-understanding workspace (Review + Explorer + Editor + Diff). Git ใช้ git2 จริงแล้วทั้ง status/diff/stage/unstage/commit/log/show.
 
 ---
 
@@ -15,17 +16,16 @@
 - [x] Open Folder → เลือก directory จริง (Tauri dialog) และเปิด workspace
 - [x] Recent workspaces โหลด/บันทึกจริง (config file ผ่าน tauri-plugin-store)
 - [x] ⌘O shortcut เปิด folder
-- [x] "Open with Agent" / "Open with Terminal" → เปิด workspace พร้อม focus panel นั้น
 
 ## 📑 Layout (TitleBar / ActivityBar / StatusBar)
 
 - [x] Custom titlebar + traffic lights overlay (macOS)
-- [x] Activity bar: git (default) → explorer → search → graph → prompts
-- [x] Toggle panels: ⌘B sidebar, ⌘J terminal, ⌘⇧C composer
-- [~] ลาก resize panels — terminal (bottom) ลากได้แล้ว; sidebar/composer ยัง fix ขนาด
-- [ ] StatusBar: branch/errors/cursor position จากข้อมูลจริง
+- [x] Activity bar: Review (default) → History → Explorer → Settings
+- [x] Toggle sidebar: ⌘B
+- [x] StatusBar: branch + dirty indicator + ahead/behind จาก git2 จริง
+- [ ] StatusBar: errors/warnings count จริง (ตอนนี้ hardcoded)
+- [ ] StatusBar: cursor position (Ln/Col) จริง (ตอนนี้ hardcoded)
 - [ ] Session restore: จำ layout + open tabs ของแต่ละ workspace
-- [ ] Zen mode / ซ่อน panels ทั้งหมด
 
 ## 🗂 Explorer (File Tree)
 
@@ -33,106 +33,67 @@
 - [x] Outline section (mock symbols)
 - [x] อ่าน file tree จริงจาก disk (`read_file_tree` — respect .gitignore, ข้าม .git, cap 20k entries)
 - [x] เปิดไฟล์จริง → โหลด content เข้า editor (lazy load + error state + guard binary/ไฟล์ใหญ่)
+- [x] File operations: new/rename/delete (context menu + ConfirmDialog สำหรับ delete) — backend `write_file` / `rename_file` / `delete_file` + path-traversal guard
 - [ ] Favorites จริง (persist)
 - [ ] Recent files section
-- [ ] File operations: new/rename/delete (context menu)
 - [ ] Outline จริงจาก Tree-sitter symbols
 - [ ] File watcher: refresh เมื่อไฟล์เปลี่ยน
 
-## 🔍 Search
+## 🌿 Review — Source Control (default panel)
 
-- [x] Search UI: query box, replace box, match case/regex toggles, results grouped by file
-- [x] ปุ่ม "Ask AI instead" → เชื่อม composer
-- [ ] Search จริง (ripgrep-style ใน Rust backend)
-- [ ] Replace จริง + preview
-- [ ] Keyboard: ⌘⇧F focus search
-- [ ] คลิก result → เปิดไฟล์ที่บรรทัดนั้นจริง (ตอนนี้เปิดแค่ไฟล์)
-
-## 🌿 Source Control (default panel)
-
-- [x] Git panel UI: branch, commit box, changes list พร้อม +/− stats
+- [x] Review panel UI: branch, commit box, changes list พร้อม +/− stats
 - [x] คลิกไฟล์ → เปิด diff view
-- [ ] Status จริงจาก git2 (changes, staged/unstaged, ahead/behind)
-- [ ] Commit จริง + stage/unstage รายไฟล์
+- [x] Status จริงจาก git2 (`git_status` — staged/unstaged, M/A/D/R/C, empty repo, not-a-repo)
+- [x] Diff summary จริง (`git_diff_summary` — per-file additions/deletions staged + unstaged)
+- [x] Diff file จริง (`git_diff_file` — HEAD vs index / index vs workdir, binary detection)
+- [x] Stage/unstage รายไฟล์จริง (`git_stage` / `git_unstage` — รวม deleted file)
+- [x] Stage All
+- [x] Commit จริง (`git_commit` — guard empty message + nothing-staged)
+- [x] Branch info จริง (`git_branch_info` — name, detached, ahead/behind)
 - [ ] Branch: switch/create/list (dropdown ที่ branch name)
 - [ ] Blame view ใน editor gutter
-- [ ] AI commit message → ส่ง diff เข้า agent composer เป็นคำสั่ง "write commit message"
+- [ ] AI commit message → ส่ง diff เข้า agent (defer — รอ LLM Phase)
+- [ ] Stage/unstage ระดับ hunk จาก diff view
+- [ ] AI Summary (diff) → defer รอ LLM Phase
+
+## 📜 History
+
+- [x] Backend: `git_log` (newest-first, offset/limit, per-commit stats) + `git_show` (commit detail) + `git_diff_commits` (compare 2 commits)
+- [ ] History panel UI: commit list (infinite scroll) — **backend พร้อม, UI ยังเป็น placeholder "No commits yet"**
+- [ ] Commit detail view (files changed + stats)
 - [ ] Compare commits/branches (diff view 2 commits)
 
 ## 📝 Editor (Monaco)
 
 - [x] Monaco read-only + zense-dark theme (bundle local, ไม่ใช้ CDN)
-- [x] Tabs: เปิด/ปิด/สลับ
+- [x] Tabs: เปิด/ปิด/สลับ + context menu (Close / Close Others / Close All + unsaved confirm)
 - [x] Breadcrumb
-- [x] ⌘L / right-click → add selection to agent
-- [ ] Editable mode + save (⌘S)
+- [x] Editable mode + save (⌘S)
 - [x] เปิดไฟล์จริง + language detection จาก extension
 - [ ] Split editor (ปุ่มมีแล้ว, ยังไม่ทำงาน)
 - [ ] Diagnostics จริง (LSP หรือ tree-sitter)
 - [ ] คลิก symbol ใน outline → jump ไปบรรทัดจริง
-- [ ] Breadcrumb symbol dropdown
 
 ## ↔️ Diff View
 
 - [x] Monaco DiffEditor: side-by-side (default) / inline toggle
 - [x] Change navigator (◀ ▶ + counter จาก getLineChanges จริง)
 - [x] HEAD ⟷ Working Tree + stats +x −y
-- [x] รองรับไฟล์ M / A / D
-- [ ] Diff จริงจาก git2 (HEAD blob vs working tree)
-- [ ] Stage/unstage ระดับ hunk จาก diff view
-- [ ] AI Summary → ส่ง diff เข้า agent composer
+- [x] รองรับไฟล์ M / A / D + binary placeholder
+- [x] Diff จริงจาก git2 (`git_diff_file` — HEAD blob vs index / index vs workdir)
 - [ ] Compare commits/branches (ต่อยอดจาก tab model `{kind:"diff"}`)
-
-## 🕸 Code Graph (full-screen)
-
-- [x] Full-screen view (แทน editor), 4 ประเภท: Calls/Modules/Packages/Refs
-- [x] Node popover → file:line → เปิดไฟล์ได้
-- [x] Zoom controls (UI), legend, stats bar
-- [ ] Graph จริงจาก Tree-sitter call analysis
-- [ ] Zoom/pan จริง (transform canvas)
-- [ ] ค้นหา node จริง + focus
-- [ ] Layout algorithm (dagre/elk) แทนการวางมือ
-- [ ] กรองตาม depth / module
-- [ ] Export เป็นรูป/mermaid
-
-## ⚡ Agent Composer
-
-- [x] Composer UI: draft + @mention autocomplete + chips (file/#L range)
-- [x] Sent log (เวลา + chips ที่แนบ)
-- [x] Prompt Library → ใส่ข้อความลง composer
-- [x] Settings: agent command, attach snippets toggle, reveal terminal toggle
-- [x] เปิด terminal tab + spawn agent CLI จริง (PTY) ถ้ายังไม่รัน — respawn อัตโนมัติถ้า process ตายหรือ command เปลี่ยน
-- [x] Pipe prompt เข้า stdin ของ agent พร้อม snippet จริง (Tauri `read_file_range`, ส่งแบบ bracketed paste กัน multi-line พัง)
-- [x] @mention: autocomplete จาก file index จริง (`list_files` + workspaceStore)
-- [ ] `#` mention symbols — **รอ** Tree-sitter symbol extraction
-- [ ] Mention selection ที่มีอยู่ → อัปเดต chip เมื่อไฟล์เปลี่ยน — **รอ** File watcher ของ Explorer
-- [ ] หลาย agent sessions (เลือก terminal tab ปลายทาง) — ตอนนี้ 1 agent session ต่อ workspace โดยตั้งใจ
-- [x] Sent log persist ต่อ workspace (`sent-log.json`, cap 100 entries/workspace)
-
-## 💻 Terminal
-
-- [x] Terminal panel (mock output + agent session section)
-- [x] เหลือ terminal ล้วน (เอา Problems ออกแล้ว)
-- [x] PTY จริง (portable-pty, stream ผ่าน Tauri Channel) + xterm.js renderer
-- [x] Multiple terminals + tabs + rename (double-click tab) — session อยู่รอดตอน ⌘J / เปิด graph view
-- [x] Shell profiles — Settings ตั้ง shell command เองได้ (zsh/bash/fish/nu/…), ว่าง = `$SHELL -l`, persist แล้ว
-- [x] รับ agent session จริงจาก composer
-- [x] ⌘` new terminal, ⌘W close tab
-- [x] Restart session ที่ exited จาก tab (ปุ่ม ↻)
-- [ ] Scrollback persist ข้าม session / เปิด workspace ใหม่ — ต้อง serialize buffer, อาจมีข้อมูล sensitive ค้างใน store; defer
 
 ## ⚙️ Settings
 
-- [x] Modal + sections: General / Appearance / Agent CLI / Shortcuts / Terminal
-- [x] Shortcuts page (read-only reference)
-- [x] Persist settings — agent settings (command/attachCode/autoOpenTerminal) ผ่าน tauri-plugin-store; theme/keybindings ยังเป็น UI ลอย
+- [x] Modal + sections: General / Appearance / Shortcuts (read-only reference)
+- [x] Persist settings ผ่าน tauri-plugin-store
 - [ ] Theme จริง (dark/light + custom tokens)
 - [ ] Keybinding rebinding (Shortcuts page แก้ไขได้)
 - [ ] Workspace-level settings override
 
 ## 🧠 AI Context Engine (future)
 
-- [x] File index (walk + gitignore) สำหรับ @mention — `list_files` command
+- [x] File index (walk + gitignore) สำหรับ @-mention — `list_files` command
 - [ ] Tree-sitter symbol extraction
 - [ ] Auto-gather: imports, related files, call hierarchy, git history
 - [ ] Token counting / budget สำหรับ snippet ที่แนบ
@@ -140,8 +101,9 @@
 ## 🦀 Backend / Infra
 
 - [x] Tauri v2 scaffold + cargo check ผ่าน
-- [x] Tauri commands: pty (spawn/write/resize/kill) + fs (`list_files`, `read_file_tree`, `read_file`, `read_file_range` — กัน path traversal, มี unit test)
-- [ ] Tauri commands: git (status/diff/commit)
+- [x] Tauri commands: fs (`list_files`, `read_file_tree`, `read_file`, `read_file_range`, `write_file`, `rename_file`, `delete_file` — กัน path traversal, มี unit test)
+- [x] Tauri commands: git (`git_status`, `git_branch_info`, `git_diff_summary`, `git_diff_file`, `git_stage`, `git_unstage`, `git_commit`, `git_log`, `git_show`, `git_diff_commits` — git2, มี unit test)
+- [x] UI components กลาง: `ContextMenu` + `ConfirmDialog` (reusable)
 - [ ] CLI entry: `zense .`, `zense --profile backend` (ตาม README)
 - [ ] CI: build + typecheck + lint
 
@@ -151,3 +113,14 @@
 - เพิ่ม task ใหม่ใต้ section ที่เกี่ยวข้อง แล้ว commit พร้อมโค้ด
 - ปิด task โดยเปลี่ยน `[ ]` → `[x]` (+ ใส่ commit ref ถ้าสำคัญ)
 - AI agents: อ่านไฟล์นี้ก่อนเริ่มงานเพื่อดูว่าอะไรเสร็จแล้ว/ยังไม่ทำ
+
+### หมายเหตุ — สิ่งที่ถูกตัดออกใน UI v2
+- Terminal / PTY (ลบ `pty.rs`, `pty.ts`, `terminalStore.ts`)
+- Agent Composer / Sent Log (ลบ `agentPipe.ts`, `sentLog.ts`, `ComposerPanel.tsx`)
+- Search panel (ลบ `SearchPanel.tsx`)
+- Code Graph (ลบ `GraphView.tsx`)
+- Prompt Library (ลบ `PromptPanel.tsx`)
+- Bottom Panel (ลบ `BottomPanel.tsx`)
+- GitPanel เก่า (แทนด้วย `ReviewPanel.tsx` ที่ใช้ git2 จริง)
+
+อาจกลับมาในอนาคตเป็น plugin (ตาม README Plugin System)

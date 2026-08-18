@@ -1,28 +1,32 @@
 import Editor from "@monaco-editor/react";
 import { defineTheme } from "./monacoSetup";
 import { setActiveEditor } from "../../lib/editorRef";
-import { useUIStore } from "../../store/uiStore";
 
-export function CodeEditor({ language, value }: { language: string; value: string }) {
+export function CodeEditor({
+  language,
+  value,
+  readOnly = false,
+  onChange,
+}: {
+  language: string;
+  value: string;
+  readOnly?: boolean;
+  onChange?: (value: string) => void;
+}) {
   return (
     <Editor
       language={language}
       value={value}
       theme="zense-dark"
       beforeMount={defineTheme}
-      onMount={(editor, monacoInstance) => {
+      onMount={(editor) => {
         setActiveEditor(editor);
-        editor.addAction({
-          id: "zense.addSelectionToAgent",
-          label: "Add Selection to Agent",
-          keybindings: [monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyL],
-          contextMenuGroupId: "zense",
-          contextMenuOrder: 1,
-          run: () => useUIStore.getState().addSelectionChip(),
-        });
+      }}
+      onChange={(value) => {
+        if (onChange && value !== undefined) onChange(value);
       }}
       options={{
-        readOnly: true,
+        readOnly,
         fontSize: 12.5,
         fontFamily: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace",
         minimap: { enabled: false },

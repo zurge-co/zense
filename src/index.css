@@ -1,25 +1,22 @@
 @import "tailwindcss";
 
 @theme {
-  /* Zense dark theme tokens */
+  /* Zense — 6 core color tokens */
   --color-base: #0d1117;
   --color-panel: #11161f;
-  --color-panel-2: #161c27;
-  --color-hover: #1c2432;
-  --color-active: #232d3f;
-  --color-line: #212a3a;
-  --color-line-2: #2b3648;
-
   --color-fg: #d7e0ee;
-  --color-fg-2: #93a1b8;
-  --color-fg-3: #5d6b82;
-
+  --color-fg-muted: #7d8da6;
   --color-accent: #4f8cff;
-  --color-accent-2: #79b8ff;
+  --color-danger: #f85149;
+
+  /* Structural tokens (rgba per spec: borders 0.06, hover 0.04, active 0.06) */
+  --color-border: rgba(255,255,255,0.06);
+  --color-hover: rgba(255,255,255,0.04);
+  --color-active: rgba(255,255,255,0.06);
+
+  /* Utility tokens for diff status and warnings */
   --color-green: #3fb950;
-  --color-red: #f85149;
   --color-yellow: #d29922;
-  --color-purple: #bc8cff;
 
   --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
@@ -44,7 +41,7 @@ body {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-line-2) transparent;
+  scrollbar-color: var(--color-border) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -53,7 +50,7 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: var(--color-line-2);
+  background: var(--color-border);
   border-radius: 4px;
 }
 

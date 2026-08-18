@@ -1,6 +1,7 @@
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { Store } from "@tauri-apps/plugin-store";
 import { useUIStore } from "../store/uiStore";
+import { useWorkspaceStore } from "../store/workspaceStore";
 import { recentWorkspaces as mockRecents } from "./mockData";
 
 export interface RecentWorkspace {
@@ -59,18 +60,49 @@ export async function touchRecent(path: string): Promise<void> {
   }
 }
 
+/**
+ * Returns true when there are no unsaved editor changes, or when the user
+ * confirms they want to discard them. Returns false (abort) if the user
+ * cancels the confirmation dialog.
+ */
+export async function confirmDiscardDirty(): Promise<boolean> {
+  const { dirtyPaths } = useWorkspaceStore.getState();
+  if (dirtyPaths.size === 0) return true;
+
+  const count = dirtyPaths.size;
+  const label = count === 1 ? "1 unsaved file" : `${count} unsaved files`;
+  const message = `You have ${label}. Switching workspaces will discard unsaved changes. Continue?`;
+
+  if (isTauri()) {
+    return confirm(message, { title: "Unsaved Changes", kind: "warning" });
+  }
+  if (typeof window !== "undefined" && typeof window.confirm === "function") {
+    return window.confirm(message);
+  }
+  return true;
+}
+
 /** Shared flow for "Open Folder" buttons and the ⌘O shortcut. */
-export async function openFolderFlow(focus?: "agent" | "terminal"): Promise<void> {
+export async function openFolderFlow(): Promise<void> {
+  if (!(await confirmDiscardDirty())) return;
+
   const { openWorkspace } = useUIStore.getState();
   if (!isTauri()) {
     // Browser dev fallback: no native dialog available.
-    openWorkspace(mockRecents[0]?.path ?? "~/dev/mock", { focus });
+    openWorkspace(mockRecents[0]?.path ?? "~/dev/mock");
     return;
   }
   const path = await openFolderDialog();
   if (!path) return;
   await touchRecent(path);
-  openWorkspace(path, { focus });
+  openWorkspace(path);
+}
+
+/** Switch to a specific recent workspace (with dirty-changes guard). */
+export async function switchWorkspaceFlow(path: string): Promise<void> {
+  if (!(await confirmDiscardDirty())) return;
+  await touchRecent(path);
+  useUIStore.getState().openWorkspace(path);
 }
 
 /** Format a timestamp as a short relative time ("just now", "2 hours ago", ...). */

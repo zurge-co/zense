@@ -30,3 +30,28 @@ export async function readFileContent(root: string, path: string): Promise<strin
   }
   return invoke<string>("read_file", { root, path });
 }
+
+export async function writeFileContent(root: string, path: string, content: string): Promise<void> {
+  if (!isTauri()) return; // browser dev: no-op
+  return invoke<void>("write_file", { root, path, content });
+}
+
+export async function createDir(root: string, path: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("create_dir", { root, path });
+}
+
+export async function renameFile(root: string, from: string, to: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("rename_file", { root, from, to });
+}
+
+export async function deleteFile(root: string, path: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("delete_file", { root, path });
+}
+
+export async function copyEntry(root: string, from: string, toDir: string): Promise<string> {
+  if (!isTauri()) return "";
+  return invoke<string>("copy_entry", { root, from, toDir });
+}

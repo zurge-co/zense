@@ -1,29 +1,27 @@
 import { useUIStore } from "../../store/uiStore";
 import { FileTree } from "./FileTree";
-import { SearchPanel } from "./SearchPanel";
-import { GitPanel } from "./GitPanel";
-import { PromptPanel } from "./PromptPanel";
+import { ReviewPanel } from "./ReviewPanel";
 
 const titles: Record<string, string> = {
+  review: "Review",
+  history: "History",
   explorer: "Explorer",
-  search: "Search",
-  git: "Source Control",
-  prompts: "Prompt Library",
 };
 
 export function SideBar() {
   const { activity } = useUIStore();
 
   return (
-    <div className="flex w-60 shrink-0 flex-col border-r border-line bg-panel">
-      <div className="flex h-8 shrink-0 items-center px-3 text-[11px] font-semibold uppercase tracking-wider text-fg-2">
+    <div className="flex w-60 shrink-0 flex-col border-r border-border bg-panel">
+      <div className="flex h-8 shrink-0 items-center px-3 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
         {titles[activity]}
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {activity === "explorer" && <FileTree />}
-        {activity === "search" && <SearchPanel />}
-        {activity === "git" && <GitPanel />}
-        {activity === "prompts" && <PromptPanel />}
+        {activity === "review" && <ReviewPanel />}
+        {activity === "history" && (
+          <div className="p-3 text-[12.5px] text-fg-muted">No commits yet</div>
+        )}
       </div>
     </div>
   );
