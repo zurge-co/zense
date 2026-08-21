@@ -14,11 +14,11 @@ import { EditorArea } from "./components/editor/EditorArea";
 import { ComposerPanel } from "./components/chat/ComposerPanel";
 import { TerminalPanel } from "./components/terminal/TerminalPanel";
 import { QuickOpen } from "./components/QuickOpen";
-import { useTerminalStore } from "./store/terminalStore";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { useState } from "react";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { WelcomeScreen } from "./components/welcome/WelcomeScreen";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
   const screen = useUIStore((s) => s.screen);
@@ -32,14 +32,18 @@ export default function App() {
 
   return (
     <>
-      {screen === "welcome" ? (
-        <>
-          <WelcomeScreen />
-          <SettingsModal />
-        </>
-      ) : (
-        <WorkspaceLayout />
-      )}
+      {/* A render crash must never take down the close guard or the
+          conflict dialog — those live outside the boundary (spec v3). */}
+      <ErrorBoundary>
+        {screen === "welcome" ? (
+          <>
+            <WelcomeScreen />
+            <SettingsModal />
+          </>
+        ) : (
+          <WorkspaceLayout />
+        )}
+      </ErrorBoundary>
       {closeGuardDialog}
       <ConflictSaveDialog />
     </>
@@ -201,6 +205,29 @@ function saveActiveTab() {
 }
 
 /**
+ * ⌘N / File > New File — show an inline file-name input in the explorer
+ * (VS Code style). Target: the selected folder, or the selected file's
+ * parent directory, else the workspace root.
+ */
+function startNewFile() {
+  const ui = useUIStore.getState();
+  if (ui.screen !== "workspace" || !ui.workspacePath) return;
+  const ws = useWorkspaceStore.getState();
+  let parentPath = "";
+  const sel = ws.selectedTreeNode;
+  if (sel) {
+    if (sel.type === "folder") {
+      parentPath = sel.path;
+    } else if (sel.path.includes("/")) {
+      parentPath = sel.path.slice(0, sel.path.lastIndexOf("/"));
+    }
+  }
+  // Make sure the explorer is visible (setActivity would toggle it off).
+  useUIStore.setState({ activity: "editor", sidebarVisible: true });
+  ws.setPendingCreate({ parentPath, isDir: false });
+}
+
+/**
  * Native application menu events. Menu accelerators (⌘S, ⌘B, ⌘O, ⌘,, …)
  * are consumed before they reach the webview, so actions arrive through the
  * "menu-action" event instead of keydown handlers (which remain as the
@@ -212,6 +239,9 @@ function useMenuEvents() {
     const unlisten = listen<string>("menu-action", (e) => {
       const ui = useUIStore.getState();
       switch (e.payload) {
+        case "new_file":
+          startNewFile();
+          break;
         case "open_folder":
           void openFolderFlow();
           break;
@@ -262,8 +292,6 @@ function useMenuEvents() {
 function useKeyboardShortcuts() {
   const { toggleSidebar, toggleChat, closeSettings, openSettings, openSearch, toggleTerminal } =
     useUIStore();
-  const toggleTerminalShortcut = useTerminalStore.getState().toggle;
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -273,6 +301,9 @@ function useKeyboardShortcuts() {
         if (e.key === "s") {
           e.preventDefault();
           saveActiveTab();
+        } else if (e.key === "n" && !e.shiftKey) {
+          e.preventDefault();
+          startNewFile();
         } else if (e.key === "b") {
           e.preventDefault();
           toggleSidebar();
@@ -288,9 +319,15 @@ function useKeyboardShortcuts() {
         } else if (e.shiftKey && (e.key === "F" || e.key === "f")) {
           e.preventDefault();
           openSearch();
-        } else if ((e.key === "`") && (e.metaKey || e.ctrlKey)) {
+        } else if (e.key === "`") {
           e.preventDefault();
-          toggleTerminalShortcut();
+          // Terminal is an ActivityBar main view: ⌘` jumps to it, and jumps
+          // back to the editor when already there (matches the X button).
+          if (useUIStore.getState().activity === "terminal") {
+            useUIStore.getState().setActivity("editor");
+          } else {
+            toggleTerminal();
+          }
         } else if (e.key === "p" && !e.shiftKey) {
           e.preventDefault();
           useUIStore.getState().toggleQuickOpen();
@@ -381,7 +418,7 @@ function useKeyboardShortcuts() {
       window.removeEventListener("keydown", onTreeKey);
       window.removeEventListener("keydown", onEsc);
     };
-  }, [toggleSidebar, toggleChat, closeSettings, openSettings, openSearch, toggleTerminal, toggleTerminalShortcut]);
+  }, [toggleSidebar, toggleChat, closeSettings, openSettings, openSearch, toggleTerminal]);
 }
 
 /** True when the user is typing in an input, textarea, or Monaco editor. */

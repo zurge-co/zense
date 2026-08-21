@@ -25,8 +25,16 @@ export function FileTree() {
   const fileTree = useWorkspaceStore((s) => s.fileTree);
   const workspaceName = useUIStore((s) => s.workspaceName);
   const workspacePath = useUIStore((s) => s.workspacePath);
+  const openFile = useUIStore((s) => s.openFile);
   const refreshTree = useWorkspaceStore((s) => s.refreshTree);
+  const createEntry = useWorkspaceStore((s) => s.createEntry);
+  const pendingCreate = useWorkspaceStore((s) => s.pendingCreate);
+  const setPendingCreate = useWorkspaceStore((s) => s.setPendingCreate);
   const [refreshing, setRefreshing] = useState(false);
+
+  // ⌘N (New File) targeting the workspace root.
+  const rootCreate = pendingCreate && pendingCreate.parentPath === "" ? pendingCreate : null;
+  const finishRootCreate = () => setPendingCreate(null);
 
   const handleRefresh = async () => {
     if (!workspacePath || refreshing) return;
@@ -64,6 +72,24 @@ export function FileTree() {
         {fileTree.map((node) => (
           <TreeNode key={node.path} node={node} depth={0} />
         ))}
+        {rootCreate && (
+          <InlineInput
+            depth={0}
+            isDir={rootCreate.isDir}
+            placeholder={rootCreate.isDir ? "folder name" : "file name"}
+            onCancel={finishRootCreate}
+            onSubmit={async (name) => {
+              finishRootCreate();
+              if (!workspacePath || !name.trim()) return;
+              try {
+                await createEntry(workspacePath, name, rootCreate.isDir);
+                if (!rootCreate.isDir) openFile(name);
+              } catch (err) {
+                console.error("create failed:", err);
+              }
+            }}
+          />
+        )}
       </Section>
     </div>
   );
@@ -125,6 +151,8 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
   const selectedTreeNode = useWorkspaceStore((s) => s.selectedTreeNode);
   const pendingRename = useWorkspaceStore((s) => s.pendingRename);
   const pendingDelete = useWorkspaceStore((s) => s.pendingDelete);
+  const pendingCreate = useWorkspaceStore((s) => s.pendingCreate);
+  const setPendingCreate = useWorkspaceStore((s) => s.setPendingCreate);
   const pad = { paddingLeft: `${depth * 12 + 12}px` };
 
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -133,6 +161,15 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
 
   const isClipboardNode = clipboard?.path === node.path;
   const isTreeSelected = selectedTreeNode?.path === node.path;
+
+  // Keyboard shortcut: ⌘N → create inside this folder (expands it too)
+  useEffect(() => {
+    if (node.type === "folder" && pendingCreate?.parentPath === node.path) {
+      setInline({ mode: "create", parentPath: node.path, isDir: pendingCreate.isDir });
+      setOpen(true);
+      setPendingCreate(null);
+    }
+  }, [pendingCreate, node.path, node.type, setPendingCreate]);
 
   // Keyboard shortcut: F2 → rename
   useEffect(() => {
@@ -225,6 +262,7 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
                   const fullPath = inline.parentPath ? `${inline.parentPath}/${name}` : name;
                   try {
                     await createEntry(workspacePath, fullPath, inline.isDir);
+                    if (!inline.isDir) openFile(fullPath);
                   } catch (err) {
                     console.error("create failed:", err);
                   }

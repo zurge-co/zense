@@ -40,6 +40,8 @@ interface WorkspaceFsState {
   pendingRename: string | null;
   /** Node that should show the delete confirm dialog (set by keyboard shortcut). */
   pendingDelete: { path: string; type: "file" | "folder" } | null;
+  /** Directory that should show the inline create input (⌘N); "" = workspace root. */
+  pendingCreate: { parentPath: string; isDir: boolean } | null;
   /** Path awaiting user confirmation to overwrite an externally-changed file (ADR-003). */
   pendingConflictSave: string | null;
 
@@ -70,6 +72,8 @@ interface WorkspaceFsState {
   pasteNode: (root: string, destDir: string) => Promise<string | null>;
   /** Duplicate a file/folder in place (copy + paste into same parent dir). */
   duplicateNode: (root: string) => Promise<string | null>;
+  /** Set/clear the pending create target (consumed by FileTree). */
+  setPendingCreate: (target: { parentPath: string; isDir: boolean } | null) => void;
   /** Set/clear the pending rename path (consumed by TreeNode). */
   setPendingRename: (path: string | null) => void;
   /** Set/clear the pending delete node (consumed by TreeNode). */
@@ -102,6 +106,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   clipboard: null,
   pendingRename: null,
   pendingDelete: null,
+  pendingCreate: null,
   pendingConflictSave: null,
   conflicts: {},
   autoSave: false,
@@ -113,7 +118,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
     try {
       const [fileTree, fileIndex] = await Promise.all([readFileTree(root), listFiles(root)]);
       // Drop contents of any previous workspace along with the tree.
-      set({ fileTree, fileIndex, fileContents: {}, fileErrors: {}, originalContents: {}, dirtyPaths: new Set(), clipboard: null, selectedTreeNode: null, pendingRename: null, pendingDelete: null, conflicts: {} });
+      set({ fileTree, fileIndex, fileContents: {}, fileErrors: {}, originalContents: {}, dirtyPaths: new Set(), clipboard: null, selectedTreeNode: null, pendingRename: null, pendingDelete: null, pendingCreate: null, conflicts: {} });
     } catch (err) {
       console.error("failed to load workspace:", err);
     }
@@ -337,6 +342,8 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
       : "";
     return get().pasteNode(root, parentDir || ".");
   },
+
+  setPendingCreate: (target) => set({ pendingCreate: target }),
 
   setPendingRename: (path) => set({ pendingRename: path }),
 
