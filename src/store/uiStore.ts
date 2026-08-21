@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type Activity = "review" | "history" | "explorer";
+export type Activity = "review" | "history" | "editor" | "search";
 export type Screen = "welcome" | "workspace";
 export type SettingsSection = "general" | "appearance" | "llm" | "shortcuts";
 export type DiffMode = "split" | "inline";
@@ -43,6 +43,8 @@ interface UIState {
   workspaceName: string | null;
   /** Incremented to request focus on the composer input. */
   composerFocusNonce: number;
+  /** Incremented to request focus on the workspace search input. */
+  searchFocusNonce: number;
   activity: Activity;
   sidebarVisible: boolean;
   chatVisible: boolean;
@@ -55,9 +57,20 @@ interface UIState {
   settingsOpen: boolean;
   settingsSection: SettingsSection;
 
+  /** Live cursor position of the active editor (StatusBar). */
+  cursorPos: { line: number; col: number } | null;
+  /** Quick-open file modal (⌘P). */
+  quickOpenVisible: boolean;
+  /** Optional right-hand split pane showing this tab key (⌘\). */
+  splitTabKey: string | null;
+  /** Bumped to ask EditorArea to close the active tab (dirty-aware). */
+  closeActiveTabNonce: number;
+
   setScreen: (s: Screen) => void;
   openWorkspace: (path: string) => void;
   setActivity: (a: Activity) => void;
+  /** Open the workspace search panel and focus its input (⌘⇧F). */
+  openSearch: () => void;
   toggleSidebar: () => void;
   toggleChat: () => void;
   /** Commit sha selected as the base for "Compare with Selected". */
@@ -77,6 +90,14 @@ interface UIState {
   openSettings: (section?: SettingsSection) => void;
   closeSettings: () => void;
   setSettingsSection: (s: SettingsSection) => void;
+
+  setCursorPos: (p: { line: number; col: number } | null) => void;
+  setQuickOpenVisible: (v: boolean) => void;
+  toggleQuickOpen: () => void;
+  /** Split the active tab into the right pane (or close the split). */
+  toggleSplit: () => void;
+  closeSplit: () => void;
+  requestCloseActiveTab: () => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -84,6 +105,7 @@ export const useUIStore = create<UIState>((set) => ({
   workspacePath: null,
   workspaceName: null,
   composerFocusNonce: 0,
+  searchFocusNonce: 0,
   activity: "review",
   sidebarVisible: true,
   chatVisible: true,
@@ -93,6 +115,10 @@ export const useUIStore = create<UIState>((set) => ({
   selectedFile: null,
   diffMode: "split",
   historyCompareBase: null,
+  cursorPos: null,
+  quickOpenVisible: false,
+  splitTabKey: null,
+  closeActiveTabNonce: 0,
 
   settingsOpen: false,
   settingsSection: "general",
@@ -106,11 +132,19 @@ export const useUIStore = create<UIState>((set) => ({
       openTabs: [],
       activeTabKey: null,
       selectedFile: null,
+      splitTabKey: null,
+      cursorPos: null,
     }),
   setActivity: (activity) =>
     set((s) => ({
       activity,
       sidebarVisible: s.activity === activity ? !s.sidebarVisible : true,
+    })),
+  openSearch: () =>
+    set((s) => ({
+      activity: "search" as Activity,
+      sidebarVisible: true,
+      searchFocusNonce: s.searchFocusNonce + 1,
     })),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   toggleChat: () => set((s) => ({ chatVisible: !s.chatVisible })),
@@ -167,7 +201,12 @@ export const useUIStore = create<UIState>((set) => ({
           ? (openTabs.length ? tabKey(openTabs[openTabs.length - 1]) : null)
           : s.activeTabKey;
       const newTab = openTabs.find((t) => tabKey(t) === newActiveKey);
-      return { openTabs, activeTabKey: newActiveKey, selectedFile: newTab?.path ?? null };
+      return {
+        openTabs,
+        activeTabKey: newActiveKey,
+        selectedFile: newTab?.path ?? null,
+        splitTabKey: s.splitTabKey === key ? null : s.splitTabKey,
+      };
     }),
   closeOtherTabs: (key) =>
     set((s) => {
@@ -176,7 +215,8 @@ export const useUIStore = create<UIState>((set) => ({
       const kept = openTabs[0];
       return { openTabs, activeTabKey: tabKey(kept), selectedFile: kept.path };
     }),
-  closeAllTabs: () => set({ openTabs: [], activeTabKey: null, selectedFile: null }),
+  closeAllTabs: () =>
+    set({ openTabs: [], activeTabKey: null, selectedFile: null, splitTabKey: null, cursorPos: null }),
   setActiveTab: (key) =>
     set((s) => {
       const tab = s.openTabs.find((t) => tabKey(t) === key);
@@ -190,4 +230,14 @@ export const useUIStore = create<UIState>((set) => ({
     set({ settingsOpen: true, settingsSection: section }),
   closeSettings: () => set({ settingsOpen: false }),
   setSettingsSection: (settingsSection) => set({ settingsSection }),
+
+  setCursorPos: (cursorPos) => set({ cursorPos }),
+  setQuickOpenVisible: (quickOpenVisible) => set({ quickOpenVisible }),
+  toggleQuickOpen: () => set((s) => ({ quickOpenVisible: !s.quickOpenVisible })),
+  toggleSplit: () =>
+    set((s) => ({
+      splitTabKey: s.splitTabKey ? null : s.activeTabKey,
+    })),
+  closeSplit: () => set({ splitTabKey: null }),
+  requestCloseActiveTab: () => set((s) => ({ closeActiveTabNonce: s.closeActiveTabNonce + 1 })),
 }));

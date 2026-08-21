@@ -96,20 +96,22 @@ describe("index.css — 6 core color tokens (task 1.7)", () => {
     expect(cssSource).toContain("--color-danger:");
   });
 
-  test("exactly 6 core token definitions (no more, no less)", () => {
+  test("exactly 8 core token definitions (no more, no less)", () => {
     const core = cssSource.match(
-      /--color-(base|panel|fg|fg-muted|accent|danger):/g,
+      /--color-(base|panel|fg|fg-muted|accent|accent-lime|accent-gold|danger):/g,
     );
     expect(core).not.toBe(null);
-    expect(core!.length).toBe(6);
+    expect(core!.length).toBe(8);
   });
 
-  test("core token hex values are correct", () => {
-    expect(cssSource).toContain("--color-base: #0d1117;");
-    expect(cssSource).toContain("--color-panel: #11161f;");
-    expect(cssSource).toContain("--color-fg: #d7e0ee;");
-    expect(cssSource).toContain("--color-fg-muted: #7d8da6;");
-    expect(cssSource).toContain("--color-accent: #4f8cff;");
+  test("core token hex values match design.md", () => {
+    expect(cssSource).toContain("--color-base: #0d0d0d;");
+    expect(cssSource).toContain("--color-panel: #1a1a1a;");
+    expect(cssSource).toContain("--color-fg: #e8e8e8;");
+    expect(cssSource).toContain("--color-fg-muted: #888888;");
+    expect(cssSource).toContain("--color-accent: #00c55a;");
+    expect(cssSource).toContain("--color-accent-lime: #6cdd25;");
+    expect(cssSource).toContain("--color-accent-gold: #facd04;");
     expect(cssSource).toContain("--color-danger: #f85149;");
   });
 });
@@ -151,9 +153,9 @@ describe("index.css — utility tokens (task 1.7)", () => {
     expect(cssSource).toContain("--color-yellow:");
   });
 
-  test("utility token hex values are correct", () => {
-    expect(cssSource).toContain("--color-green: #3fb950;");
-    expect(cssSource).toContain("--color-yellow: #d29922;");
+  test("utility token hex values match design.md", () => {
+    expect(cssSource).toContain("--color-green: #6cdd25;");
+    expect(cssSource).toContain("--color-yellow: #facd04;");
   });
 });
 
@@ -162,11 +164,11 @@ describe("index.css — utility tokens (task 1.7)", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("index.css — total token inventory (task 1.7)", () => {
-  test("exactly 11 --color-* definitions (6 core + 3 structural + 2 utility)", () => {
+  test("exactly 13 --color-* definitions (8 core + 3 structural + 2 utility)", () => {
     const defs = [...cssSource.matchAll(/--color-([a-z0-9-]+):/g)].map(
       (m) => m[1],
     );
-    expect(defs.length).toBe(11);
+    expect(defs.length).toBe(13);
   });
 
   test("token name set matches expected inventory exactly", () => {
@@ -176,6 +178,8 @@ describe("index.css — total token inventory (task 1.7)", () => {
     expect(defs.sort()).toEqual(
       [
         "accent",
+        "accent-gold",
+        "accent-lime",
         "active",
         "base",
         "border",
@@ -194,8 +198,8 @@ describe("index.css — total token inventory (task 1.7)", () => {
     expect(cssSource).toContain("@theme");
   });
 
-  test("has comment marking 6 core color tokens", () => {
-    expect(cssSource).toContain("6 core color tokens");
+  test("has comment marking the brand color tokens", () => {
+    expect(cssSource).toContain("brand color tokens");
   });
 
   test("retains font tokens (--font-ui, --font-mono)", () => {

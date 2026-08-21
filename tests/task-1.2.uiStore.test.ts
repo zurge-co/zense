@@ -320,8 +320,9 @@ describe("CodeEditor.tsx — task 1.2 structural verification", () => {
     "utf-8",
   );
 
-  test("does NOT import useUIStore", () => {
-    expect(src.includes("useUIStore")).toBe(false);
+  test("imports useUIStore only for live cursor reporting (StatusBar)", () => {
+    expect(src).toContain("useUIStore");
+    expect(src).toContain("setCursorPos");
   });
 
   test("does NOT contain addSelectionChip", () => {

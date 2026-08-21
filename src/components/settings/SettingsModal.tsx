@@ -1,10 +1,17 @@
-import { X, Settings2, Palette, Keyboard } from "lucide-react";
+import { X, Settings2, Palette, Keyboard, Bot, Loader2, Check, AlertCircle, Shield, Wrench } from "lucide-react";
+import { useState } from "react";
 import { useUIStore, type SettingsSection } from "../../store/uiStore";
 import { shortcutGroups } from "../../lib/mockData";
+import { useChatStore } from "../../store/chatStore";
+import { useWorkspaceStore } from "../../store/workspaceStore";
+import { applyAutoSave } from "../../lib/settings";
+import type { LlmConfig, EnabledTools, AgentGuards } from "../../lib/llm";
+import { DEFAULT_ENABLED_TOOLS, DEFAULT_GUARDS, llmTestConnection } from "../../lib/llm";
 
 const sections: { id: SettingsSection; label: string; icon: typeof Settings2 }[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "llm", label: "LLM", icon: Bot },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
 ];
 
@@ -56,6 +63,7 @@ export function SettingsModal() {
           <div className="flex-1 overflow-y-auto p-4">
             {settingsSection === "general" && <GeneralSection />}
             {settingsSection === "appearance" && <AppearanceSection />}
+            {settingsSection === "llm" && <LlmSection />}
             {settingsSection === "shortcuts" && <ShortcutsSection />}
           </div>
         </div>
@@ -88,8 +96,12 @@ function Toggle({ on, onClick }: { on: boolean; onClick?: () => void }) {
 }
 
 function GeneralSection() {
+  const autoSave = useWorkspaceStore((s) => s.autoSave);
   return (
     <div>
+      <Row label="Auto-save files" hint="Save dirty files 1s after typing stops">
+        <Toggle on={autoSave} onClick={() => void applyAutoSave(!autoSave)} />
+      </Row>
       <Row label="Restore previous session" hint="Reopen files and chats from last time">
         <Toggle on />
       </Row>
@@ -157,6 +169,178 @@ function ShortcutsSection() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function LlmSection() {
+  const { config, saveConfig } = useChatStore();
+  const [apiFormat, setApiFormat] = useState<"openai" | "anthropic">(
+    config?.apiFormat ?? "openai",
+  );
+  const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? "");
+  const [apiKey, setApiKey] = useState(config?.apiKey ?? "");
+  const [model, setModel] = useState(config?.model ?? "");
+  const [enabledTools, setEnabledTools] = useState<EnabledTools>(
+    config?.enabledTools ?? DEFAULT_ENABLED_TOOLS,
+  );
+  const [guards, setGuards] = useState<AgentGuards>(
+    config?.guards ?? DEFAULT_GUARDS,
+  );
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<"ok" | "err" | null>(null);
+  const [testMsg, setTestMsg] = useState("");
+
+  const handleFormatChange = (fmt: "openai" | "anthropic") => {
+    setApiFormat(fmt);
+    setApiKey("");
+  };
+
+  const handleBlur = () => {
+    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards };
+    void saveConfig(cfg);
+  };
+
+  const toggleTool = (key: keyof EnabledTools) => {
+    const next = { ...enabledTools, [key]: !enabledTools[key] };
+    setEnabledTools(next);
+    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools: next, guards };
+    void saveConfig(cfg);
+  };
+
+  const updateGuard = (key: keyof AgentGuards, value: number) => {
+    const next = { ...guards, [key]: value };
+    setGuards(next);
+    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards: next };
+    void saveConfig(cfg);
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards };
+      await saveConfig(cfg);
+      const reply = await llmTestConnection(cfg);
+      setTestResult("ok");
+      setTestMsg(reply);
+    } catch (err) {
+      setTestResult("err");
+      setTestMsg(String(err));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-2 text-[11.5px] text-fg-muted">
+        Configure an OpenAI-compatible or Anthropic-compatible LLM provider.
+        API key is optional for local providers like Ollama.
+      </div>
+
+      {/* --- Provider --- */}
+      <div className="mb-1 mt-2 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
+        <Bot size={11} /> Provider
+      </div>
+      <Row label="API Format" hint="OpenAI = Bearer token, Anthropic = x-api-key">
+        <select
+          value={apiFormat}
+          onChange={(e) => handleFormatChange(e.target.value as "openai" | "anthropic")}
+          onBlur={handleBlur}
+          className="rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none"
+        >
+          <option value="openai">OpenAI Compatible</option>
+          <option value="anthropic">Anthropic Compatible</option>
+        </select>
+      </Row>
+      <Row label="Base URL" hint="e.g. https://api.openai.com (no trailing slash)">
+        <input
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          onBlur={handleBlur}
+          placeholder={apiFormat === "openai" ? "https://api.openai.com" : "https://api.anthropic.com"}
+          className="w-56 rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none placeholder:text-fg-muted/40"
+        />
+      </Row>
+      <Row label="API Key" hint="Leave empty for local providers (Ollama, LM Studio)">
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          onBlur={handleBlur}
+          placeholder="sk-…"
+          className="w-56 rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none placeholder:text-fg-muted/40"
+        />
+      </Row>
+      <Row label="Model" hint="e.g. gpt-4o, claude-sonnet-4-20250514, llama3">
+        <input
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          onBlur={handleBlur}
+          placeholder="model-name"
+          className="w-56 rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none placeholder:text-fg-muted/40"
+        />
+      </Row>
+      <Row label="Test Connection" hint="Send a minimal request to verify your config">
+        <button
+          onClick={handleTest}
+          disabled={testing || !baseUrl || !model}
+          className="flex items-center gap-1.5 rounded border border-border bg-base px-3 py-1 text-[12px] text-fg hover:bg-hover disabled:opacity-30"
+        >
+          {testing && <Loader2 size={12} className="animate-spin" />}
+          {testResult === "ok" && <Check size={12} className="text-accent" />}
+          {testResult === "err" && <AlertCircle size={12} className="text-danger" />}
+          {testing ? "Testing…" : "Test"}
+        </button>
+      </Row>
+      {testMsg && (
+        <div className={`mt-1 text-[11px] ${testResult === "ok" ? "text-accent" : "text-danger"}`}>
+          {testMsg}
+        </div>
+      )}
+
+      {/* --- Tools --- */}
+      <div className="mb-1 mt-4 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
+        <Wrench size={11} /> Tools
+      </div>
+      <Row label="read_file" hint="Read full file contents (path traversal guarded, 2 MB cap)">
+        <Toggle on={enabledTools.readFile} onClick={() => toggleTool("readFile")} />
+      </Row>
+      <Row label="read_file_range" hint="Read a specific line range from a file">
+        <Toggle on={enabledTools.readFileRange} onClick={() => toggleTool("readFileRange")} />
+      </Row>
+      <Row label="list_files" hint="List workspace files (respects .gitignore, cap 200)">
+        <Toggle on={enabledTools.listFiles} onClick={() => toggleTool("listFiles")} />
+      </Row>
+
+      {/* --- Guards --- */}
+      <div className="mb-1 mt-4 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
+        <Shield size={11} /> Guards
+      </div>
+      <Row label="Max tool turns" hint="Maximum tool-calling rounds before the loop aborts (1–100)">
+        <input
+          type="number"
+          min={1}
+          max={100}
+          value={guards.maxTurns}
+          onChange={(e) => updateGuard("maxTurns", parseInt(e.target.value) || 1)}
+          onBlur={handleBlur}
+          className="w-20 rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none"
+        />
+      </Row>
+      <Row label="Max tool output (bytes)" hint="Truncate tool results larger than this (1k–500k)">
+        <input
+          type="number"
+          min={1000}
+          max={500000}
+          step={1000}
+          value={guards.maxToolOutput}
+          onChange={(e) => updateGuard("maxToolOutput", parseInt(e.target.value) || 1000)}
+          onBlur={handleBlur}
+          className="w-24 rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none"
+        />
+      </Row>
     </div>
   );
 }

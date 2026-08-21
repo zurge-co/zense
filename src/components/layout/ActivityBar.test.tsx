@@ -57,21 +57,21 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
     );
     expect(itemsMatch).not.toBe(null);
     const itemsBlock = itemsMatch![1];
-    const idMatches = itemsBlock.match(/\bid:\s*"(review|history|explorer)"/g);
+    const idMatches = itemsBlock.match(/\bid:\s*"(review|history|editor)"/g);
     expect(idMatches).not.toBe(null);
     expect(idMatches!.length).toBe(3);
   });
 
-  test("items array contains review, history, and explorer in order", () => {
+  test("items array contains review, history, and editor in order", () => {
     const itemsMatch = src.match(
       /const items[^=]*=\s*\[([\s\S]*?)\];/,
     );
     const itemsBlock = itemsMatch![1];
-    const ids = itemsBlock.match(/\bid:\s*"(review|history|explorer)"/g);
+    const ids = itemsBlock.match(/\bid:\s*"(review|history|editor)"/g);
     expect(ids).toEqual([
       'id: "review"',
       'id: "history"',
-      'id: "explorer"',
+      'id: "editor"',
     ]);
   });
 
@@ -93,16 +93,16 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
     expect(itemsBlock).toContain("History");
   });
 
-  test("Explorer button uses Files icon", () => {
+  test("Editor button uses Files icon", () => {
     const itemsMatch = src.match(
       /const items[^=]*=\s*\[([\s\S]*?)\];/,
     );
     const itemsBlock = itemsMatch![1];
-    expect(itemsBlock).toContain('id: "explorer"');
+    expect(itemsBlock).toContain('id: "editor"');
     expect(itemsBlock).toContain("Files");
   });
 
-  test("labels are Review, History, Explorer", () => {
+  test("labels are Review, History, Editor, Search", () => {
     const itemsMatch = src.match(
       /const items[^=]*=\s*\[([\s\S]*?)\];/,
     );
@@ -111,7 +111,8 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
     expect(labelMatches).toEqual([
       'label: "Review"',
       'label: "History"',
-      'label: "Explorer"',
+      'label: "Editor"',
+      'label: "Search (⌘⇧F)"',
     ]);
   });
 
@@ -196,8 +197,9 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
     expect(src.includes("Workflow")).toBe(false);
   });
 
-  test("does NOT import search-related icons", () => {
-    expect(src.includes("Search")).toBe(false);
+  test("imports the Search icon for the workspace-search activity", () => {
+    expect(src).toContain("Search");
+    expect(src).toContain('id: "search"');
   });
 
   test("does NOT reference prompt library items", () => {
@@ -243,8 +245,8 @@ describe("ActivityBar — store interaction", () => {
     useUIStore.getState().setActivity("review"); // toggle off
     expect(useUIStore.getState().sidebarVisible).toBe(false);
 
-    useUIStore.getState().setActivity("explorer");
-    expect(useUIStore.getState().activity).toBe("explorer");
+    useUIStore.getState().setActivity("editor");
+    expect(useUIStore.getState().activity).toBe("editor");
     expect(useUIStore.getState().sidebarVisible).toBe(true);
   });
 
@@ -253,6 +255,25 @@ describe("ActivityBar — store interaction", () => {
     const state = useUIStore.getState();
     expect(state.settingsOpen).toBe(true);
     expect(state.settingsSection).toBe("general");
+  });
+
+  // ── Workspace search (⌘⇧F) ───────────────────────────────────────────
+
+  test("openSearch switches to the search activity", () => {
+    useUIStore.getState().openSearch();
+    expect(useUIStore.getState().activity).toBe("search");
+  });
+
+  test("openSearch always shows the sidebar (never toggles it off)", () => {
+    useUIStore.getState().openSearch();
+    useUIStore.getState().openSearch();
+    expect(useUIStore.getState().sidebarVisible).toBe(true);
+  });
+
+  test("openSearch bumps searchFocusNonce to refocus the input", () => {
+    const before = useUIStore.getState().searchFocusNonce;
+    useUIStore.getState().openSearch();
+    expect(useUIStore.getState().searchFocusNonce).toBe(before + 1);
   });
 });
 
@@ -281,7 +302,7 @@ describe("SideBar.tsx — task 1.3 structural verification", () => {
     expect(src.includes("GitPanel")).toBe(false);
   });
 
-  test("titles map has Review, History, Explorer entries", () => {
+  test("titles map has Review, History, Editor entries", () => {
     const titlesMatch = src.match(
       /const titles[^=]*=\s*\{([\s\S]*?)\};/,
     );
@@ -289,11 +310,11 @@ describe("SideBar.tsx — task 1.3 structural verification", () => {
     const titlesBlock = titlesMatch![1];
     expect(titlesBlock).toContain('review: "Review"');
     expect(titlesBlock).toContain('history: "History"');
-    expect(titlesBlock).toContain('explorer: "Explorer"');
+    expect(titlesBlock).toContain('editor: "Editor"');
   });
 
-  test("renders FileTree when activity is explorer", () => {
-    expect(src).toContain('activity === "explorer" && <FileTree');
+  test("renders FileTree when activity is editor", () => {
+    expect(src).toContain('activity === "editor" && <FileTree');
   });
 
   test("renders ReviewPanel when activity is review", () => {
@@ -311,9 +332,10 @@ describe("SideBar.tsx — task 1.3 structural verification", () => {
 
   test("does NOT reference removed components", () => {
     expect(src.includes("GraphView")).toBe(false);
-    expect(src.includes("SearchPanel")).toBe(false);
     expect(src.includes("TerminalPanel")).toBe(false);
     expect(src.includes("PromptLibrary")).toBe(false);
+    // SearchPanel is now shipped — it backs the workspace search activity.
+    expect(src).toContain("SearchPanel");
   });
 
   test("title is derived from titles map using activity", () => {
@@ -324,8 +346,9 @@ describe("SideBar.tsx — task 1.3 structural verification", () => {
     expect(src.includes('"agent"')).toBe(false);
     expect(src.includes('"terminal"')).toBe(false);
     expect(src.includes('"graph"')).toBe(false);
-    expect(src.includes('"search"')).toBe(false);
     expect(src.includes('"prompts"')).toBe(false);
+    // "search" is now shipped: SearchPanel renders for it.
+    expect(src).toContain('activity === "search" && <SearchPanel');
   });
 });
 
@@ -340,9 +363,9 @@ describe("SideBar — store interaction", () => {
     // SideBar titles map: review → "Review"
   });
 
-  test("switching to explorer → SideBar would show Explorer title and FileTree", () => {
-    useUIStore.getState().setActivity("explorer");
-    expect(useUIStore.getState().activity).toBe("explorer");
+  test("switching to editor → SideBar would show Editor title and FileTree", () => {
+    useUIStore.getState().setActivity("editor");
+    expect(useUIStore.getState().activity).toBe("editor");
   });
 
   test("switching to history → SideBar would show History title and placeholder", () => {
@@ -355,8 +378,8 @@ describe("SideBar — store interaction", () => {
     expect(useUIStore.getState().activity).toBe("review");
     useUIStore.getState().setActivity("history");
     expect(useUIStore.getState().activity).toBe("history");
-    useUIStore.getState().setActivity("explorer");
-    expect(useUIStore.getState().activity).toBe("explorer");
+    useUIStore.getState().setActivity("editor");
+    expect(useUIStore.getState().activity).toBe("editor");
   });
 });
 
@@ -374,13 +397,13 @@ describe("ReviewPanel.tsx — task 1.3 structural verification", () => {
     expect(src.includes("GitPanel")).toBe(false);
   });
 
-  test("imports gitChanges from mockData", () => {
-    expect(src).toContain("gitChanges");
-    expect(src).toContain('"../../lib/mockData"');
+  test("uses useGitStore for live git status (not mockData)", () => {
+    expect(src).toContain("useGitStore");
+    expect(src).toContain('"../../store/gitStore"');
   });
 
-  test("imports diffStats from mockData", () => {
-    expect(src).toContain("diffStats");
+  test("uses diffSummary for per-file stats", () => {
+    expect(src).toContain("diffSummary");
   });
 
   test("uses useUIStore for openDiff", () => {
@@ -416,16 +439,18 @@ describe("ReviewPanel.tsx — task 1.3 structural verification", () => {
     expect(src).toContain('title="Refresh"');
   });
 
-  test("renders changes count from gitChanges", () => {
-    expect(src).toContain("gitChanges.length");
+  test("renders staged/unstaged file counts", () => {
+    expect(src).toContain("stagedFiles.length");
+    expect(src).toContain("unstagedFiles.length");
   });
 
-  test("maps over gitChanges to render change items", () => {
-    expect(src).toContain("gitChanges.map(");
+  test("maps over staged/unstaged files to render change items", () => {
+    expect(src).toContain("stagedFiles.map(");
+    expect(src).toContain("unstagedFiles.map(");
   });
 
   test("each change item calls openDiff on click", () => {
-    expect(src).toContain("onClick={() => openDiff(c.file)}");
+    expect(src).toContain("onClick={() => openDiff(f.path)}");
   });
 
   test("uses FileDiff icon for change items", () => {
@@ -441,9 +466,9 @@ describe("ReviewPanel.tsx — task 1.3 structural verification", () => {
     expect(map).toContain('D: "text-danger"');
   });
 
-  test("displays diff stats (adds/dels) per file", () => {
-    expect(src).toContain("stats.adds");
-    expect(src).toContain("stats.dels");
+  test("displays diff stats (additions/deletions) per file", () => {
+    expect(src).toContain("stats.additions");
+    expect(src).toContain("stats.deletions");
   });
 
   test("does NOT reference removed store fields", () => {
@@ -544,12 +569,12 @@ describe("Task 1.3 integration — ActivityBar → SideBar → ReviewPanel", () 
     // SideBar would render: titles["review"] = "Review", and <ReviewPanel />
   });
 
-  test("clicking Explorer in ActivityBar → SideBar shows FileTree", () => {
-    useUIStore.getState().setActivity("explorer");
+  test("clicking Editor in ActivityBar → SideBar shows FileTree", () => {
+    useUIStore.getState().setActivity("editor");
     const { activity, sidebarVisible } = useUIStore.getState();
-    expect(activity).toBe("explorer");
+    expect(activity).toBe("editor");
     expect(sidebarVisible).toBe(true);
-    // SideBar would render: titles["explorer"] = "Explorer", and <FileTree />
+    // SideBar would render: titles["editor"] = "Editor", and <FileTree />
   });
 
   test("clicking History in ActivityBar → SideBar shows placeholder", () => {

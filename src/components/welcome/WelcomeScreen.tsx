@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Clock, Sparkles } from "lucide-react";
+import { FolderOpen, Clock } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
 import {
   formatRelativeTime,
@@ -37,7 +37,7 @@ export function WelcomeScreen() {
         <div className="w-[520px]">
           <div className="mb-8 flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent/15">
-              <Sparkles size={22} className="text-accent" />
+              <img src="/zense-logo.svg" alt="Zense" width={28} height={28} />
             </div>
             <div>
               <h1 className="text-xl font-semibold text-fg">Zense</h1>

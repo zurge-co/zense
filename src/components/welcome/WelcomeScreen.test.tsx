@@ -177,10 +177,9 @@ describe("WelcomeScreen.tsx — task 1.6 structural verification", () => {
 
   // ── Imports ───────────────────────────────────────────────────────────────
 
-  test("imports FolderOpen, Clock, Sparkles from lucide-react", () => {
+  test("imports FolderOpen, Clock from lucide-react", () => {
     expect(src).toContain("FolderOpen");
     expect(src).toContain("Clock");
-    expect(src).toContain("Sparkles");
     expect(src).toContain("lucide-react");
   });
 

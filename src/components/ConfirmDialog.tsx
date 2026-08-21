@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-interface ConfirmDialogProps {
+export interface ConfirmDialogProps {
   title: string;
   message: string;
   confirmLabel?: string;
@@ -8,6 +8,9 @@ interface ConfirmDialogProps {
   danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Optional third action between cancel and confirm (e.g. "Discard"). */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
 }
 
 export function ConfirmDialog({
@@ -18,6 +21,8 @@ export function ConfirmDialog({
   danger = false,
   onConfirm,
   onCancel,
+  secondaryLabel,
+  onSecondary,
 }: ConfirmDialogProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -49,6 +54,14 @@ export function ConfirmDialog({
           >
             {cancelLabel}
           </button>
+          {secondaryLabel && onSecondary && (
+            <button
+              onClick={onSecondary}
+              className="rounded border border-danger/50 bg-danger/10 px-3 py-1.5 text-[12px] text-danger hover:bg-danger/20"
+            >
+              {secondaryLabel}
+            </button>
+          )}
           <button
             onClick={onConfirm}
             className={`rounded px-3 py-1.5 text-[12px] text-white ${

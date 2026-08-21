@@ -1,12 +1,14 @@
 @import "tailwindcss";
 
 @theme {
-  /* Zense — 6 core color tokens */
-  --color-base: #0d1117;
-  --color-panel: #11161f;
-  --color-fg: #d7e0ee;
-  --color-fg-muted: #7d8da6;
-  --color-accent: #4f8cff;
+  /* Zense — brand color tokens */
+  --color-base: #0d0d0d;
+  --color-panel: #1a1a1a;
+  --color-fg: #e8e8e8;
+  --color-fg-muted: #888888;
+  --color-accent: #00c55a;
+  --color-accent-lime: #6cdd25;
+  --color-accent-gold: #facd04;
   --color-danger: #f85149;
 
   /* Structural tokens (rgba per spec: borders 0.06, hover 0.04, active 0.06) */
@@ -15,8 +17,8 @@
   --color-active: rgba(255,255,255,0.06);
 
   /* Utility tokens for diff status and warnings */
-  --color-green: #3fb950;
-  --color-yellow: #d29922;
+  --color-green: #6cdd25;
+  --color-yellow: #facd04;
 
   --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;

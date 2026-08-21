@@ -61,16 +61,17 @@ describe("StatusBar.tsx — no agent button (task 1.5)", () => {
     expect(src.length).toBeGreaterThan(50);
   });
 
-  // ── No agent/terminal references ──────────────────────────────────────────
+  // ── No agent references (terminal toggle restored — see terminalStore) ────
 
   test("does NOT reference 'agent' or 'Agent'", () => {
     expect(src.includes("agent")).toBe(false);
     expect(src.includes("Agent")).toBe(false);
   });
 
-  test("does NOT reference 'terminal' or 'Terminal'", () => {
-    expect(src.includes("terminal")).toBe(false);
-    expect(src.includes("Terminal")).toBe(false);
+  test("has a terminal toggle button (SquareTerminal + terminalStore)", () => {
+    expect(src.includes("SquareTerminal")).toBe(true);
+    expect(src.includes("terminalStore")).toBe(true);
+    expect(src.includes("Toggle terminal")).toBe(true);
   });
 
   test("does NOT have agent CLI button or terminal open handler", () => {
@@ -85,8 +86,9 @@ describe("StatusBar.tsx — no agent button (task 1.5)", () => {
     expect(src).toContain("GitBranch");
   });
 
-  test("shows branch name 'main*'", () => {
-    expect(src).toContain("main*");
+  test("shows dynamic branch label with dirty marker", () => {
+    expect(src).toContain("branchLabel");
+    expect(src).toContain('dirty ? "*"');
   });
 
   // ── Error indicator preserved ─────────────────────────────────────────────
@@ -120,19 +122,15 @@ describe("StatusBar.tsx — no agent button (task 1.5)", () => {
     expect(src).toContain("Spaces");
   });
 
-  // ── File type detection ───────────────────────────────────────────────────
+  // ── File type detection (real, via detectLanguage) ───────────────────────
 
-  test("detects .rs extension as Rust", () => {
-    expect(src).toContain(".rs");
-    expect(src).toContain("Rust");
+  test("detects language via detectLanguage (not hardcoded)", () => {
+    expect(src).toContain("detectLanguage");
+    expect(src).toContain("Rust"); // via LANGUAGE_LABELS
   });
 
-  test("defaults non-.rs files to TypeScript label", () => {
-    expect(src).toContain("TypeScript");
-  });
-
-  test("file type span is conditionally rendered only when file exists", () => {
-    expect(src).toContain("{file &&");
+  test("language span is conditionally rendered only when a file tab is active", () => {
+    expect(src).toContain("{langLabel &&");
   });
 
   // ── Store usage ───────────────────────────────────────────────────────────
@@ -151,17 +149,22 @@ describe("StatusBar.tsx — no agent button (task 1.5)", () => {
     expect(src).toContain("activeTabKey");
   });
 
-  test("extracts filename from active tab path via split('/').pop()", () => {
-    expect(src).toContain('split("/")');
-    expect(src).toContain(".pop()");
+  test("language comes from the active file tab only", () => {
+    expect(src).toContain('activeTab?.kind === "file"');
+  });
+
+  test("shows live cursor position from the store (not hardcoded)", () => {
+    expect(src).toContain("cursorPos");
+    expect(src.includes("Ln 9, Col 24")).toBe(false);
   });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SettingsModal.tsx — Exactly 3 sections (no Agent, no Terminal, no LLM)
+// SettingsModal.tsx — 4 sections: General, Appearance, LLM, Shortcuts
+// (LLM section added with provider config; Agent/Terminal sections remain absent)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("SettingsModal.tsx — 3 sections only (task 1.5)", () => {
+describe("SettingsModal.tsx — 4 sections (general, appearance, llm, shortcuts)", () => {
   let src: string;
 
   beforeAll(async () => {
@@ -178,56 +181,57 @@ describe("SettingsModal.tsx — 3 sections only (task 1.5)", () => {
     expect(src.length).toBeGreaterThan(100);
   });
 
-  // ── Exactly 3 sections in the sections array ──────────────────────────────
+  // ── Exactly 4 sections in the sections array ──────────────────────────────
 
-  test("sections array has exactly 3 entries", () => {
+  test("sections array has exactly 4 entries", () => {
     const match = src.match(/const sections[^=]*=\s*\[([\s\S]*?)\];/);
     expect(match).not.toBe(null);
     const block = match![1];
     const ids = block.match(/id:\s*"(general|appearance|llm|shortcuts)"/g);
     expect(ids).not.toBe(null);
-    expect(ids!.length).toBe(3);
+    expect(ids!.length).toBe(4);
   });
 
-  test("sections are general, appearance, shortcuts in order", () => {
+  test("sections are general, appearance, llm, shortcuts in order", () => {
     const match = src.match(/const sections[^=]*=\s*\[([\s\S]*?)\];/);
     const block = match![1];
     const ids = block.match(/id:\s*"(general|appearance|llm|shortcuts)"/g);
     expect(ids).toEqual([
       'id: "general"',
       'id: "appearance"',
+      'id: "llm"',
       'id: "shortcuts"',
     ]);
   });
 
-  test("section labels are General, Appearance, Shortcuts", () => {
+  test("section labels are General, Appearance, LLM, Shortcuts", () => {
     const match = src.match(/const sections[^=]*=\s*\[([\s\S]*?)\];/);
     const block = match![1];
     expect(block).toContain('label: "General"');
     expect(block).toContain('label: "Appearance"');
+    expect(block).toContain('label: "LLM"');
     expect(block).toContain('label: "Shortcuts"');
   });
 
-  // ── No agent/terminal/llm in the sections array ───────────────────────────
+  // ── No agent/terminal sections (LLM section is expected) ──────────────────
 
-  test("sections array does NOT contain 'llm' section", () => {
+  test("sections array contains an 'llm' section", () => {
     const match = src.match(/const sections[^=]*=\s*\[([\s\S]*?)\];/);
     const block = match![1];
-    expect(block.includes('id: "llm"')).toBe(false);
+    expect(block.includes('id: "llm"')).toBe(true);
   });
 
-  test("does NOT reference 'agent' or 'Agent' anywhere", () => {
-    expect(src.includes("agent")).toBe(false);
-    expect(src.includes("Agent")).toBe(false);
+  test("has NO agent or terminal SECTION (only AgentGuards type from lib/llm)", () => {
+    const match = src.match(/const sections[^=]*=\s*\[([\s\S]*?)\];/);
+    const block = match![1];
+    expect(block.includes("agent")).toBe(false);
+    expect(block.includes("terminal")).toBe(false);
+    expect(src.includes("AgentSection")).toBe(false);
+    expect(src.includes("TerminalSection")).toBe(false);
   });
 
-  test("does NOT reference 'terminal' or 'Terminal' anywhere", () => {
-    expect(src.includes("terminal")).toBe(false);
-    expect(src.includes("Terminal")).toBe(false);
-  });
-
-  test("does NOT have an 'llm' content rendering branch", () => {
-    expect(src.includes('settingsSection === "llm"')).toBe(false);
+  test("has an 'llm' content rendering branch", () => {
+    expect(src.includes('settingsSection === "llm" && <LlmSection')).toBe(true);
   });
 
   // ── Content rendering — exactly 3 branches ────────────────────────────────
@@ -244,10 +248,14 @@ describe("SettingsModal.tsx — 3 sections only (task 1.5)", () => {
     expect(src).toContain('settingsSection === "shortcuts" && <ShortcutsSection');
   });
 
-  test("has exactly 3 content rendering branches", () => {
+  test("renders LlmSection when settingsSection is 'llm'", () => {
+    expect(src).toContain('settingsSection === "llm" && <LlmSection');
+  });
+
+  test("has exactly 4 content rendering branches", () => {
     const branches = src.match(/settingsSection === "\w+" && </g);
     expect(branches).not.toBe(null);
-    expect(branches!.length).toBe(3);
+    expect(branches!.length).toBe(4);
   });
 
   // ── Section component definitions ────────────────────────────────────────
@@ -272,8 +280,8 @@ describe("SettingsModal.tsx — 3 sections only (task 1.5)", () => {
     expect(src.includes("TerminalSection")).toBe(false);
   });
 
-  test("does NOT define LLMSection component", () => {
-    expect(src.includes("LLMSection")).toBe(false);
+  test("defines LlmSection component", () => {
+    expect(src).toContain("function LlmSection");
   });
 
   // ── Section icons ─────────────────────────────────────────────────────────
@@ -290,9 +298,9 @@ describe("SettingsModal.tsx — 3 sections only (task 1.5)", () => {
     expect(src).toContain("Keyboard");
   });
 
-  test("does NOT import terminal or agent icons", () => {
+  test("imports Bot icon for the LLM section; no Terminal/Cpu icons", () => {
+    expect(src).toContain("Bot");
     expect(src.includes("Terminal")).toBe(false);
-    expect(src.includes("Bot")).toBe(false);
     expect(src.includes("Cpu")).toBe(false);
   });
 
@@ -349,11 +357,16 @@ describe("settings.ts — no-op initSettings (structural) (task 1.5)", () => {
     expect(src).toContain("return");
   });
 
-  test("initSettings has no persistent store operations (no Store.load, set, get, save)", () => {
-    expect(src.includes("Store.load")).toBe(false);
-    expect(src.includes("store.set")).toBe(false);
-    expect(src.includes("store.get")).toBe(false);
-    expect(src.includes("store.save")).toBe(false);
+  test("initSettings itself stays a no-op for persistence", () => {
+    const match = src.match(/function initSettings\(\)[^}]*}/s);
+    expect(match).not.toBe(null);
+    expect(match![0].includes("store.set")).toBe(false);
+  });
+
+  test("UI prefs (auto-save) persist via tauri-plugin-store", () => {
+    expect(src).toContain("loadUiPrefs");
+    expect(src).toContain("applyAutoSave");
+    expect(src).toContain("@tauri-apps/plugin-store");
   });
 
   test("does NOT reference agent or terminal persisted fields", () => {
@@ -552,16 +565,16 @@ describe("Task 1.5 — no dangling agent/terminal references across all 3 files"
     settingsSrc = await readSrc("../../lib/settings.ts");
   });
 
-  test("StatusBar.tsx has zero agent/terminal references", () => {
+  test("StatusBar.tsx: agent removed; terminal toggle restored (SquareTerminal + terminalStore)", () => {
     expect(statusBarSrc.includes("agent")).toBe(false);
     expect(statusBarSrc.includes("Agent")).toBe(false);
-    expect(statusBarSrc.includes("terminal")).toBe(false);
-    expect(statusBarSrc.includes("Terminal")).toBe(false);
+    expect(statusBarSrc.includes("SquareTerminal")).toBe(true);
+    expect(statusBarSrc.includes("terminalStore")).toBe(true);
   });
 
-  test("SettingsModal.tsx has zero agent/terminal references", () => {
-    expect(settingsModalSrc.includes("agent")).toBe(false);
-    expect(settingsModalSrc.includes("Agent")).toBe(false);
+  test("SettingsModal.tsx: no agent/terminal sections; AgentGuards (LLM) is expected", () => {
+    expect(settingsModalSrc.includes("AgentSection")).toBe(false);
+    expect(settingsModalSrc.includes("TerminalSection")).toBe(false);
     expect(settingsModalSrc.includes("terminal")).toBe(false);
     expect(settingsModalSrc.includes("Terminal")).toBe(false);
   });

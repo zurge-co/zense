@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { useUIStore, tabKey } from "./store/uiStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
 import { isTauri, openFolderFlow } from "./lib/workspace";
@@ -9,6 +10,11 @@ import { StatusBar } from "./components/layout/StatusBar";
 import { SideBar } from "./components/sidebar/SideBar";
 import { EditorArea } from "./components/editor/EditorArea";
 import { ComposerPanel } from "./components/chat/ComposerPanel";
+import { TerminalPanel } from "./components/terminal/TerminalPanel";
+import { useTerminalStore } from "./store/terminalStore";
+import { QuickOpen } from "./components/QuickOpen";
+import { ConfirmDialog } from "./components/ConfirmDialog";
+import { useState } from "react";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { WelcomeScreen } from "./components/welcome/WelcomeScreen";
 
@@ -16,18 +22,25 @@ export default function App() {
   const screen = useUIStore((s) => s.screen);
 
   useKeyboardShortcuts();
+  useMenuEvents();
   useWindowDrag();
+  // Mounted at the root so the close guard works on the welcome screen too.
+  const closeGuardDialog = useCloseRequestGuard();
+  useUiPrefs();
 
-  if (screen === "welcome") {
-    return (
-      <>
-        <WelcomeScreen />
-        <SettingsModal />
-      </>
-    );
-  }
-
-  return <WorkspaceLayout />;
+  return (
+    <>
+      {screen === "welcome" ? (
+        <>
+          <WelcomeScreen />
+          <SettingsModal />
+        </>
+      ) : (
+        <WorkspaceLayout />
+      )}
+      {closeGuardDialog}
+    </>
+  );
 }
 
 function WorkspaceLayout() {
@@ -46,19 +59,154 @@ function WorkspaceLayout() {
       <div className="flex min-h-0 flex-1">
         <ActivityBar />
         {sidebarVisible && <SideBar />}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <EditorArea />
+          <TerminalPanel />
         </div>
         {chatVisible && <ComposerPanel />}
       </div>
       <StatusBar />
       <SettingsModal />
+      <QuickOpen />
     </div>
   );
 }
 
+/** Persisted UI prefs (auto-save) — load once when the workspace mounts. */
+function useUiPrefs() {
+  useEffect(() => {
+    if (!isTauri()) return;
+    void import("./lib/settings").then((m) => m.loadUiPrefs());
+  }, []);
+}
+
+/**
+ * Unsaved-changes guard for window close: Rust prevents the close and emits
+ * "app://close-requested"; here we either destroy immediately (clean) or
+ * prompt (dirty buffers) — Save All & Close / Discard & Close / Cancel.
+ */
+function useCloseRequestGuard() {
+  const [pending, setPending] = useState(false);
+  const [failedSaves, setFailedSaves] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const destroyWindow = async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("stop_watch").catch(() => {}); // release the watcher entry
+      void getCurrentWindow().destroy();
+    };
+    destroyRef.current = destroyWindow;
+    const unlisten = listen("app://close-requested", () => {
+      if (useWorkspaceStore.getState().dirtyPaths.size === 0) {
+        void destroyWindow();
+      } else {
+        setFailedSaves([]);
+        setPending(true);
+      }
+    });
+    return () => {
+      void unlisten.then((u) => u());
+    };
+  }, []);
+
+  if (!pending) return null;
+  const dirtyCount = useWorkspaceStore.getState().dirtyPaths.size;
+  return (
+    <ConfirmDialog
+      title="Unsaved Changes"
+      message={
+        failedSaves.length > 0
+          ? `Failed to save: ${failedSaves.join(", ")}. Fix the problem and retry, or close without saving.`
+          : `${dirtyCount} file${dirtyCount === 1 ? "" : "s"} have unsaved changes.`
+      }
+      confirmLabel="Save All & Close"
+      secondaryLabel="Close Without Saving"
+      danger
+      onConfirm={() => {
+        const root = useUIStore.getState().workspacePath;
+        setPending(false);
+        if (!root) {
+          void destroyRef.current?.();
+          return;
+        }
+        // Never destroy on failed saves — re-prompt instead of losing work.
+        void useWorkspaceStore
+          .getState()
+          .saveAllDirty(root)
+          .then((failed) => {
+            if (failed.length === 0) {
+              void destroyRef.current?.();
+            } else {
+              setFailedSaves(failed);
+              setPending(true);
+            }
+          });
+      }}
+      onSecondary={() => {
+        setPending(false);
+        void destroyRef.current?.();
+      }}
+      onCancel={() => setPending(false)}
+    />
+  );
+}
+
+/** Latest window-destroy routine (stop watcher + destroy) for the guard. */
+const destroyRef: { current: (() => Promise<void>) | null } = { current: null };
+
+/** Save the file in the active editor tab (shared by ⌘S and File > Save). */
+function saveActiveTab() {
+  const ui = useUIStore.getState();
+  if (ui.screen !== "workspace" || !ui.workspacePath) return;
+  const tab = ui.openTabs.find((t) => tabKey(t) === ui.activeTabKey);
+  if (!tab || tab.kind !== "file") return;
+  void useWorkspaceStore.getState().saveFile(ui.workspacePath, tab.path);
+}
+
+/**
+ * Native application menu events. Menu accelerators (⌘S, ⌘B, ⌘O, ⌘,, …)
+ * are consumed before they reach the webview, so actions arrive through the
+ * "menu-action" event instead of keydown handlers (which remain as the
+ * fallback for browser dev mode).
+ */
+function useMenuEvents() {
+  useEffect(() => {
+    if (!isTauri()) return;
+    const unlisten = listen<string>("menu-action", (e) => {
+      const ui = useUIStore.getState();
+      switch (e.payload) {
+        case "open_folder":
+          void openFolderFlow();
+          break;
+        case "save_file":
+          saveActiveTab();
+          break;
+        case "open_settings":
+          ui.openSettings();
+          break;
+        case "toggle_sidebar":
+          ui.toggleSidebar();
+          break;
+        case "toggle_chat":
+          ui.toggleChat();
+          break;
+        case "toggle_diff_mode":
+          ui.toggleDiffMode();
+          break;
+        case "find_in_files":
+          ui.openSearch();
+          break;
+      }
+    });
+    return () => {
+      void unlisten.then((u) => u());
+    };
+  }, []);
+}
+
 function useKeyboardShortcuts() {
-  const { toggleSidebar, toggleChat, closeSettings, openSettings } =
+  const { toggleSidebar, toggleChat, closeSettings, openSettings, openSearch } =
     useUIStore();
 
   useEffect(() => {
@@ -69,11 +217,7 @@ function useKeyboardShortcuts() {
       if (mod) {
         if (e.key === "s") {
           e.preventDefault();
-          const ui = useUIStore.getState();
-          if (ui.screen !== "workspace" || !ui.workspacePath) return;
-          const tab = ui.openTabs.find((t) => tabKey(t) === ui.activeTabKey);
-          if (!tab || tab.kind !== "file") return;
-          void useWorkspaceStore.getState().saveFile(ui.workspacePath, tab.path);
+          saveActiveTab();
         } else if (e.key === "b") {
           e.preventDefault();
           toggleSidebar();
@@ -86,6 +230,39 @@ function useKeyboardShortcuts() {
         } else if (e.shiftKey && (e.key === "C" || e.key === "c")) {
           e.preventDefault();
           toggleChat();
+        } else if (e.shiftKey && (e.key === "F" || e.key === "f")) {
+          e.preventDefault();
+          openSearch();
+        } else if (e.key === "`") {
+          e.preventDefault();
+          useTerminalStore.getState().toggle();
+        } else if (e.key === "p" && !e.shiftKey) {
+          e.preventDefault();
+          useUIStore.getState().toggleQuickOpen();
+        } else if (e.key === "w") {
+          e.preventDefault();
+          useUIStore.getState().requestCloseActiveTab();
+        } else if (e.key === "\\") {
+          e.preventDefault();
+          useUIStore.getState().toggleSplit();
+        } else if (/^[1-9]$/.test(e.key)) {
+          // ⌘1–9 → activate the nth open tab
+          const ui = useUIStore.getState();
+          const tab = ui.openTabs[Number(e.key) - 1];
+          if (tab) {
+            e.preventDefault();
+            ui.setActiveTab(tabKey(tab));
+          }
+        } else if (e.key === "Tab" && e.ctrlKey) {
+          // Ctrl(+Shift)+Tab → cycle open tabs (VS Code style)
+          const ui = useUIStore.getState();
+          if (ui.openTabs.length > 1) {
+            e.preventDefault();
+            const idx = ui.openTabs.findIndex((t) => tabKey(t) === ui.activeTabKey);
+            const dir = e.shiftKey ? -1 : 1;
+            const next = ui.openTabs[(idx + dir + ui.openTabs.length) % ui.openTabs.length];
+            ui.setActiveTab(tabKey(next));
+          }
         }
         return;
       }
@@ -149,7 +326,7 @@ function useKeyboardShortcuts() {
       window.removeEventListener("keydown", onTreeKey);
       window.removeEventListener("keydown", onEsc);
     };
-  }, [toggleSidebar, toggleChat, closeSettings, openSettings]);
+  }, [toggleSidebar, toggleChat, closeSettings, openSettings, openSearch]);
 }
 
 /** True when the user is typing in an input, textarea, or Monaco editor. */

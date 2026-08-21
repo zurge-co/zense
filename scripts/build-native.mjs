@@ -90,6 +90,7 @@ function checkRustTarget(triple) {
  */
 function build(targetAlias) {
   const config = TARGETS[targetAlias];
+  if (!config) {
     process.stderr.write(
       `Target "${targetAlias}" is not supported in v1.\n` +
       `Only mac-arm is available for native builds.\n`,

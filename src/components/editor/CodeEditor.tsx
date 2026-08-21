@@ -1,6 +1,11 @@
 import Editor from "@monaco-editor/react";
 import { defineTheme } from "./monacoSetup";
+import { setupKeybindings } from "./monacoKeybindings";
 import { setActiveEditor } from "../../lib/editorRef";
+import { useUIStore } from "../../store/uiStore";
+
+/** Editor indent width (mirrored in the StatusBar). */
+export const TAB_SIZE = 2;
 
 export function CodeEditor({
   language,
@@ -19,8 +24,18 @@ export function CodeEditor({
       value={value}
       theme="zense-dark"
       beforeMount={defineTheme}
-      onMount={(editor) => {
+      onMount={(editor, monaco) => {
         setActiveEditor(editor);
+        setupKeybindings(editor, monaco);
+        // Live cursor position for the StatusBar.
+        const seed = editor.getPosition();
+        if (seed) {
+          useUIStore.getState().setCursorPos({ line: seed.lineNumber, col: seed.column });
+        }
+        const sub = editor.onDidChangeCursorPosition((e) => {
+          useUIStore.getState().setCursorPos({ line: e.position.lineNumber, col: e.position.column });
+        });
+        editor.onDidDispose(() => sub.dispose());
       }}
       onChange={(value) => {
         if (onChange && value !== undefined) onChange(value);
@@ -35,14 +50,21 @@ export function CodeEditor({
         renderLineHighlight: "all",
         padding: { top: 8 },
         smoothScrolling: true,
-        cursorBlinking: "solid",
+        cursorBlinking: "blink",
+        cursorSmoothCaretAnimation: "on",
         contextmenu: true,
-        folding: false,
+        folding: true,
         glyphMargin: false,
         lineDecorationsWidth: 8,
         overviewRulerLanes: 0,
         hideCursorInOverviewRuler: true,
         scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+        automaticLayout: true,
+        formatOnPaste: true,
+        formatOnType: true,
+        tabSize: TAB_SIZE,
+        bracketPairColorization: { enabled: true },
+        guides: { bracketPairs: true, indentation: true },
       }}
     />
   );

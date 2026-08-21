@@ -1,12 +1,32 @@
-import { GitBranch, CircleX, TriangleAlert } from "lucide-react";
+import { GitBranch, CircleX, TriangleAlert, SquareTerminal } from "lucide-react";
 import { useUIStore, tabKey } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
+import { useTerminalStore } from "../../store/terminalStore";
+import { detectLanguage } from "../../lib/lang";
+import { TAB_SIZE } from "../editor/CodeEditor";
+
+/** Human-readable labels for Monaco language ids. */
+const LANGUAGE_LABELS: Record<string, string> = {
+  typescript: "TypeScript",
+  javascript: "JavaScript",
+  json: "JSON",
+  markdown: "Markdown",
+  rust: "Rust",
+  python: "Python",
+  go: "Go",
+  html: "HTML",
+  css: "CSS",
+  plaintext: "Plain Text",
+};
 
 export function StatusBar() {
   const { openTabs, activeTabKey } = useUIStore();
+  const terminalVisible = useTerminalStore((s) => s.visible);
+  const cursorPos = useUIStore((s) => s.cursorPos);
   const { branchInfo, status } = useGitStore();
   const activeTab = openTabs.find((t) => tabKey(t) === activeTabKey);
-  const file = activeTab ? activeTab.path.split("/").pop() : null;
+  const langId = activeTab?.kind === "file" ? detectLanguage(activeTab.path) : null;
+  const langLabel = langId ? (LANGUAGE_LABELS[langId] ?? langId) : null;
   const branchLabel = branchInfo.detached ? "detached HEAD" : (branchInfo.branch ?? "main");
   const dirty = status.files.length > 0;
 
@@ -28,9 +48,16 @@ export function StatusBar() {
       </div>
 
       <div className="flex items-center gap-3">
-        <span>Ln 9, Col 24</span>
-        <span>Spaces: 2</span>
-        {file && <span>{file.endsWith(".rs") ? "Rust" : "TypeScript"}</span>}
+        <button
+          title="Toggle terminal (⌘`)"
+          onClick={() => useTerminalStore.getState().toggle()}
+          className={`transition-colors hover:text-fg ${terminalVisible ? "text-accent" : ""}`}
+        >
+          <SquareTerminal size={12} />
+        </button>
+        {cursorPos && <span>Ln {cursorPos.line}, Col {cursorPos.col}</span>}
+        <span>Spaces: {TAB_SIZE}</span>
+        {langLabel && <span>{langLabel}</span>}
       </div>
     </div>
   );

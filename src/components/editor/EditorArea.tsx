@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { X, ChevronRight, File, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle } from "lucide-react";
-import { useUIStore, tabKey } from "../../store/uiStore";
+import { X, ChevronRight, File, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle, RotateCcw } from "lucide-react";
+import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { detectLanguage } from "../../lib/lang";
 import { CodeEditor } from "./CodeEditor";
@@ -11,31 +11,37 @@ import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { ConfirmDialog } from "../ConfirmDialog";
 
 export function EditorArea() {
-  const { openTabs, activeTabKey, setActiveTab, closeTab, closeOtherTabs, closeAllTabs } = useUIStore();
+  const { openTabs, activeTabKey, setActiveTab, closeTab, closeOtherTabs, closeAllTabs, toggleSplit, closeSplit } = useUIStore();
+  const splitTabKey = useUIStore((s) => s.splitTabKey);
+  const closeNonce = useUIStore((s) => s.closeActiveTabNonce);
   const workspacePath = useUIStore((s) => s.workspacePath);
-  const { fileContents, fileErrors, loadFile, markDirty, saveFile, clearDirty } = useWorkspaceStore();
+  const { saveFile, clearDirty } = useWorkspaceStore();
   const dirtyPaths = useWorkspaceStore((s) => s.dirtyPaths);
   const activeTab = openTabs.find((t) => tabKey(t) === activeTabKey) ?? null;
+  const splitTab = openTabs.find((t) => tabKey(t) === splitTabKey) ?? null;
 
   const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null);
-  const [confirm, setConfirm] = useState<{ kind: "others" | "all"; key?: string; count: number } | null>(null);
+  const [confirm, setConfirm] = useState<{ kind: "others" | "all" | "single"; key?: string; count: number } | null>(null);
 
-  // Load the active file's content on demand.
-  const activePath = activeTab?.kind === "file" ? activeTab.path : null;
-  useEffect(() => {
-    if (activePath && workspacePath) void loadFile(workspacePath, activePath);
-  }, [activePath, workspacePath, loadFile]);
-
-  const content = activePath ? fileContents[activePath] : undefined;
-  const loadError = activePath ? fileErrors[activePath] : undefined;
-
-  // ── Tab context-menu actions ────────────────────────────────────────────
+  // ── Tab close actions (dirty-aware) ──────────────────────────────────────
 
   const closeSingle = (key: string) => {
     const tab = openTabs.find((t) => tabKey(t) === key);
-    if (tab?.kind === "file") clearDirty(tab.path);
+    if (tab?.kind === "file") {
+      if (dirtyPaths.has(tab.path)) {
+        setConfirm({ kind: "single", key, count: 1 });
+        return;
+      }
+      clearDirty(tab.path);
+    }
     closeTab(key);
   };
+
+  // ⌘W from the global shortcuts: close the active tab with confirmation.
+  useEffect(() => {
+    if (closeNonce > 0 && activeTabKey) closeSingle(activeTabKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closeNonce]);
 
   const runCloseOthers = (key: string) => {
     const others = openTabs.filter((t) => tabKey(t) !== key && t.kind === "file" && dirtyPaths.has(t.path));
@@ -59,7 +65,11 @@ export function EditorArea() {
 
   const confirmAccept = () => {
     if (!confirm) return;
-    if (confirm.kind === "others" && confirm.key) {
+    if (confirm.kind === "single" && confirm.key) {
+      const tab = openTabs.find((t) => tabKey(t) === confirm.key);
+      if (tab?.kind === "file") clearDirty(tab.path);
+      closeTab(confirm.key);
+    } else if (confirm.kind === "others" && confirm.key) {
       openTabs.filter((t) => tabKey(t) !== confirm.key && t.kind === "file").forEach((t) => clearDirty(t.path));
       closeOtherTabs(confirm.key);
     } else if (confirm.kind === "all") {
@@ -72,6 +82,28 @@ export function EditorArea() {
   const menuItems: ContextMenuItem[] = menu
     ? [
         { id: "close", label: "Close", icon: X, onClick: () => closeSingle(menu.key) },
+        ...((): ContextMenuItem[] => {
+          const tab = openTabs.find((t) => tabKey(t) === menu.key);
+          if (!tab || tab.kind !== "file" || !dirtyPaths.has(tab.path)) return [];
+          return [
+            {
+              id: "save",
+              label: "Save",
+              icon: File,
+              onClick: () => {
+                if (workspacePath) void saveFile(workspacePath, tab.path);
+              },
+            },
+            {
+              id: "revert",
+              label: "Revert File",
+              icon: RotateCcw,
+              onClick: () => {
+                if (workspacePath) void useWorkspaceStore.getState().revertFile(workspacePath, tab.path);
+              },
+            },
+          ];
+        })(),
         {
           id: "close-others",
           label: "Close Others",
@@ -90,7 +122,7 @@ export function EditorArea() {
     : [];
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col bg-base">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-base">
       {/* Tab bar */}
       <div className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-border bg-panel">
         {openTabs.map((tab) => {
@@ -148,8 +180,7 @@ export function EditorArea() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (tab.kind === "file") clearDirty(tab.path);
-                    closeTab(key);
+                    closeSingle(key);
                   }}
                   className={`rounded p-0.5 hover:bg-active ${
                     active ? "opacity-60 hover:opacity-100" : "opacity-0 group-hover:opacity-60"
@@ -162,54 +193,44 @@ export function EditorArea() {
           );
         })}
         <div className="flex-1" />
-        <button title="Split Editor" className="px-2 text-fg-muted hover:text-fg">
+        <button
+          title="Split Editor (⌘\)"
+          onClick={() => toggleSplit()}
+          className={`px-2 hover:text-fg ${splitTab ? "text-accent" : "text-fg-muted"}`}
+        >
           <SplitSquareHorizontal size={14} />
         </button>
       </div>
 
-      {activeTab?.kind === "diff" || activeTab?.kind === "commitDiff" ? (
-        <DiffView tab={activeTab} />
-      ) : activeTab?.kind === "commit" ? (
-        <CommitDetail sha={activeTab.path} />
-      ) : activeTab?.kind === "compare" ? (
-        <CompareView fromSha={activeTab.fromSha!} toSha={activeTab.toSha!} />
-      ) : activeTab && content !== undefined ? (
-        <>
-          {/* Breadcrumb */}
-          <div className="flex h-7 shrink-0 items-center gap-1 border-b border-border px-3 text-[11.5px] text-fg-muted">
-            {activeTab.path.split("/").map((seg, i, arr) => (
-              <span key={i} className="flex items-center gap-1">
-                {i > 0 && <ChevronRight size={11} />}
-                <span className={i === arr.length - 1 ? "text-fg-muted" : ""}>{seg}</span>
-              </span>
-            ))}
+      {/* Editor panes (single, or split right) */}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          {activeTab ? (
+            <TabContent tab={activeTab} showBreadcrumb />
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-fg-muted">
+              <Sparkles size={28} strokeWidth={1.2} />
+              <p className="text-sm">Open a file to start exploring</p>
+              <p className="text-[11.5px]">or press ⌘P to quick-open a file</p>
+            </div>
+          )}
+        </div>
+        {splitTab && (
+          <div className="flex min-w-0 flex-1 flex-col border-l border-border">
+            <div className="flex h-7 shrink-0 items-center justify-between border-b border-border bg-panel px-2 text-[11.5px] text-fg-muted">
+              <span className="truncate">{splitTab.path.split("/").pop()}</span>
+              <button
+                title="Close split (⌘\)"
+                onClick={closeSplit}
+                className="rounded p-1 hover:bg-hover hover:text-fg"
+              >
+                <X size={12} />
+              </button>
+            </div>
+            <TabContent tab={splitTab} showBreadcrumb />
           </div>
-
-          <div className="min-h-0 flex-1">
-            <CodeEditor
-              language={detectLanguage(activeTab.path)}
-              value={content}
-              onChange={(value) => markDirty(activeTab.path, value)}
-            />
-          </div>
-        </>
-      ) : activeTab && loadError ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 text-fg-muted">
-          <TriangleAlert size={24} strokeWidth={1.5} className="text-yellow" />
-          <p className="font-mono text-[12px]">{activeTab.path}</p>
-          <p className="max-w-96 text-center text-[11.5px]">{loadError}</p>
-        </div>
-      ) : activeTab ? (
-        <div className="flex flex-1 items-center justify-center text-[12px] text-fg-muted">
-          Loading {activeTab.path}…
-        </div>
-      ) : (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 text-fg-muted">
-          <Sparkles size={28} strokeWidth={1.2} />
-          <p className="text-sm">Open a file to start exploring</p>
-          <p className="text-[11.5px]">or ask AI to explain the codebase</p>
-        </div>
-      )}
+        )}
+      </div>
 
       {menu && (
         <ContextMenu
@@ -221,7 +242,13 @@ export function EditorArea() {
 
       {confirm && (
         <ConfirmDialog
-          title={confirm.kind === "all" ? "Close All Tabs" : "Close Other Tabs"}
+          title={
+            confirm.kind === "all"
+              ? "Close All Tabs"
+              : confirm.kind === "others"
+                ? "Close Other Tabs"
+                : "Close Tab"
+          }
           message={
             confirm.count === 1
               ? "1 unsaved file will be closed. Changes will be lost."
@@ -233,6 +260,104 @@ export function EditorArea() {
           onCancel={() => setConfirm(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** Renders one tab's content (file editor, diff, commit, compare). */
+function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: boolean }) {
+  const workspacePath = useUIStore((s) => s.workspacePath);
+  const { fileContents, fileErrors, loadFile, markDirty, revertFile, keepMine, saveFile } = useWorkspaceStore();
+  const conflicts = useWorkspaceStore((s) => s.conflicts);
+
+  const path = tab.kind === "file" ? tab.path : null;
+  useEffect(() => {
+    if (path && workspacePath) void loadFile(workspacePath, path);
+  }, [path, workspacePath, loadFile]);
+
+  const content = path ? fileContents[path] : undefined;
+  const loadError = path ? fileErrors[path] : undefined;
+  const conflict = path ? conflicts[path] : undefined;
+
+  if (tab.kind === "diff" || tab.kind === "commitDiff") return <DiffView tab={tab} />;
+  if (tab.kind === "commit") return <CommitDetail sha={tab.path} />;
+  if (tab.kind === "compare") {
+    return <CompareView fromSha={tab.fromSha!} toSha={tab.toSha!} />;
+  }
+  if (path && content !== undefined) {
+    return (
+      <>
+        {conflict && (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-yellow/10 px-3 py-1.5 text-[11.5px] text-yellow">
+            <span className="truncate">
+              {conflict === "deleted"
+                ? "This file was deleted on disk. Keeping it will recreate it on save."
+                : "This file changed on disk. Your unsaved changes may be overwritten."}
+            </span>
+            <span className="flex shrink-0 gap-2">
+              {conflict === "deleted" ? (
+                <button
+                  onClick={() => {
+                    if (workspacePath) {
+                      void saveFile(workspacePath, path);
+                      keepMine(path);
+                    }
+                  }}
+                  className="rounded border border-yellow/40 px-2 py-0.5 hover:bg-yellow/20"
+                >
+                  Save to restore
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (workspacePath) void revertFile(workspacePath, path);
+                  }}
+                  className="rounded border border-yellow/40 px-2 py-0.5 hover:bg-yellow/20"
+                >
+                  Reload
+                </button>
+              )}
+              <button
+                onClick={() => keepMine(path)}
+                className="rounded border border-yellow/40 px-2 py-0.5 hover:bg-yellow/20"
+              >
+                Keep mine
+              </button>
+            </span>
+          </div>
+        )}
+        {showBreadcrumb && (
+          <div className="flex h-7 shrink-0 items-center gap-1 border-b border-border px-3 text-[11.5px] text-fg-muted">
+            {path.split("/").map((seg, i) => (
+              <span key={i} className="flex items-center gap-1">
+                {i > 0 && <ChevronRight size={11} />}
+                <span>{seg}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="min-h-0 flex-1">
+          <CodeEditor
+            language={detectLanguage(path)}
+            value={content}
+            onChange={(value) => markDirty(path, value)}
+          />
+        </div>
+      </>
+    );
+  }
+  if (path && loadError) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-fg-muted">
+        <TriangleAlert size={24} strokeWidth={1.5} className="text-yellow" />
+        <p className="font-mono text-[12px]">{path}</p>
+        <p className="max-w-96 text-center text-[11.5px]">{loadError}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-1 items-center justify-center text-[12px] text-fg-muted">
+      Loading {tab.path}…
     </div>
   );
 }

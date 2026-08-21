@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useUIStore, tabKey } from "./uiStore";
 import { copyEntry, createDir, deleteFile, listFiles, readFileContent, readFileTree, renameFile, writeFileContent } from "../lib/workspaceFs";
 import { isTauri } from "../lib/workspace";
 import {
@@ -25,6 +26,10 @@ interface WorkspaceFsState {
   originalContents: Record<string, string>;
   /** Set of paths with unsaved editor changes. */
   dirtyPaths: Set<string>;
+  /** Dirty buffers whose on-disk file changed (or vanished) externally. */
+  conflicts: Record<string, "modified" | "deleted">;
+  /** Auto-save dirty buffers ~1s after typing stops (Settings > General). */
+  autoSave: boolean;
   /** Currently focused tree node (file or folder) for keyboard shortcuts. */
   selectedTreeNode: { path: string; type: "file" | "folder" } | null;
   /** In-memory clipboard for copy/paste (path + type). */
@@ -39,6 +44,12 @@ interface WorkspaceFsState {
   markDirty: (path: string, content: string) => void;
   saveFile: (root: string, path: string) => Promise<void>;
   clearDirty: (path: string) => void;
+  /**
+   * Re-read clean files from disk and update the cache in place (used
+   * after workspace search & replace), so open editors show the new
+   * content instead of going blank. Dirty (unsaved) buffers are kept.
+   */
+  refreshFiles: (root: string, paths: string[]) => Promise<void>;
   /** Re-read the file tree + index from disk (after new/rename/delete). */
   refreshTree: (root: string) => Promise<void>;
   /** Create a new file or folder. `path` is relative; folder if `isDir`. */
@@ -59,6 +70,16 @@ interface WorkspaceFsState {
   setPendingRename: (path: string | null) => void;
   /** Set/clear the pending delete node (consumed by TreeNode). */
   setPendingDelete: (node: { path: string; type: "file" | "folder" } | null) => void;
+
+  /** Discard the buffer and reload from disk (also clears conflict). */
+  revertFile: (root: string, path: string) => Promise<void>;
+  /** Conflict banner "Keep mine": keep the dirty buffer, clear the flag. */
+  keepMine: (path: string) => void;
+  /** Save every dirty file. Returns paths that failed to save. */
+  saveAllDirty: (root: string) => Promise<string[]>;
+  setAutoSave: (v: boolean) => void;
+  /** Subscribe to fs://changed watcher events for `root` (idempotent). */
+  initWatcher: (root: string) => void;
 }
 
 const mockContents = (): Record<string, string> => ({
@@ -77,13 +98,17 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   clipboard: null,
   pendingRename: null,
   pendingDelete: null,
+  conflicts: {},
+  autoSave: false,
 
   loadWorkspace: async (root) => {
     if (!isTauri()) return; // browser dev keeps the mock workspace
+    cancelAutosave();
+    get().initWatcher(root);
     try {
       const [fileTree, fileIndex] = await Promise.all([readFileTree(root), listFiles(root)]);
       // Drop contents of any previous workspace along with the tree.
-      set({ fileTree, fileIndex, fileContents: {}, fileErrors: {}, originalContents: {}, dirtyPaths: new Set(), clipboard: null, selectedTreeNode: null, pendingRename: null, pendingDelete: null });
+      set({ fileTree, fileIndex, fileContents: {}, fileErrors: {}, originalContents: {}, dirtyPaths: new Set(), clipboard: null, selectedTreeNode: null, pendingRename: null, pendingDelete: null, conflicts: {} });
     } catch (err) {
       console.error("failed to load workspace:", err);
     }
@@ -103,6 +128,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   },
 
   markDirty: (path, content) => {
+    scheduleAutosave(path);
     set((s) => {
       const fileContents = { ...s.fileContents, [path]: content };
       // FR-002: auto-clear dirty when content matches the original disk content.
@@ -137,6 +163,104 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
     } catch (err) {
       console.error(`Failed to save ${path}:`, err);
     }
+  },
+
+  revertFile: async (root, path) => {
+    try {
+      const content = await readFileContent(root, path);
+      set((s) => {
+        const dirtyPaths = new Set(s.dirtyPaths);
+        dirtyPaths.delete(path);
+        const conflicts = { ...s.conflicts };
+        delete conflicts[path];
+        const fileErrors = { ...s.fileErrors };
+        delete fileErrors[path];
+        return {
+          fileContents: { ...s.fileContents, [path]: content },
+          originalContents: { ...s.originalContents, [path]: content },
+          dirtyPaths,
+          conflicts,
+          fileErrors,
+        };
+      });
+    } catch (err) {
+      set((s) => ({ fileErrors: { ...s.fileErrors, [path]: String(err) } }));
+    }
+  },
+
+  keepMine: (path) =>
+    set((s) => {
+      const conflicts = { ...s.conflicts };
+      delete conflicts[path];
+      return { conflicts };
+    }),
+
+  saveAllDirty: async (root) => {
+    const failed: string[] = [];
+    for (const path of [...get().dirtyPaths]) {
+      try {
+        await get().saveFile(root, path);
+      } catch {
+        failed.push(path);
+      }
+    }
+    return failed;
+  },
+
+  setAutoSave: (v) => {
+    cancelAutosave();
+    set({ autoSave: v });
+  },
+
+  initWatcher: (root) => {
+    if (!isTauri() || watcherRoot === root) return;
+    watcherRoot = root;
+    void (async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const { listen } = await import("@tauri-apps/api/event");
+      if (!watcherSubscribed) {
+        watcherSubscribed = true;
+        // Use the CURRENT root at event time — a workspace switch must not
+        // leave this listener pointing at the previous workspace.
+        await listen<string[]>("fs://changed", (e) => {
+          const r = watcherRoot;
+          if (r) void handleFsChanged(r, e.payload);
+        });
+      }
+      await invoke("watch_workspace", { root }).catch((err) =>
+        console.error("watch_workspace failed:", err),
+      );
+    })();
+  },
+
+  refreshFiles: async (root, paths) => {
+    const clean = [...new Set(paths)].filter((p) => !get().dirtyPaths.has(p));
+    await Promise.all(
+      clean.map(async (p) => {
+        try {
+          const content = await readFileContent(root, p);
+          set((s) => {
+            const fileErrors = { ...s.fileErrors };
+            delete fileErrors[p];
+            return {
+              fileContents: { ...s.fileContents, [p]: content },
+              originalContents: { ...s.originalContents, [p]: content },
+              fileErrors,
+            };
+          });
+        } catch {
+          // Disk read failing after a replace is unexpected; drop the cache
+          // so the next open re-reads from disk instead of showing staleness.
+          set((s) => {
+            const fileContents = { ...s.fileContents };
+            const originalContents = { ...s.originalContents };
+            delete fileContents[p];
+            delete originalContents[p];
+            return { fileContents, originalContents };
+          });
+        }
+      }),
+    );
   },
 
   clearDirty: (path) => {
@@ -206,3 +330,97 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
 
   setPendingDelete: (node) => set({ pendingDelete: node }),
 }));
+
+// ── Auto-save (debounced, per path) ─────────────────────────────────────────
+
+const autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleAutosave(path: string) {
+  const st = useWorkspaceStore.getState();
+  if (!st.autoSave) return;
+  if (!useUIStore.getState().workspacePath) return;
+  clearTimeout(autosaveTimers.get(path));
+  autosaveTimers.set(
+    path,
+    setTimeout(() => {
+      autosaveTimers.delete(path);
+      const s = useWorkspaceStore.getState();
+      const root = useUIStore.getState().workspacePath;
+      if (root && s.dirtyPaths.has(path)) void s.saveFile(root, path);
+    }, 1000),
+  );
+}
+
+function cancelAutosave() {
+  for (const t of autosaveTimers.values()) clearTimeout(t);
+  autosaveTimers.clear();
+}
+
+// ── External file watcher ───────────────────────────────────────────────────
+
+let watcherRoot: string | null = null;
+let watcherSubscribed = false;
+let treeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Handle a batch of externally-changed workspace-relative paths:
+ * - clean open file changed → reload it silently
+ * - dirty open file changed/vanished → flag a conflict (banner in editor)
+ * - clean open file deleted → close its tabs and drop the buffer
+ * - anything else (new/renamed/deleted elsewhere) → debounced tree refresh
+ */
+async function handleFsChanged(root: string, paths: string[]) {
+  const s = useWorkspaceStore.getState();
+  const openPaths = new Set(Object.keys(s.fileContents));
+  const touched = paths.filter((p) => openPaths.has(p));
+  const treeChanged = paths.some((p) => !openPaths.has(p));
+
+  for (const p of touched) {
+    if (s.dirtyPaths.has(p)) {
+      // External change racing with local edits → let the user decide.
+      let kind: "modified" | "deleted" = "modified";
+      try {
+        await readFileContent(root, p);
+      } catch {
+        kind = "deleted";
+      }
+      useWorkspaceStore.setState((prev) => ({
+        conflicts: { ...prev.conflicts, [p]: kind },
+      }));
+      continue;
+    }
+    try {
+      const content = await readFileContent(root, p);
+      useWorkspaceStore.setState((prev) => {
+        const fileErrors = { ...prev.fileErrors };
+        delete fileErrors[p];
+        return {
+          fileContents: { ...prev.fileContents, [p]: content },
+          originalContents: { ...prev.originalContents, [p]: content },
+          fileErrors,
+        };
+      });
+    } catch {
+      // Clean file deleted on disk → drop buffer and close its tabs.
+      useWorkspaceStore.setState((prev) => {
+        const fileContents = { ...prev.fileContents };
+        const originalContents = { ...prev.originalContents };
+        delete fileContents[p];
+        delete originalContents[p];
+        return { fileContents, originalContents };
+      });
+      const ui = useUIStore.getState();
+      ui.openTabs
+        .filter((t) => t.kind === "file" && t.path === p)
+        .forEach((t) => ui.closeTab(tabKey(t)));
+    }
+  }
+
+  if (treeChanged) {
+    if (treeRefreshTimer) clearTimeout(treeRefreshTimer);
+    treeRefreshTimer = setTimeout(() => {
+      treeRefreshTimer = null;
+      void useWorkspaceStore.getState().refreshTree(root);
+    }, 500);
+  }
+}

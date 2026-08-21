@@ -93,18 +93,55 @@ describe("App.tsx — keyboard shortcuts (task 1.4)", () => {
     expect(src).toContain("toggleChat()");
   });
 
-  // ── Removed shortcuts: ⌘J, ⌘`, ⌘W, ⌘L ──────────────────────────────────
+  test("⌘⇧F: handler present and opens workspace search", () => {
+    expect(src).toContain('e.key === "F" || e.key === "f"');
+    expect(src).toContain("openSearch()");
+  });
+
+  test("⌘⇧F: native menu-action find_in_files opens workspace search", () => {
+    expect(src).toContain('case "find_in_files"');
+    expect(src).toContain("ui.openSearch()");
+  });
+
+  // ── Shortcut removals & restorations: ⌘J/⌘L removed; ⌘`/⌘W restored ──
 
   test("removed: ⌘J (toggle bottom panel) is absent", () => {
     expect(src.includes('e.key === "j"')).toBe(false);
   });
 
-  test("removed: ⌘` (terminal) is absent", () => {
-    expect(src.includes('e.key === "`"')).toBe(false);
+  test("⌘` toggles the terminal panel", () => {
+    expect(src.includes('e.key === "`"')).toBe(true);
+    expect(src.includes("useTerminalStore.getState().toggle()")).toBe(true);
   });
 
-  test("removed: ⌘W (close tab) is absent", () => {
-    expect(src.includes('e.key === "w"')).toBe(false);
+  test("⌘W closes the active tab (dirty-aware via closeActiveTabNonce)", () => {
+    expect(src.includes('e.key === "w"')).toBe(true);
+    expect(src.includes("requestCloseActiveTab()")).toBe(true);
+  });
+
+  test("⌘P toggles quick open", () => {
+    expect(src.includes('e.key === "p"')).toBe(true);
+    expect(src.includes("toggleQuickOpen()")).toBe(true);
+  });
+
+  test("⌘\\ toggles the split editor", () => {
+    expect(src.includes('e.key === "\\\\"')).toBe(true);
+    expect(src.includes("toggleSplit()")).toBe(true);
+  });
+
+  test("⌘1–9 activates the nth tab", () => {
+    expect(src.includes("/^[1-9]$/")).toBe(true);
+    expect(src.includes("setActiveTab(tabKey(tab))")).toBe(true);
+  });
+
+  test("Ctrl+Tab cycles open tabs", () => {
+    expect(src.includes('e.key === "Tab"')).toBe(true);
+    expect(src.includes("e.ctrlKey")).toBe(true);
+  });
+
+  test("window close is guarded for unsaved changes", () => {
+    expect(src.includes("app://close-requested")).toBe(true);
+    expect(src.includes("saveAllDirty")).toBe(true);
   });
 
   test("removed: ⌘L (focus composer) is absent", () => {
@@ -192,8 +229,12 @@ describe("App.tsx — WorkspaceLayout (task 1.4)", () => {
     expect(src.includes("BottomPanel")).toBe(false);
   });
 
-  test("does NOT import terminalStore", () => {
-    expect(src.includes("terminalStore")).toBe(false);
+  test("imports terminalStore", () => {
+    expect(src.includes("terminalStore")).toBe(true);
+  });
+
+  test("renders TerminalPanel below EditorArea", () => {
+    expect(src.includes("TerminalPanel")).toBe(true);
   });
 
   test("does NOT reference bottomVisible", () => {
@@ -223,8 +264,12 @@ describe("App.tsx — WorkspaceLayout (task 1.4)", () => {
     expect(src).toContain("<WelcomeScreen");
   });
 
-  test("App returns WorkspaceLayout for workspace screen", () => {
-    expect(src).toContain("return <WorkspaceLayout />");
+  test("App renders WorkspaceLayout for the workspace screen (welcome otherwise)", () => {
+    expect(src).toContain("<WorkspaceLayout />");
+    expect(src).toContain('screen === "welcome"');
+    // Close guard is mounted at the root so it works on the welcome screen too.
+    expect(src).toContain("useCloseRequestGuard()");
+    expect(src).toContain("{closeGuardDialog}");
   });
 
   test("WorkspaceLayout loads workspace on workspacePath change", () => {
@@ -745,9 +790,9 @@ describe("Task 1.4 — no dangling references to removed features", () => {
     workspaceSrc = await readSrc("lib/workspace.ts");
   });
 
-  test("App.tsx has no terminal references", () => {
-    expect(appSrc.includes("terminal")).toBe(false);
-    expect(appSrc.includes("Terminal")).toBe(false);
+  test("App.tsx wires the integrated terminal (TerminalPanel + terminalStore)", () => {
+    expect(appSrc.includes("TerminalPanel")).toBe(true);
+    expect(appSrc.includes("terminalStore")).toBe(true);
   });
 
   test("App.tsx has no graph references", () => {

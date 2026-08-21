@@ -184,7 +184,7 @@ describe("History panel — source wiring", () => {
     const src = readSrc("src/components/editor/EditorArea.tsx");
     expect(src).toContain("<CommitDetail");
     expect(src).toContain("<CompareView");
-    expect(src).toContain("<DiffView tab={activeTab} />");
+    expect(src).toContain("<DiffView tab={tab} />"); // inside TabContent
   });
 
   test("git.ts exposes gitDiffCommitFile with a browser mock", () => {
