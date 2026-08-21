@@ -143,15 +143,15 @@ export const useUIStore = create<UIState>((set) => ({
       sidebarVisible: s.activity === activity ? !s.sidebarVisible : true,
     })),
   openSearch: () =>
-    set((s) => ({
+    set((state) => ({
       activity: "search" as Activity,
       sidebarVisible: true,
-      searchFocusNonce: s.searchFocusNonce + 1,
+      searchFocusNonce: state.searchFocusNonce + 1,
     })),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   toggleChat: () => set((s) => ({ chatVisible: !s.chatVisible })),
   toggleTerminal: () =>
-    set((s) => ({
+    set((_s) => ({
       activity: "terminal" as Activity,
       sidebarVisible: true,
       quickOpenVisible: false,
