@@ -113,6 +113,7 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
       'label: "History"',
       'label: "Editor"',
       'label: "Search (⌘⇧F)"',
+      'label: "Terminal (⌘`)"',
     ]);
   });
 
@@ -187,8 +188,8 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
     expect(src.includes("terminalStore")).toBe(false);
   });
 
-  test("does NOT import terminal-related icons", () => {
-    expect(src.includes("Terminal")).toBe(false);
+  test("imports the Terminal icon for the terminal activity", () => {
+    expect(src.includes("Terminal")).toBe(true);
   });
 
   test("does NOT import graph-related icons", () => {

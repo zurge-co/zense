@@ -267,7 +267,7 @@ export function EditorArea() {
 /** Renders one tab's content (file editor, diff, commit, compare). */
 function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: boolean }) {
   const workspacePath = useUIStore((s) => s.workspacePath);
-  const { fileContents, fileErrors, loadFile, markDirty, revertFile, keepMine, saveFile } = useWorkspaceStore();
+  const { fileContents, fileErrors, loadFile, markDirty, revertFile, keepMine } = useWorkspaceStore();
   const conflicts = useWorkspaceStore((s) => s.conflicts);
 
   const path = tab.kind === "file" ? tab.path : null;
@@ -299,8 +299,9 @@ function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: b
                 <button
                   onClick={() => {
                     if (workspacePath) {
-                      void saveFile(workspacePath, path);
-                      keepMine(path);
+                      const ws = useWorkspaceStore.getState();
+                      ws.keepMine(path); // explicit choice — skip the ADR-003 re-prompt
+                      void ws.saveFile(workspacePath, path);
                     }
                   }}
                   className="rounded border border-yellow/40 px-2 py-0.5 hover:bg-yellow/20"

@@ -183,6 +183,30 @@ describe("revert + conflict UI", () => {
   });
 });
 
+// ── ADR-003: save guard for externally-changed buffers ─────────────────────
+
+describe("ADR-003 conflict save guard", () => {
+  let storeSrc: string;
+
+  beforeAll(async () => {
+    storeSrc = await srcRead("store/workspaceStore.ts");
+  });
+
+  test("saveFile is guarded by the conflicts map", () => {
+    expect(storeSrc).toContain("conflicts[path]");
+    expect(storeSrc).toContain("pendingConflictSave: path");
+  });
+
+  test("blocked save stays dirty — saveAllDirty reports it as failed", () => {
+    expect(storeSrc).toContain("if (get().dirtyPaths.has(path)) failed.push(path);");
+  });
+
+  test("App renders the conflict overwrite confirm dialog", async () => {
+    const app = await srcRead("App.tsx");
+    expect(app).toContain("pendingConflictSave");
+  });
+});
+
 // ── Split editor ────────────────────────────────────────────────────────────
 
 describe("split editor", () => {

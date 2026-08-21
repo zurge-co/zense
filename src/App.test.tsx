@@ -109,9 +109,9 @@ describe("App.tsx — keyboard shortcuts (task 1.4)", () => {
     expect(src.includes('e.key === "j"')).toBe(false);
   });
 
-  test("⌘` toggles the terminal panel", () => {
+  test("⌘` toggles the terminal activity", () => {
     expect(src.includes('e.key === "`"')).toBe(true);
-    expect(src.includes("useTerminalStore.getState().toggle()")).toBe(true);
+    expect(src.includes("toggleTerminal()")).toBe(true);
   });
 
   test("⌘W closes the active tab (dirty-aware via closeActiveTabNonce)", () => {

@@ -586,11 +586,10 @@ describe("Task 1.5 — no dangling agent/terminal references across all 3 files"
     expect(settingsSrc.includes("Terminal")).toBe(false);
   });
 
-  test("settings.ts has no Store import from tauri-plugin-store", () => {
-    // The JSDoc comment mentions tauri-plugin-store as documentation,
-    // but there must be no actual import of Store from that package.
-    expect(settingsSrc.includes('import { Store }')).toBe(false);
-    expect(settingsSrc.includes('from "@tauri-apps/plugin-store"')).toBe(false);
+  test("settings.ts has no dynamic plugin-store import", () => {
+    // Store access uses a single static import so Vite does not warn
+    // about ineffective dynamic imports (module is in the main chunk).
+    expect(settingsSrc.includes('await import("@tauri-apps/plugin-store"')).toBe(false);
   });
 
   test("StatusBar.tsx has no bottomVisible or toggleBottom references", () => {
