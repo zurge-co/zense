@@ -33,6 +33,8 @@ impl From<String> for ToolError {
 // ---------------------------------------------------------------------------
 
 /// Default fallback if no guard is configured.
+/// NOTE: Used in debug tests only; production uses cfg.guards.max_tool_output.
+#[allow(dead_code)]
 pub const DEFAULT_MAX_TOOL_OUTPUT: usize = 50_000;
 
 /// Truncate at a UTF-8 char boundary to avoid splitting multi-byte chars.

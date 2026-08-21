@@ -148,6 +148,8 @@ fn build_menu(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
 }
 
 /// The currently focused webview window, falling back to the main window.
+/// Used in devtools toggle; not needed except in debug builds.
+#[allow(dead_code)]
 fn focused_webview(app: &AppHandle) -> Option<WebviewWindow> {
   app
     .webview_windows()

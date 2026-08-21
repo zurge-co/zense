@@ -11,8 +11,8 @@ import { SideBar } from "./components/sidebar/SideBar";
 import { EditorArea } from "./components/editor/EditorArea";
 import { ComposerPanel } from "./components/chat/ComposerPanel";
 import { TerminalPanel } from "./components/terminal/TerminalPanel";
-import { useTerminalStore } from "./store/terminalStore";
 import { QuickOpen } from "./components/QuickOpen";
+import { useTerminalStore } from "./store/terminalStore";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { useState } from "react";
 import { SettingsModal } from "./components/settings/SettingsModal";
@@ -44,7 +44,7 @@ export default function App() {
 }
 
 function WorkspaceLayout() {
-  const { sidebarVisible, chatVisible, workspacePath } = useUIStore();
+  const { sidebarVisible, chatVisible, workspacePath, activity } = useUIStore();
 
   // Load the real file tree + index whenever the workspace changes.
   useEffect(() => {
@@ -60,8 +60,11 @@ function WorkspaceLayout() {
         <ActivityBar />
         {sidebarVisible && <SideBar />}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <EditorArea />
-          <TerminalPanel />
+          {activity === "terminal" ? (
+            <TerminalPanel />
+          ) : (
+            <EditorArea />
+          )}
         </div>
         {chatVisible && <ComposerPanel />}
       </div>
@@ -197,6 +200,24 @@ function useMenuEvents() {
         case "find_in_files":
           ui.openSearch();
           break;
+        case "toggle_terminal":
+          ui.toggleTerminal();
+          break;
+        case "search":
+          ui.openSearch();
+          break;
+        case "review":
+          ui.setActivity("review");
+          break;
+        case "history":
+          ui.setActivity("history");
+          break;
+        case "editor":
+          ui.setActivity("editor");
+          break;
+        case "terminal":
+          ui.toggleTerminal();
+          break;
       }
     });
     return () => {
@@ -206,8 +227,9 @@ function useMenuEvents() {
 }
 
 function useKeyboardShortcuts() {
-  const { toggleSidebar, toggleChat, closeSettings, openSettings, openSearch } =
+  const { toggleSidebar, toggleChat, closeSettings, openSettings, openSearch, toggleTerminal } =
     useUIStore();
+  const toggleTerminalShortcut = useTerminalStore.getState().toggle;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -233,9 +255,9 @@ function useKeyboardShortcuts() {
         } else if (e.shiftKey && (e.key === "F" || e.key === "f")) {
           e.preventDefault();
           openSearch();
-        } else if (e.key === "`") {
+        } else if ((e.key === "`") && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
-          useTerminalStore.getState().toggle();
+          toggleTerminalShortcut();
         } else if (e.key === "p" && !e.shiftKey) {
           e.preventDefault();
           useUIStore.getState().toggleQuickOpen();
@@ -326,7 +348,7 @@ function useKeyboardShortcuts() {
       window.removeEventListener("keydown", onTreeKey);
       window.removeEventListener("keydown", onEsc);
     };
-  }, [toggleSidebar, toggleChat, closeSettings, openSettings, openSearch]);
+  }, [toggleSidebar, toggleChat, closeSettings, openSettings, openSearch, toggleTerminal, toggleTerminalShortcut]);
 }
 
 /** True when the user is typing in an input, textarea, or Monaco editor. */

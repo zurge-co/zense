@@ -2,6 +2,9 @@
 
 /// Build the system prompt for the LLM agent. Includes role, tool
 /// instructions, output formats, and workspace context.
+/// NOTE: This function is unused in the current codebase; frontend builds
+/// prompts inline from its own storage. Kept for potential future use/separation.
+#[allow(dead_code)]
 pub fn build_system_prompt(workspace_root: &str, branch: Option<&str>) -> String {
   let branch_line = match branch {
     Some(b) => format!("Current git branch: {b}\n"),

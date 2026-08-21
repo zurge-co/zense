@@ -1,4 +1,4 @@
-import { Files, GitBranch, History, Search, Settings } from "lucide-react";
+import { Files, GitBranch, History, Search, Settings, Terminal } from "lucide-react";
 import { useUIStore, type Activity } from "../../store/uiStore";
 
 const items: { id: Activity; icon: typeof Files; label: string }[] = [
@@ -6,6 +6,7 @@ const items: { id: Activity; icon: typeof Files; label: string }[] = [
   { id: "history", icon: History, label: "History" },
   { id: "editor", icon: Files, label: "Editor" },
   { id: "search", icon: Search, label: "Search (⌘⇧F)" },
+  { id: "terminal", icon: Terminal, label: "Terminal (⌘`)" },
 ];
 
 export function ActivityBar() {

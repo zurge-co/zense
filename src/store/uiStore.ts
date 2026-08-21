@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type Activity = "review" | "history" | "editor" | "search";
+export type Activity = "review" | "history" | "editor" | "search" | "terminal";
 export type Screen = "welcome" | "workspace";
 export type SettingsSection = "general" | "appearance" | "llm" | "shortcuts";
 export type DiffMode = "split" | "inline";
@@ -73,6 +73,8 @@ interface UIState {
   openSearch: () => void;
   toggleSidebar: () => void;
   toggleChat: () => void;
+  /** Open terminal panel and focus its input (⌘`). */
+  toggleTerminal: () => void;
   /** Commit sha selected as the base for "Compare with Selected". */
   historyCompareBase: string | null;
 
@@ -148,6 +150,12 @@ export const useUIStore = create<UIState>((set) => ({
     })),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   toggleChat: () => set((s) => ({ chatVisible: !s.chatVisible })),
+  toggleTerminal: () =>
+    set((s) => ({
+      activity: "terminal" as Activity,
+      sidebarVisible: true,
+      quickOpenVisible: false,
+    })),
   openFile: (path) => {
     const tab: EditorTab = { kind: "file", path };
     const key = tabKey(tab);
