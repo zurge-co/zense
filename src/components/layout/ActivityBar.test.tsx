@@ -300,9 +300,9 @@ describe("SideBar.tsx — task 1.3 structural verification", () => {
     expect(src).toContain('activity === "review" && <ReviewPanel');
   });
 
-  test("renders placeholder div when activity is history", () => {
-    expect(src).toContain('activity === "history"');
-    expect(src).toContain("No commits yet");
+  test("renders HistoryPanel when activity is history", () => {
+    expect(src).toContain('activity === "history" && <HistoryPanel />');
+    expect(src).not.toContain("No commits yet");
   });
 
   test("does NOT render GitPanel (old name)", () => {
@@ -433,10 +433,12 @@ describe("ReviewPanel.tsx — task 1.3 structural verification", () => {
   });
 
   test("has statusColor map for M, A, D statuses", () => {
-    // Keys are unquoted in the source: M: "text-yellow", A: "text-green", D: "text-danger"
-    expect(src).toContain('M: "text-yellow"');
-    expect(src).toContain('A: "text-green"');
-    expect(src).toContain('D: "text-danger"');
+    // The map lives in src/lib/statusColor.ts (shared with History/Commit views).
+    expect(src).toContain('from "../../lib/statusColor"');
+    const map = fs.readFileSync(path.resolve(ROOT, "src/lib/statusColor.ts"), "utf-8");
+    expect(map).toContain('M: "text-yellow"');
+    expect(map).toContain('A: "text-green"');
+    expect(map).toContain('D: "text-danger"');
   });
 
   test("displays diff stats (adds/dels) per file", () => {
@@ -513,7 +515,7 @@ describe("ReviewPanel — mockData interaction", () => {
     useUIStore.getState().openDiff("src/auth/login.ts");
     const state = useUIStore.getState();
     expect(state.openTabs).toEqual([{ kind: "diff", path: "src/auth/login.ts" }]);
-    expect(state.activeTabKey).toBe("diff:src/auth/login.ts");
+    expect(state.activeTabKey).toBe("diff:src/auth/login.ts::");
     expect(state.selectedFile).toBe("src/auth/login.ts");
   });
 

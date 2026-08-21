@@ -1,6 +1,7 @@
 import { useUIStore } from "../../store/uiStore";
 import { FileTree } from "./FileTree";
 import { ReviewPanel } from "./ReviewPanel";
+import { HistoryPanel } from "./HistoryPanel";
 
 const titles: Record<string, string> = {
   review: "Review",
@@ -19,9 +20,7 @@ export function SideBar() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         {activity === "explorer" && <FileTree />}
         {activity === "review" && <ReviewPanel />}
-        {activity === "history" && (
-          <div className="p-3 text-[12.5px] text-fg-muted">No commits yet</div>
-        )}
+        {activity === "history" && <HistoryPanel />}
       </div>
     </div>
   );

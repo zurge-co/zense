@@ -29,6 +29,7 @@ pub fn run() {
       gitcmd::git_log,
       gitcmd::git_show,
       gitcmd::git_diff_commits,
+      gitcmd::git_diff_commit_file,
     ])
     .setup(|app| {
       // Build native macOS menu bar with File > New Window (⌘N)

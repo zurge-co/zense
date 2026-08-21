@@ -14,7 +14,7 @@
  * errors. No Node.js APIs (fs, path, __dirname) are used.
  */
 const { describe, test, expect, beforeAll, beforeEach } = await import("bun:test");
-import { useUIStore } from "../../store/uiStore";
+import { useUIStore, tabKey } from "../../store/uiStore";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -485,7 +485,7 @@ describe("StatusBar — store interaction: active tab file type (task 1.5)", () 
     useUIStore.getState().openFile("src/auth/token.rs");
     const state = useUIStore.getState();
     const activeTab = state.openTabs.find(
-      (t) => `${t.kind}:${t.path}` === state.activeTabKey,
+      (t) => tabKey(t) === state.activeTabKey,
     );
     expect(activeTab).toEqual({ kind: "file", path: "src/auth/token.rs" });
     const file = activeTab!.path.split("/").pop();
@@ -497,7 +497,7 @@ describe("StatusBar — store interaction: active tab file type (task 1.5)", () 
     useUIStore.getState().openFile("src/auth/login.ts");
     const state = useUIStore.getState();
     const activeTab = state.openTabs.find(
-      (t) => `${t.kind}:${t.path}` === state.activeTabKey,
+      (t) => tabKey(t) === state.activeTabKey,
     );
     const file = activeTab!.path.split("/").pop();
     expect(file).toBe("login.ts");
@@ -507,7 +507,7 @@ describe("StatusBar — store interaction: active tab file type (task 1.5)", () 
   test("no active tab yields null file (file type span not rendered)", () => {
     const state = useUIStore.getState();
     const activeTab = state.openTabs.find(
-      (t) => `${t.kind}:${t.path}` === state.activeTabKey,
+      (t) => tabKey(t) === state.activeTabKey,
     );
     expect(activeTab).toBe(undefined);
     const file = activeTab ? activeTab.path.split("/").pop() : null;
@@ -518,7 +518,7 @@ describe("StatusBar — store interaction: active tab file type (task 1.5)", () 
     useUIStore.getState().openDiff("src/auth/login.ts");
     const state = useUIStore.getState();
     const activeTab = state.openTabs.find(
-      (t) => `${t.kind}:${t.path}` === state.activeTabKey,
+      (t) => tabKey(t) === state.activeTabKey,
     );
     expect(activeTab).toEqual({ kind: "diff", path: "src/auth/login.ts" });
     const file = activeTab!.path.split("/").pop();
@@ -529,7 +529,7 @@ describe("StatusBar — store interaction: active tab file type (task 1.5)", () 
     useUIStore.getState().openFile("src/deep/nested/folder/file.rs");
     const state = useUIStore.getState();
     const activeTab = state.openTabs.find(
-      (t) => `${t.kind}:${t.path}` === state.activeTabKey,
+      (t) => tabKey(t) === state.activeTabKey,
     );
     const file = activeTab!.path.split("/").pop();
     expect(file).toBe("file.rs");

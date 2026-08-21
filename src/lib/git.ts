@@ -195,6 +195,29 @@ export async function gitShow(root: string, sha: string): Promise<GitShowCommit>
   return invoke<GitShowCommit>("git_show", { root, sha });
 }
 
+/**
+ * Per-file content diff between two commits (or a commit vs its first
+ * parent when `fromSha` is null; root commit diffs against the empty tree).
+ */
+export async function gitDiffCommitFile(
+  root: string,
+  path: string,
+  fromSha: string | null,
+  toSha: string
+): Promise<GitDiffFile> {
+  if (!isTauri()) {
+    const content = mockFiles[path]?.content ?? "// mock content\n";
+    return {
+      path,
+      status: "M",
+      original: `// at ${fromSha ? fromSha.slice(0, 7) : "parent"}\n${content}`,
+      modified: content,
+      isBinary: false,
+    };
+  }
+  return invoke<GitDiffFile>("git_diff_commit_file", { root, path, fromSha, toSha });
+}
+
 export async function gitDiffCommits(root: string, fromSha: string, toSha: string): Promise<GitDiffCommits> {
   if (!isTauri()) {
     return {

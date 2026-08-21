@@ -58,10 +58,10 @@
 
 ## 📜 History
 
-- [x] Backend: `git_log` (newest-first, offset/limit, per-commit stats) + `git_show` (commit detail) + `git_diff_commits` (compare 2 commits)
-- [ ] History panel UI: commit list (infinite scroll) — **backend พร้อม, UI ยังเป็น placeholder "No commits yet"**
-- [ ] Commit detail view (files changed + stats)
-- [ ] Compare commits/branches (diff view 2 commits)
+- [x] Backend: `git_log` (newest-first, offset/limit, per-commit stats) + `git_show` (commit detail) + `git_diff_commits` (compare 2 commits) + `git_diff_commit_file` (per-file diff commit↔parent หรือ from→to)
+- [x] History panel UI: commit list (infinite scroll via IntersectionObserver, relative time, +/− stats, merge badge, refresh + error/empty states, context menu: Open / Copy SHA / Select for Compare)
+- [x] Commit detail view (tab `{kind:"commit"}` — header message/author/time/sha + file list w/ stats; คลิกไฟล์ → diff vs parent)
+- [x] Compare commits (Select for Compare → Compare with Selected → tab `{kind:"compare"}` รายการไฟล์ +/− totals; คลิกไฟล์ → diff from→to)
 
 ## 📝 Editor (Monaco)
 
@@ -81,7 +81,8 @@
 - [x] HEAD ⟷ Working Tree + stats +x −y
 - [x] รองรับไฟล์ M / A / D + binary placeholder
 - [x] Diff จริงจาก git2 (`git_diff_file` — HEAD blob vs index / index vs workdir)
-- [ ] Compare commits/branches (ต่อยอดจาก tab model `{kind:"diff"}`)
+- [x] Compare commits (tab `{kind:"compare"}` + `{kind:"commitDiff"}` reuse Monaco DiffView)
+- [ ] Compare branches (ยังไม่มี branch picker)
 
 ## ⚙️ Settings
 

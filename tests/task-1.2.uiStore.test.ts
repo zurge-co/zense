@@ -179,7 +179,7 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     useUIStore.getState().openFile("src/main.ts");
     const state = useUIStore.getState();
     expect(state.openTabs).toEqual([{ kind: "file", path: "src/main.ts" }]);
-    expect(state.activeTabKey).toBe("file:src/main.ts");
+    expect(state.activeTabKey).toBe("file:src/main.ts::");
     expect(state.selectedFile).toBe("src/main.ts");
   });
 
@@ -193,7 +193,7 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     useUIStore.getState().openDiff("src/main.ts");
     const state = useUIStore.getState();
     expect(state.openTabs).toEqual([{ kind: "diff", path: "src/main.ts" }]);
-    expect(state.activeTabKey).toBe("diff:src/main.ts");
+    expect(state.activeTabKey).toBe("diff:src/main.ts::");
     expect(state.selectedFile).toBe("src/main.ts");
   });
 
@@ -206,7 +206,7 @@ describe("uiStore — task 1.2 cleanup verification", () => {
   test("closeTab removes the tab", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openFile("src/b.ts");
-    useUIStore.getState().closeTab("file:src/a.ts");
+    useUIStore.getState().closeTab("file:src/a.ts::");
     const state = useUIStore.getState();
     expect(state.openTabs).toEqual([{ kind: "file", path: "src/b.ts" }]);
   });
@@ -215,31 +215,31 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openFile("src/b.ts");
     // active is now b
-    useUIStore.getState().closeTab("file:src/b.ts");
+    useUIStore.getState().closeTab("file:src/b.ts::");
     const state = useUIStore.getState();
-    expect(state.activeTabKey).toBe("file:src/a.ts");
+    expect(state.activeTabKey).toBe("file:src/a.ts::");
     expect(state.selectedFile).toBe("src/a.ts");
   });
 
   test("closeTab on active tab with no remaining tabs nulls activeTabKey", () => {
     useUIStore.getState().openFile("src/a.ts");
-    useUIStore.getState().closeTab("file:src/a.ts");
+    useUIStore.getState().closeTab("file:src/a.ts::");
     expect(useUIStore.getState().activeTabKey).toBe(null);
   });
 
   test("closeTab on inactive tab does not change activeTabKey", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openFile("src/b.ts");
-    useUIStore.getState().closeTab("file:src/a.ts");
-    expect(useUIStore.getState().activeTabKey).toBe("file:src/b.ts");
+    useUIStore.getState().closeTab("file:src/a.ts::");
+    expect(useUIStore.getState().activeTabKey).toBe("file:src/b.ts::");
   });
 
   test("setActiveTab updates activeTabKey and selectedFile", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openFile("src/b.ts");
-    useUIStore.getState().setActiveTab("file:src/a.ts");
+    useUIStore.getState().setActiveTab("file:src/a.ts::");
     const state = useUIStore.getState();
-    expect(state.activeTabKey).toBe("file:src/a.ts");
+    expect(state.activeTabKey).toBe("file:src/a.ts::");
     expect(state.selectedFile).toBe("src/a.ts");
   });
 

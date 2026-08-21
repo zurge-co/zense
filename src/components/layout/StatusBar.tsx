@@ -1,11 +1,11 @@
 import { GitBranch, CircleX, TriangleAlert } from "lucide-react";
-import { useUIStore } from "../../store/uiStore";
+import { useUIStore, tabKey } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
 
 export function StatusBar() {
   const { openTabs, activeTabKey } = useUIStore();
   const { branchInfo, status } = useGitStore();
-  const activeTab = openTabs.find((t) => `${t.kind}:${t.path}` === activeTabKey);
+  const activeTab = openTabs.find((t) => tabKey(t) === activeTabKey);
   const file = activeTab ? activeTab.path.split("/").pop() : null;
   const branchLabel = branchInfo.detached ? "detached HEAD" : (branchInfo.branch ?? "main");
   const dirty = status.files.length > 0;

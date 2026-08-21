@@ -5,13 +5,24 @@ export type Screen = "welcome" | "workspace";
 export type SettingsSection = "general" | "appearance" | "llm" | "shortcuts";
 export type DiffMode = "split" | "inline";
 
-/** A tab in the editor area — either a normal file or a working-tree diff. */
+/**
+ * A tab in the editor area.
+ * - `file` — editable file from disk (`path` = workspace-relative path)
+ * - `diff` — working-tree diff vs HEAD (`path` = file path)
+ * - `commit` — commit detail view (`path` = commit sha)
+ * - `commitDiff` — file diff between commits (`path` = file path,
+ *   `toSha` = commit, `fromSha` = explicit base or null → first parent)
+ * - `compare` — compare view between two commits (`path` = "from..to")
+ */
 export interface EditorTab {
-  kind: "file" | "diff";
+  kind: "file" | "diff" | "commit" | "commitDiff" | "compare";
   path: string;
+  fromSha?: string | null;
+  toSha?: string;
 }
 
-export const tabKey = (t: EditorTab) => `${t.kind}:${t.path}`;
+export const tabKey = (t: EditorTab) =>
+  `${t.kind}:${t.path}:${t.fromSha ?? ""}:${t.toSha ?? ""}`;
 
 /** A piece of code context attached to a composed prompt. */
 export interface ContextChip {
@@ -49,8 +60,15 @@ interface UIState {
   setActivity: (a: Activity) => void;
   toggleSidebar: () => void;
   toggleChat: () => void;
+  /** Commit sha selected as the base for "Compare with Selected". */
+  historyCompareBase: string | null;
+
   openFile: (path: string) => void;
   openDiff: (path: string) => void;
+  openCommit: (sha: string) => void;
+  openCompare: (fromSha: string, toSha: string) => void;
+  openCommitFileDiff: (path: string, toSha: string, fromSha?: string | null) => void;
+  setHistoryCompareBase: (sha: string | null) => void;
   closeTab: (key: string) => void;
   closeOtherTabs: (key: string) => void;
   closeAllTabs: () => void;
@@ -74,6 +92,7 @@ export const useUIStore = create<UIState>((set) => ({
   activeTabKey: null,
   selectedFile: null,
   diffMode: "split",
+  historyCompareBase: null,
 
   settingsOpen: false,
   settingsSection: "general",
@@ -113,6 +132,33 @@ export const useUIStore = create<UIState>((set) => ({
       openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
     }));
   },
+  openCommit: (sha) => {
+    const tab: EditorTab = { kind: "commit", path: sha };
+    const key = tabKey(tab);
+    set((s) => ({
+      activeTabKey: key,
+      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
+    }));
+  },
+  openCompare: (fromSha, toSha) => {
+    const tab: EditorTab = { kind: "compare", path: `${fromSha}..${toSha}`, fromSha, toSha };
+    const key = tabKey(tab);
+    set((s) => ({
+      activeTabKey: key,
+      historyCompareBase: null,
+      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
+    }));
+  },
+  openCommitFileDiff: (path, toSha, fromSha = null) => {
+    const tab: EditorTab = { kind: "commitDiff", path, fromSha, toSha };
+    const key = tabKey(tab);
+    set((s) => ({
+      selectedFile: path,
+      activeTabKey: key,
+      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
+    }));
+  },
+  setHistoryCompareBase: (historyCompareBase) => set({ historyCompareBase }),
   closeTab: (key) =>
     set((s) => {
       const openTabs = s.openTabs.filter((t) => tabKey(t) !== key);

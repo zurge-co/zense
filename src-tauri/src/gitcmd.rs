@@ -1000,6 +1000,127 @@ pub fn git_diff_commits(
 }
 
 // ---------------------------------------------------------------------------
+// Command 11: git_diff_commit_file
+// ---------------------------------------------------------------------------
+
+/// Read blob content from a tree at `path`. Returns Ok("") when the file is
+/// absent (e.g. added on the "to" side). Returns Err only for real failures.
+fn read_tree_blob(repo: &Repository, tree: &git2::Tree, path: &str) -> Result<String, String> {
+  let entry = match tree.get_path(Path::new(path)) {
+    Ok(e) => e,
+    Err(_) => return Ok(String::new()),
+  };
+  let blob = repo.find_blob(entry.id()).map_err(|e| e.to_string())?;
+  if blob.is_binary() {
+    return Ok(String::new());
+  }
+  Ok(String::from_utf8_lossy(blob.content()).into_owned())
+}
+
+/// Check if the blob at `path` inside `tree` is binary. Returns false if absent.
+fn is_tree_blob_binary(repo: &Repository, tree: &git2::Tree, path: &str) -> bool {
+  tree
+    .get_path(Path::new(path))
+    .ok()
+    .and_then(|e| repo.find_blob(e.id()).ok())
+    .map(|b| b.is_binary())
+    .unwrap_or(false)
+}
+
+/// Full original + modified content of a single file between two commits for
+/// the Monaco DiffEditor. When `from_sha` is None, diffs `to_sha` against its
+/// first parent (empty tree for root commits). Binary on either side returns
+/// empty content with `is_binary=true`.
+#[tauri::command]
+pub fn git_diff_commit_file(
+  root: String,
+  path: String,
+  from_sha: Option<String>,
+  to_sha: String,
+) -> Result<GitDiffFile, String> {
+  let repo = open_repo_or_err(&root)?;
+  validate_repo_path(&path)?;
+  let path_norm = path.replace('\\', "/");
+
+  let to_oid =
+    git2::Oid::from_str(&to_sha).map_err(|_| "invalid commit sha".to_string())?;
+  let to_commit = repo
+    .find_commit(to_oid)
+    .map_err(|_| "commit not found".to_string())?;
+  let to_tree = to_commit.tree().map_err(|e| e.to_string())?;
+
+  let from_tree = match from_sha {
+    Some(sha) => {
+      let oid = git2::Oid::from_str(&sha).map_err(|_| "invalid commit sha".to_string())?;
+      let commit = repo
+        .find_commit(oid)
+        .map_err(|_| "commit not found".to_string())?;
+      Some(commit.tree().map_err(|e| e.to_string())?)
+    }
+    None => {
+      if to_commit.parent_count() > 0 {
+        let parent = to_commit.parent(0).map_err(|e| e.to_string())?;
+        Some(parent.tree().map_err(|e| e.to_string())?)
+      } else {
+        None // root commit → empty tree
+      }
+    }
+  };
+
+  // Find the delta for this path to determine status / old_path (renames).
+  let diff = repo
+    .diff_tree_to_tree(from_tree.as_ref(), Some(&to_tree), None)
+    .map_err(|e| e.to_string())?;
+  let mut status = "M".to_string();
+  let mut old_path: Option<String> = None;
+  for delta in diff.deltas() {
+    let dp = delta
+      .new_file()
+      .path()
+      .or_else(|| delta.old_file().path())
+      .map(|p| p.to_string_lossy().replace('\\', "/"))
+      .unwrap_or_default();
+    if dp == path_norm {
+      status = delta_status(delta.status()).to_string();
+      if delta.status() == Delta::Renamed {
+        old_path = delta
+          .old_file()
+          .path()
+          .map(|p| p.to_string_lossy().replace('\\', "/"));
+      }
+      break;
+    }
+  }
+
+  let orig_key = old_path.clone().unwrap_or_else(|| path_norm.clone());
+  let old_binary = from_tree
+    .as_ref()
+    .map(|t| is_tree_blob_binary(&repo, t, &orig_key))
+    .unwrap_or(false);
+  let new_binary = is_tree_blob_binary(&repo, &to_tree, &path_norm);
+
+  let (original, modified, is_binary) = if old_binary || new_binary {
+    (String::new(), String::new(), true)
+  } else {
+    let original = match &from_tree {
+      Some(t) => read_tree_blob(&repo, t, &orig_key)?,
+      None => String::new(),
+    };
+    let modified = read_tree_blob(&repo, &to_tree, &path_norm)?;
+    (original, modified, false)
+  };
+
+  Ok(GitDiffFile {
+    path: path_norm,
+    status,
+    original,
+    modified,
+    is_binary,
+    old_path,
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1863,6 +1984,130 @@ mod tests {
     assert_eq!(n.status, "A");
 
     assert!(git_diff_commits(root.clone(), "bad".into(), c2.to_string()).is_err());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  // -- git_diff_commit_file tests -------------------------------------------
+
+  #[test]
+  fn test_git_diff_commit_file_modified() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "line1\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    commit_head(&repo, "c1").unwrap();
+    fs::write(dir.join("a.txt"), "line1\nline2\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    let c2 = commit_head(&repo, "c2").unwrap();
+
+    // No from_sha → diff against first parent (c1).
+    let d = git_diff_commit_file(root.clone(), "a.txt".into(), None, c2.to_string()).unwrap();
+    assert_eq!(d.status, "M");
+    assert_eq!(d.original, "line1\n");
+    assert_eq!(d.modified, "line1\nline2\n");
+    assert!(!d.is_binary);
+    assert!(d.old_path.is_none());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_diff_commit_file_root_commit_added() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    let c1 = commit_head(&repo, "initial").unwrap();
+
+    // Root commit has no parent → original must be empty.
+    let d = git_diff_commit_file(root.clone(), "a.txt".into(), None, c1.to_string()).unwrap();
+    assert_eq!(d.status, "A");
+    assert_eq!(d.original, "");
+    assert_eq!(d.modified, "hello\n");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_diff_commit_file_deleted() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "gone\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    commit_head(&repo, "c1").unwrap();
+
+    // Delete from index + commit.
+    let mut index = repo.index().unwrap();
+    index.remove_path(Path::new("a.txt")).unwrap();
+    index.write().unwrap();
+    fs::remove_file(dir.join("a.txt")).unwrap();
+    let c2 = commit_head(&repo, "c2").unwrap();
+
+    let d = git_diff_commit_file(root.clone(), "a.txt".into(), None, c2.to_string()).unwrap();
+    assert_eq!(d.status, "D");
+    assert_eq!(d.original, "gone\n");
+    assert_eq!(d.modified, "");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_diff_commit_file_explicit_from_to() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "v1\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    let c1 = commit_head(&repo, "c1").unwrap();
+    fs::write(dir.join("a.txt"), "v1\nv2\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    let c2 = commit_head(&repo, "c2").unwrap();
+    fs::write(dir.join("a.txt"), "v1\nv2\nv3\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    let c3 = commit_head(&repo, "c3").unwrap();
+
+    // Explicit from → skips intermediate commits.
+    let d = git_diff_commit_file(
+      root.clone(),
+      "a.txt".into(),
+      Some(c1.to_string()),
+      c3.to_string(),
+    )
+    .unwrap();
+    assert_eq!(d.original, "v1\n");
+    assert_eq!(d.modified, "v1\nv2\nv3\n");
+
+    // c2 → c3: only the last hunk.
+    let d2 = git_diff_commit_file(
+      root.clone(),
+      "a.txt".into(),
+      Some(c2.to_string()),
+      c3.to_string(),
+    )
+    .unwrap();
+    assert_eq!(d2.original, "v1\nv2\n");
+    assert_eq!(d2.modified, "v1\nv2\nv3\n");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_diff_commit_file_errors() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "a\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    let c1 = commit_head(&repo, "c1").unwrap();
+
+    assert!(git_diff_commit_file(root.clone(), "a.txt".into(), None, "bad".into()).is_err());
+    assert!(
+      git_diff_commit_file(root.clone(), "a.txt".into(), Some("bad".into()), c1.to_string())
+        .is_err()
+    );
+    // Path traversal rejected.
+    assert!(
+      git_diff_commit_file(root.clone(), "../x".into(), None, c1.to_string()).is_err()
+    );
     fs::remove_dir_all(&dir).ok();
   }
 }

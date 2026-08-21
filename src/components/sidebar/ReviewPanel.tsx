@@ -2,14 +2,7 @@ import { useEffect, useState } from "react";
 import { GitBranch, Sparkles, Check, RefreshCw, FileDiff, Plus, Minus } from "lucide-react";
 import { useGitStore } from "../../store/gitStore";
 import { useUIStore } from "../../store/uiStore";
-
-const statusColor: Record<string, string> = {
-  M: "text-yellow",
-  A: "text-green",
-  D: "text-danger",
-  R: "text-accent",
-  C: "text-danger",
-};
+import { statusColor } from "../../lib/statusColor";
 
 export function ReviewPanel() {
   const { openDiff, workspacePath } = useUIStore();

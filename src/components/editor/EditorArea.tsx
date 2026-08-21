@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { X, ChevronRight, File, Sparkles, SplitSquareHorizontal, GitCompareArrows, TriangleAlert, CopyX, XCircle } from "lucide-react";
+import { X, ChevronRight, File, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle } from "lucide-react";
 import { useUIStore, tabKey } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { detectLanguage } from "../../lib/lang";
 import { CodeEditor } from "./CodeEditor";
 import { DiffView } from "./DiffView";
+import { CommitDetail } from "./CommitDetail";
+import { CompareView } from "./CompareView";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { ConfirmDialog } from "../ConfirmDialog";
 
@@ -93,7 +95,12 @@ export function EditorArea() {
       <div className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-border bg-panel">
         {openTabs.map((tab) => {
           const key = tabKey(tab);
-          const name = tab.path.split("/").pop()!;
+          const name =
+            tab.kind === "commit"
+              ? tab.path.slice(0, 7)
+              : tab.kind === "compare"
+                ? `${tab.fromSha?.slice(0, 7) ?? ""}..${tab.toSha?.slice(0, 7) ?? ""}`
+                : tab.path.split("/").pop()!;
           const active = key === activeTabKey;
           return (
             <div
@@ -107,14 +114,22 @@ export function EditorArea() {
                 active ? "bg-base text-fg" : "text-fg-muted hover:bg-hover hover:text-fg"
               }`}
             >
-              {tab.kind === "diff" ? (
+              {tab.kind === "diff" || tab.kind === "commitDiff" || tab.kind === "compare" ? (
                 <GitCompareArrows size={13} className={active ? "text-accent" : "text-fg-muted"} />
+              ) : tab.kind === "commit" ? (
+                <GitCommitHorizontal size={13} className={active ? "text-accent" : "text-fg-muted"} />
               ) : (
                 <File size={13} className={active ? "text-accent" : "text-fg-muted"} />
               )}
               <span>{name}</span>
               {tab.kind === "diff" && (
                 <span className="rounded bg-accent/15 px-1 text-[9.5px] font-medium text-accent">DIFF</span>
+              )}
+              {tab.kind === "commitDiff" && (
+                <span className="rounded bg-accent/15 px-1 text-[9.5px] font-medium text-accent">DIFF</span>
+              )}
+              {tab.kind === "compare" && (
+                <span className="rounded bg-accent/15 px-1 text-[9.5px] font-medium text-accent">CMP</span>
               )}
               {tab.kind === "file" && dirtyPaths.has(tab.path) ? (
                 <button
@@ -152,8 +167,12 @@ export function EditorArea() {
         </button>
       </div>
 
-      {activeTab?.kind === "diff" ? (
-        <DiffView path={activeTab.path} />
+      {activeTab?.kind === "diff" || activeTab?.kind === "commitDiff" ? (
+        <DiffView tab={activeTab} />
+      ) : activeTab?.kind === "commit" ? (
+        <CommitDetail sha={activeTab.path} />
+      ) : activeTab?.kind === "compare" ? (
+        <CompareView fromSha={activeTab.fromSha!} toSha={activeTab.toSha!} />
       ) : activeTab && content !== undefined ? (
         <>
           {/* Breadcrumb */}

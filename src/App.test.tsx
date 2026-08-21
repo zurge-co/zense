@@ -570,12 +570,12 @@ describe("Store interaction — keyboard shortcut actions (task 1.4)", () => {
 
   test("⌘S: tabKey produces 'file:src/main.ts' for a file tab", () => {
     const fileTab = { kind: "file" as const, path: "src/main.ts" };
-    expect(tabKey(fileTab)).toBe("file:src/main.ts");
+    expect(tabKey(fileTab)).toBe("file:src/main.ts::");
   });
 
   test("⌘S: tabKey produces 'diff:src/main.ts' for a diff tab", () => {
     const diffTab = { kind: "diff" as const, path: "src/main.ts" };
-    expect(tabKey(diffTab)).toBe("diff:src/main.ts");
+    expect(tabKey(diffTab)).toBe("diff:src/main.ts::");
   });
 
   test("⌘S: save handler condition — file tabs pass, diff tabs skipped", () => {

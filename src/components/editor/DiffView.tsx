@@ -8,15 +8,21 @@ import {
   Rows2,
   Sparkles,
 } from "lucide-react";
-import { useUIStore } from "../../store/uiStore";
+import { useUIStore, type EditorTab } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
-import { gitDiffFile } from "../../lib/git";
+import { gitDiffFile, gitDiffCommitFile } from "../../lib/git";
 import { detectLanguage } from "../../lib/lang";
 import { defineTheme } from "./monacoSetup";
 
-export function DiffView({ path }: { path: string }) {
+export function DiffView({ tab }: { tab: EditorTab }) {
   const { diffMode, toggleDiffMode, workspacePath } = useUIStore();
   const { status, diffSummary } = useGitStore();
+  const path = tab.path;
+
+  /** commitDiff tabs diff two commits; diff tabs diff the working tree. */
+  const commitMode = tab.kind === "commitDiff";
+  const fromSha = tab.fromSha ?? null;
+  const toSha = tab.toSha ?? null;
 
   const entry = status.files.find((f) => f.path === path);
   const staged = entry?.unstaged ? false : true;
@@ -43,7 +49,10 @@ export function DiffView({ path }: { path: string }) {
       });
       return;
     }
-    gitDiffFile(workspacePath, path, staged)
+    const load = commitMode
+      ? gitDiffCommitFile(workspacePath, path, fromSha, toSha!)
+      : gitDiffFile(workspacePath, path, staged);
+    load
       .then((d) => {
         if (cancelled) return;
         const nonUtf8 =
@@ -62,11 +71,15 @@ export function DiffView({ path }: { path: string }) {
     return () => {
       cancelled = true;
     };
-  }, [workspacePath, path, staged]);
+  }, [workspacePath, path, staged, commitMode, fromSha, toSha]);
 
-  const statsEntry = [...diffSummary.staged, ...diffSummary.unstaged].find(
-    (e) => e.path === path
-  );
+  const statsEntry = commitMode
+    ? undefined
+    : [...diffSummary.staged, ...diffSummary.unstaged].find(
+        (e) => e.path === path
+      );
+
+  const short = (s?: string | null) => (s ? s.slice(0, 7) : "");
 
   const diffRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const [changes, setChanges] = useState<readonly monaco.editor.ILineChange[]>(
@@ -91,9 +104,19 @@ export function DiffView({ path }: { path: string }) {
       {/* Diff toolbar */}
       <div className="flex h-8 shrink-0 items-center gap-3 border-b border-border bg-panel px-3 text-[11.5px]">
         <span className="flex items-center gap-1.5 text-fg-muted">
-          <span className="text-fg-muted">HEAD</span>
-          <span className="text-fg-muted">⟷</span>
-          <span className="text-fg">Working Tree</span>
+          {commitMode ? (
+            <>
+              <span className="font-mono text-fg">{fromSha ? short(fromSha) : `${short(toSha)}^`}</span>
+              <span className="text-fg-muted">⟷</span>
+              <span className="font-mono text-fg">{short(toSha)}</span>
+            </>
+          ) : (
+            <>
+              <span className="text-fg-muted">HEAD</span>
+              <span className="text-fg-muted">⟷</span>
+              <span className="text-fg">Working Tree</span>
+            </>
+          )}
         </span>
 
         {statsEntry && (
@@ -136,13 +159,15 @@ export function DiffView({ path }: { path: string }) {
           {diffMode === "split" ? "Side-by-side" : "Inline"}
         </button>
 
-        <button
-          title="Summarize this diff with AI"
-          className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20"
-        >
-          <Sparkles size={12} />
-          AI Summary
-        </button>
+        {!commitMode && (
+          <button
+            title="Summarize this diff with AI"
+            className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20"
+          >
+            <Sparkles size={12} />
+            AI Summary
+          </button>
+        )}
       </div>
 
       {/* Diff editor */}
