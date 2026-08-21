@@ -11,4 +11,18 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
   },
+  // Monaco is ~4 MB; give it its own chunk so the main bundle stays lean.
+  build: {
+    // The monaco chunk is inherently large (full editor, all language services).
+    chunkSizeWarningLimit: 5000,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "monaco", test: /[\/]node_modules[\/]monaco-editor[\/]/ },
+          ],
+        },
+      },
+    },
+  },
 })

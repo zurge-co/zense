@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useUIStore, tabKey } from "./uiStore";
 import { copyEntry, createDir, deleteFile, listFiles, readFileContent, readFileTree, renameFile, writeFileContent } from "../lib/workspaceFs";
 import { isTauri } from "../lib/workspace";
@@ -38,6 +40,8 @@ interface WorkspaceFsState {
   pendingRename: string | null;
   /** Node that should show the delete confirm dialog (set by keyboard shortcut). */
   pendingDelete: { path: string; type: "file" | "folder" } | null;
+  /** Path awaiting user confirmation to overwrite an externally-changed file (ADR-003). */
+  pendingConflictSave: string | null;
 
   loadWorkspace: (root: string) => Promise<void>;
   loadFile: (root: string, path: string) => Promise<void>;
@@ -98,6 +102,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   clipboard: null,
   pendingRename: null,
   pendingDelete: null,
+  pendingConflictSave: null,
   conflicts: {},
   autoSave: false,
 
@@ -146,6 +151,12 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   saveFile: async (root, path) => {
     const content = get().fileContents[path];
     if (content === undefined) return;
+    // ADR-003: never silently overwrite a file the watcher flagged as
+    // externally changed — surface a confirm dialog instead.
+    if (get().conflicts[path]) {
+      set({ pendingConflictSave: path });
+      return;
+    }
     try {
       await writeFileContent(root, path, content);
       set((s) => {
@@ -200,6 +211,9 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
     for (const path of [...get().dirtyPaths]) {
       try {
         await get().saveFile(root, path);
+        // A conflict-blocked save returns without writing (still dirty) —
+        // report it as failed so the caller can re-prompt the user.
+        if (get().dirtyPaths.has(path)) failed.push(path);
       } catch {
         failed.push(path);
       }
@@ -216,8 +230,6 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
     if (!isTauri() || watcherRoot === root) return;
     watcherRoot = root;
     void (async () => {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const { listen } = await import("@tauri-apps/api/event");
       if (!watcherSubscribed) {
         watcherSubscribed = true;
         // Use the CURRENT root at event time — a workspace switch must not

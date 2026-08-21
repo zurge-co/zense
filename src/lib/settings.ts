@@ -1,3 +1,5 @@
+import { load } from "@tauri-apps/plugin-store";
+import { useWorkspaceStore } from "../store/workspaceStore";
 import { isTauri } from "./workspace";
 
 /**
@@ -22,8 +24,6 @@ const KEY_AUTO_SAVE = "autoSave";
 export async function loadUiPrefs(): Promise<void> {
   if (!isTauri()) return;
   try {
-    const { load } = await import("@tauri-apps/plugin-store");
-    const { useWorkspaceStore } = await import("../store/workspaceStore");
     const store = await load(PREFS_FILE);
     const autoSave = await store.get<boolean>(KEY_AUTO_SAVE);
     useWorkspaceStore.getState().setAutoSave(autoSave ?? false);
@@ -34,11 +34,9 @@ export async function loadUiPrefs(): Promise<void> {
 
 /** Set auto-save in the store and persist it. */
 export async function applyAutoSave(v: boolean): Promise<void> {
-  const { useWorkspaceStore } = await import("../store/workspaceStore");
   useWorkspaceStore.getState().setAutoSave(v);
   if (!isTauri()) return;
   try {
-    const { load } = await import("@tauri-apps/plugin-store");
     const store = await load(PREFS_FILE);
     await store.set(KEY_AUTO_SAVE, v);
     await store.save();

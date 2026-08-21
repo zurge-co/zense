@@ -1,4 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { Store } from "@tauri-apps/plugin-store";
 import { isTauri } from "./workspace";
 
 export interface EnabledTools {
@@ -62,7 +63,6 @@ function migrateConfig(cfg: Partial<LlmConfig>): LlmConfig {
 export async function loadLlmConfig(): Promise<LlmConfig | null> {
   if (!isTauri()) return null;
   try {
-    const { Store } = await import("@tauri-apps/plugin-store");
     const store = await Store.load(STORE_FILE);
     const raw = await store.get<Partial<LlmConfig>>(STORE_KEY);
     return raw ? migrateConfig(raw) : null;
@@ -74,7 +74,6 @@ export async function loadLlmConfig(): Promise<LlmConfig | null> {
 export async function saveLlmConfig(config: LlmConfig): Promise<void> {
   if (!isTauri()) return;
   try {
-    const { Store } = await import("@tauri-apps/plugin-store");
     const store = await Store.load(STORE_FILE);
     await store.set(STORE_KEY, config);
     await store.save();

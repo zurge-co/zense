@@ -1,9 +1,11 @@
 import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useUIStore, tabKey } from "./store/uiStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
 import { isTauri, openFolderFlow } from "./lib/workspace";
+import { loadUiPrefs } from "./lib/settings";
 import { TitleBar } from "./components/layout/TitleBar";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
@@ -39,7 +41,39 @@ export default function App() {
         <WorkspaceLayout />
       )}
       {closeGuardDialog}
+      <ConflictSaveDialog />
     </>
+  );
+}
+
+/**
+ * ADR-003: confirm before a save (⌘S, auto-save, Save All) overwrites a
+ * buffer whose on-disk file changed externally (git pull, other app).
+ */
+function ConflictSaveDialog() {
+  const path = useWorkspaceStore((s) => s.pendingConflictSave);
+  if (!path) return null;
+  const kind = useWorkspaceStore.getState().conflicts[path] ?? "modified";
+  const clear = () => useWorkspaceStore.setState({ pendingConflictSave: null });
+  return (
+    <ConfirmDialog
+      title="File Changed on Disk"
+      message={
+        kind === "deleted"
+          ? `"${path}" was deleted outside Zense. Saving will recreate it and remove the new on-disk state.`
+          : `"${path}" was modified outside Zense (e.g. git pull). Saving will overwrite the on-disk version with your unsaved buffer.`
+      }
+      confirmLabel="Overwrite"
+      danger
+      onConfirm={() => {
+        const ws = useWorkspaceStore.getState();
+        ws.keepMine(path); // clear conflict so the write is not re-guarded
+        const root = useUIStore.getState().workspacePath;
+        clear();
+        if (root) void ws.saveFile(root, path);
+      }}
+      onCancel={clear}
+    />
   );
 }
 
@@ -79,7 +113,7 @@ function WorkspaceLayout() {
 function useUiPrefs() {
   useEffect(() => {
     if (!isTauri()) return;
-    void import("./lib/settings").then((m) => m.loadUiPrefs());
+    void loadUiPrefs();
   }, []);
 }
 
@@ -95,7 +129,6 @@ function useCloseRequestGuard() {
   useEffect(() => {
     if (!isTauri()) return;
     const destroyWindow = async () => {
-      const { invoke } = await import("@tauri-apps/api/core");
       await invoke("stop_watch").catch(() => {}); // release the watcher entry
       void getCurrentWindow().destroy();
     };
