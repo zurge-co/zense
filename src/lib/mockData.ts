@@ -348,7 +348,9 @@ export const shortcutGroups: { title: string; items: { keys: string; action: str
   {
     title: "General",
     items: [
+      { keys: "⌘N", action: "New window" },
       { keys: "⌘O", action: "Open folder" },
+      { keys: "⌘S", action: "Save file" },
       { keys: "⌘,", action: "Open settings" },
       { keys: "Esc", action: "Close modal / popup" },
     ],

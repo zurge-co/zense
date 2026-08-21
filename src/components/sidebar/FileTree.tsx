@@ -5,8 +5,6 @@ import {
   File,
   Folder,
   FolderOpen,
-  Star,
-  ListTree,
   FilePlus,
   FolderPlus,
   Pencil,
@@ -14,28 +12,59 @@ import {
   Copy,
   ClipboardPaste,
   Files,
+  RefreshCw,
 } from "lucide-react";
-import { outlineSymbols, type FileNode } from "../../lib/mockData";
+import { type FileNode } from "../../lib/mockData";
 import { useUIStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
+import { useGitStore } from "../../store/gitStore";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { ConfirmDialog } from "../ConfirmDialog";
 
 export function FileTree() {
   const fileTree = useWorkspaceStore((s) => s.fileTree);
   const workspaceName = useUIStore((s) => s.workspaceName);
+  const workspacePath = useUIStore((s) => s.workspacePath);
+  const refreshTree = useWorkspaceStore((s) => s.refreshTree);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (!workspacePath || refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        refreshTree(workspacePath),
+        useGitStore.getState().refresh(workspacePath),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   return (
     <div className="pb-4" onContextMenu={(e) => e.preventDefault()}>
-      <Section title={workspaceName ?? "workspace"} defaultOpen>
+      <Section
+        title={workspaceName ?? "workspace"}
+        defaultOpen
+        action={
+          workspacePath ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleRefresh();
+              }}
+              className="mr-1 shrink-0 text-fg-muted hover:text-fg"
+              title="Refresh"
+            >
+              <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+            </button>
+          ) : null
+        }
+      >
         {fileTree.map((node) => (
           <TreeNode key={node.path} node={node} depth={0} />
         ))}
       </Section>
-      <Section title="Favorites" defaultOpen={false}>
-        <div className="px-3 py-1 text-[12px] text-fg-muted">No favorites yet</div>
-      </Section>
-      <OutlineSection />
     </div>
   );
 }
@@ -43,22 +72,27 @@ export function FileTree() {
 function Section({
   title,
   defaultOpen,
+  action,
   children,
 }: {
   title: string;
   defaultOpen: boolean;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="mt-1">
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-1 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-fg-muted hover:text-fg"
-      >
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        {title}
-      </button>
+      <div className="flex items-center pr-1">
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex flex-1 items-center gap-1 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-fg-muted hover:text-fg"
+        >
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          {title}
+        </button>
+        {action}
+      </div>
       {open && children}
     </div>
   );
@@ -244,7 +278,6 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
       >
         <File size={14} className="shrink-0 text-fg-muted" />
         <span className="flex-1 truncate text-left">{node.name}</span>
-        <Star size={11} className="shrink-0 text-fg-muted opacity-0 group-hover:opacity-100" />
       </button>
       {inline && inline.mode === "rename" && inline.node?.path === node.path && (
         <InlineInput
@@ -343,44 +376,5 @@ function InlineInput({
         className="w-full rounded border border-accent bg-base px-1 py-0.5 text-[12.5px] text-fg outline-none"
       />
     </div>
-  );
-}
-
-function OutlineSection() {
-  const { openTabs, activeTabKey } = useUIStore();
-  const activeTab = openTabs.find((t) => `${t.kind}:${t.path}` === activeTabKey);
-  const symbols =
-    (activeTab?.kind === "file" && outlineSymbols[activeTab.path]) || [];
-
-  return (
-    <Section title="Outline" defaultOpen>
-      {symbols.length === 0 ? (
-        <div className="flex items-center gap-1.5 px-3 py-1 text-[12px] text-fg-muted">
-          <ListTree size={12} />
-          No symbols found
-        </div>
-      ) : (
-        symbols.map((s) => (
-          <div
-            key={s.name}
-            className="flex w-full items-center gap-2 px-3 py-0.5 text-[12.5px] text-fg-muted hover:bg-hover hover:text-fg"
-          >
-            <span
-              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-[9px] font-bold ${
-                s.kind === "function"
-                  ? "bg-accent/20 text-accent"
-                  : s.kind === "class"
-                    ? "bg-yellow/20 text-yellow"
-                    : "bg-accent/20 text-accent"
-              }`}
-            >
-              {s.kind === "function" ? "f" : s.kind === "class" ? "C" : s.kind === "interface" ? "I" : "v"}
-            </span>
-            <span className="flex-1 truncate">{s.name}</span>
-            <span className="text-[10px] text-fg-muted">:{s.line}</span>
-          </div>
-        ))
-      )}
-    </Section>
   );
 }

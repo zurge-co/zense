@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" width="1056.412" height="1056.412" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" viewBox="0 0 1056.412 1056.412">
+  <!-- Generator: Adobe Illustrator 30.5.1, SVG Export Plug-In . SVG Version: 2.1.4 Build 3)  -->
+  <defs>
+    <clipPath id="clippath">
+      <rect x="-1219.727" y="-437.557" width="385.441" height="385.441" rx="-224.422" ry="-224.422" fill="none"/>
+    </clipPath>
+    <linearGradient id="linear-gradient" x1="415.388" y1="725.477" x2="753.406" y2="387.459" gradientTransform="translate(-195.413 587.36) rotate(-45)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00c55a"/>
+      <stop offset=".5" stop-color="#6cdd25"/>
+      <stop offset="1" stop-color="#facd04"/>
+    </linearGradient>
+    <linearGradient id="linear-gradient1" x1="284.438" y1="568.258" x2="451.813" y2="735.633" gradientTransform="translate(145.4684 1320.2132) rotate(-135)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00c55a"/>
+      <stop offset="1" stop-color="#00c55a" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="-17.121" y="-19.96" width="1087.939" height="1087.939" fill="#1a1a1a"/>
+  <g opacity=".26">
+    <g clip-path="url(#clippath)">
+      <g id="aZN8zX">
+        <image id="aZN8zX1" data-name="aZN8zX" width="1536" height="1024" transform="translate(-1309.8561 -572.0414) scale(1.7414)" xlink:href="logo_zense-black-1.png"/>
+      </g>
+    </g>
+  </g>
+  <g>
+    <rect x="525.577" y="183.834" width="171.446" height="691.462" rx="85.723" ry="85.723" transform="translate(553.504 -277.148) rotate(45)" fill="url(#linear-gradient)"/>
+    <rect x="260.436" y="428.032" width="171.446" height="403.894" rx="85.723" ry="85.723" transform="translate(1036.3934 830.67) rotate(135)" fill="url(#linear-gradient1)"/>
+    <circle cx="264.125" cy="548.115" r="85.787" fill="#00c55a"/>
+  </g>
+</svg>

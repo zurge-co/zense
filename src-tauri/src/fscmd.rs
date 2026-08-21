@@ -2,15 +2,21 @@
 //! composer @-mentions) and guarded file reads (editor content + snippets).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use ignore::overrides::{Override, OverrideBuilder};
 use ignore::WalkBuilder;
-use serde::Serialize;
+use regex::{Regex, RegexBuilder};
+use serde::{Deserialize, Serialize};
 
 /// Safety valve for pathological workspaces (e.g. no .gitignore).
 const MAX_ENTRIES: usize = 20_000;
 /// Refuse to load huge files into the editor.
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+/// Skip files larger than this during workspace search (per-file cap).
+const MAX_SEARCH_FILE_BYTES: u64 = 256 * 1024;
+/// Cap total search matches returned to the UI.
+const MAX_SEARCH_MATCHES: usize = 500;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -180,6 +186,361 @@ pub fn read_file_tree(root: String) -> Result<Vec<FsNode>, String> {
     insert(&mut root_builder, &segments, is_dir);
   }
   Ok(build(root_builder, ""))
+}
+
+// ---------------------------------------------------------------------------
+// Workspace search & replace
+// ---------------------------------------------------------------------------
+
+/// A single search hit inside a workspace file.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchMatch {
+  /// Workspace-relative path.
+  path: String,
+  /// 1-based line number.
+  line: u32,
+  /// 1-based char column where the match starts.
+  column: u32,
+  /// Match length in chars (differs from query length for regex hits).
+  length: u32,
+  /// The full text of the matched line.
+  line_text: String,
+}
+
+/// A match the UI wants to replace (line/column exactly as returned by search).
+#[derive(Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceTarget {
+  path: String,
+  line: u32,
+  column: u32,
+}
+
+/// Per-file replace summary returned to the UI.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceSummary {
+  path: String,
+  count: u32,
+}
+
+/// How to match the query: literal substring or regular expression.
+enum Matcher {
+  Literal { needle: Vec<char>, case_sensitive: bool },
+  Regex { re: Regex },
+}
+
+impl Matcher {
+  fn new(query: &str, case_sensitive: bool, is_regex: bool) -> Result<Matcher, String> {
+    if is_regex {
+      let re = RegexBuilder::new(query)
+        .case_insensitive(!case_sensitive)
+        .build()
+        .map_err(|e| format!("invalid regex: {e}"))?;
+      Ok(Matcher::Regex { re })
+    } else {
+      Ok(Matcher::Literal {
+        needle: query.chars().collect(),
+        case_sensitive,
+      })
+    }
+  }
+
+  /// All (byte start, byte len) matches within one line, non-overlapping.
+  fn find_in_line(&self, line: &str) -> Vec<(usize, usize)> {
+    match self {
+      Matcher::Regex { re } => re
+        .find_iter(line)
+        .filter(|m| m.end() > m.start()) // skip zero-width hits
+        .map(|m| (m.start(), m.end() - m.start()))
+        .collect(),
+      Matcher::Literal { needle, case_sensitive } => {
+        if needle.is_empty() {
+          return Vec::new();
+        }
+        let indexed: Vec<(usize, char)> = line.char_indices().collect();
+        let n = needle.len();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i + n <= indexed.len() {
+          let is_match = needle.iter().enumerate().all(|(j, nc)| {
+            let lc = indexed[i + j].1;
+            if *case_sensitive {
+              lc == *nc
+            } else {
+              lc.to_lowercase().eq(nc.to_lowercase())
+            }
+          });
+          if is_match {
+            let start = indexed[i].0;
+            let end = if i + n < indexed.len() {
+              indexed[i + n].0
+            } else {
+              line.len()
+            };
+            out.push((start, end - start));
+            i += n;
+          } else {
+            i += 1;
+          }
+        }
+        out
+      }
+    }
+  }
+
+  /// Replacement text for one matched segment. Regex mode expands `$1`,
+/// `${name}`, … capture references; literal mode inserts verbatim.
+  fn replacement_for(&self, matched_text: &str, replacement: &str) -> String {
+    match self {
+      Matcher::Regex { re } => re.replace(matched_text, replacement).into_owned(),
+      Matcher::Literal { .. } => replacement.to_string(),
+    }
+  }
+}
+
+/// Split comma-separated pattern strings (VSCode style) into trimmed globs.
+fn split_patterns(s: &str) -> Vec<String> {
+  s.split(',')
+    .map(|p| p.trim())
+    .filter(|p| !p.is_empty())
+    .map(String::from)
+    .collect()
+}
+
+/// Build gitignore-style glob filters for "files to include/exclude".
+/// Both use plain (whitelist) patterns: `is_whitelist()` ⇔ a glob matched.
+fn build_glob_filters(
+  root: &Path,
+  include: &str,
+  exclude: &str,
+) -> Result<(Override, Override), String> {
+  let mut inc = OverrideBuilder::new(root);
+  for p in split_patterns(include) {
+    inc.add(&p)
+      .map_err(|e| format!("invalid include pattern '{p}': {e}"))?;
+  }
+  let mut exc = OverrideBuilder::new(root);
+  for p in split_patterns(exclude) {
+    exc.add(&p)
+      .map_err(|e| format!("invalid exclude pattern '{p}': {e}"))?;
+  }
+  Ok((
+    inc.build().map_err(|e| e.to_string())?,
+    exc.build().map_err(|e| e.to_string())?,
+  ))
+}
+
+/// True when `rel` passes the include/exclude glob filters.
+fn globs_allow(rel: &str, inc: &Override, exc: &Override) -> bool {
+  // Empty include override matches nothing as whitelist → Match::None.
+  // With globs present, non-matching files come back as Ignore.
+  if inc.matched(rel, false).is_ignore() {
+    return false;
+  }
+  if exc.matched(rel, false).is_whitelist() {
+    return false;
+  }
+  true
+}
+
+/// A hit plus its byte span within the containing line (for replacement).
+struct LineHit {
+  line: u32,
+  column: u32,
+  length_chars: u32,
+  /// Byte offset / length within the line body (no line terminator).
+  byte_start: usize,
+  byte_len: usize,
+  line_text: String,
+}
+
+/// Split content into (body, eol) pairs, preserving each line's terminator
+/// ("" / "\n" / "\r\n") so replacements don't reformat file endings.
+fn split_lines_keep_eol(content: &str) -> Vec<(&str, &str)> {
+  let mut out = Vec::new();
+  for seg in content.split_inclusive('\n') {
+    match seg.strip_suffix('\n') {
+      Some(rest) => match rest.strip_suffix('\r') {
+        Some(body) => out.push((body, "\r\n")),
+        None => out.push((rest, "\n")),
+      },
+      None => out.push((seg, "")),
+    }
+  }
+  if out.is_empty() && content.is_empty() {
+    return out;
+  }
+  out
+}
+
+/// Scan one file's content for hits (shared by search and replace).
+fn scan_content(matcher: &Matcher, content: &str) -> Vec<LineHit> {
+  let lines = split_lines_keep_eol(content);
+  let mut hits = Vec::new();
+  for (line_idx, (body, _)) in lines.iter().enumerate() {
+    for (byte_start, byte_len) in matcher.find_in_line(body) {
+      hits.push(LineHit {
+        line: (line_idx + 1) as u32,
+        column: (body[..byte_start].chars().count() + 1) as u32,
+        length_chars: body[byte_start..byte_start + byte_len].chars().count() as u32,
+        byte_start,
+        byte_len,
+        line_text: body.to_string(),
+      });
+    }
+  }
+  hits
+}
+
+/// Iterate candidate files: the same .gitignore-aware walk as the explorer,
+/// filtered by include/exclude globs, size-capped, UTF-8 only. Yields
+/// (relative path, full path, content).
+fn scan_files(
+  root: &str,
+  root_path: &Path,
+  inc: &Override,
+  exc: &Override,
+  mut f: impl FnMut(&str, &Path, &str),
+) -> Result<(), String> {
+  for (rel, is_dir) in walk_entries(root)? {
+    if is_dir || !globs_allow(&rel, inc, exc) {
+      continue;
+    }
+    let full = root_path.join(&rel);
+    let Ok(meta) = std::fs::metadata(&full) else {
+      continue;
+    };
+    if meta.len() > MAX_SEARCH_FILE_BYTES {
+      continue;
+    }
+    let Ok(bytes) = std::fs::read(&full) else {
+      continue;
+    };
+    let Ok(content) = String::from_utf8(bytes) else {
+      continue; // binary / non-UTF-8
+    };
+    f(&rel, &full, &content);
+  }
+  Ok(())
+}
+
+/// Find all occurrences of `query` in workspace files. Respects .gitignore
+/// (via `walk_entries`), the include/exclude glob filters, skips files over
+/// the size cap and non-UTF-8 files, and stops after MAX_SEARCH_MATCHES hits.
+/// One `SearchMatch` per occurrence, sorted by path, then line.
+#[tauri::command]
+pub fn search_files(
+  root: String,
+  query: String,
+  case_sensitive: bool,
+  is_regex: bool,
+  include: String,
+  exclude: String,
+) -> Result<Vec<SearchMatch>, String> {
+  if query.is_empty() {
+    return Ok(Vec::new());
+  }
+  let matcher = Matcher::new(&query, case_sensitive, is_regex)?;
+  let root_path = std::fs::canonicalize(PathBuf::from(&root)).map_err(|e| e.to_string())?;
+  let (inc, exc) = build_glob_filters(&root_path, &include, &exclude)?;
+
+  let mut matches = Vec::new();
+  scan_files(&root, &root_path, &inc, &exc, |rel, _full, content| {
+    if matches.len() >= MAX_SEARCH_MATCHES {
+      return;
+    }
+    for h in scan_content(&matcher, content) {
+      matches.push(SearchMatch {
+        path: rel.to_string(),
+        line: h.line,
+        column: h.column,
+        length: h.length_chars,
+        line_text: h.line_text,
+      });
+      if matches.len() >= MAX_SEARCH_MATCHES {
+        break;
+      }
+    }
+  })?;
+  Ok(matches)
+}
+
+/// Replace occurrences of `query` with `replacement` on disk and return a
+/// per-file summary. When `targets` is provided, only those exact hits
+/// (path + 1-based line + 1-based char column, as returned by `search_files`)
+/// are replaced — powering single-match and per-file replace; `None` replaces
+/// everything. Regex mode expands `$1` capture references in the replacement.
+/// Each target is re-validated by re-scanning, so stale results are skipped
+/// safely instead of corrupting files.
+#[tauri::command]
+pub fn replace_in_files(
+  root: String,
+  query: String,
+  replacement: String,
+  case_sensitive: bool,
+  is_regex: bool,
+  include: String,
+  exclude: String,
+  targets: Option<Vec<ReplaceTarget>>,
+) -> Result<Vec<ReplaceSummary>, String> {
+  if query.is_empty() {
+    return Ok(Vec::new());
+  }
+  let matcher = Matcher::new(&query, case_sensitive, is_regex)?;
+  let root_path = std::fs::canonicalize(PathBuf::from(&root)).map_err(|e| e.to_string())?;
+  let (inc, exc) = build_glob_filters(&root_path, &include, &exclude)?;
+
+  let target_list = targets.as_ref().map(|v| v.as_slice());
+  let mut summaries = Vec::new();
+  scan_files(&root, &root_path, &inc, &exc, |rel, full, content| {
+    let hits = scan_content(&matcher, content);
+    if hits.is_empty() {
+      return;
+    }
+    let selected: Vec<&LineHit> = match target_list {
+      Some(list) => hits
+        .iter()
+        .filter(|h| {
+          list.iter()
+            .any(|t| t.path == rel && t.line == h.line && t.column == h.column)
+        })
+        .collect(),
+      None => hits.iter().collect(),
+    };
+    if selected.is_empty() {
+      return;
+    }
+
+    // Rebuild line-by-line, right-to-left within each line, keeping the
+    // original line terminators untouched.
+    let lines = split_lines_keep_eol(content);
+    let mut rebuilt: Vec<String> = lines
+      .iter()
+      .map(|(body, eol)| format!("{body}{eol}"))
+      .collect();
+    // Apply right-to-left (byte offsets are line-local and earlier
+    // replacements shift the offsets of later hits on the same line).
+    for h in selected.iter().rev() {
+      let idx = (h.line - 1) as usize;
+      let Some(body) = rebuilt.get_mut(idx) else {
+        continue;
+      };
+      let line = std::mem::take(body);
+      let (pre, rest) = line.split_at(h.byte_start);
+      let (matched, post) = rest.split_at(h.byte_len);
+      *body = format!("{pre}{}{post}", matcher.replacement_for(matched, &replacement));
+    }
+    let new_content = rebuilt.concat();
+    if new_content != content && std::fs::write(full, new_content).is_ok() {
+      summaries.push(ReplaceSummary {
+        path: rel.to_string(),
+        count: selected.len() as u32,
+      });
+    }
+  })?;
+  Ok(summaries)
 }
 
 /// Read a whole workspace file (editor content). Rejects binaries/huge files.
@@ -481,6 +842,259 @@ mod tests {
       .expect("src/keep.ts not found in tree");
     assert_eq!(nested_file, "src/keep.ts");
 
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  /// Test helper: literal, case-insensitive search without glob filters.
+  fn search(root: String, query: &str) -> Vec<SearchMatch> {
+    search_files(
+      root,
+      query.into(),
+      false,
+      false,
+      String::new(),
+      String::new(),
+    )
+    .unwrap()
+  }
+
+  #[test]
+  fn search_files_finds_matches_with_positions() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/a.ts"), "hello world\nHELLO again hello\n").unwrap();
+    fs::write(dir.join("b.txt"), "nothing here\n").unwrap();
+
+    // Case-insensitive: 3 hits across both lines, one per occurrence.
+    let hits = search(root.clone(), "hello");
+    assert_eq!(hits.len(), 3);
+    assert!(hits.iter().all(|h| h.path == "src/a.ts"));
+    assert_eq!(hits[0].line, 1);
+    assert_eq!(hits[0].column, 1);
+    assert_eq!(hits[0].length, 5);
+    assert_eq!(hits[1].line, 2);
+    assert_eq!(hits[1].column, 1);
+    assert_eq!(hits[2].line, 2);
+    assert_eq!(hits[2].column, 13);
+    assert_eq!(hits[0].line_text, "hello world");
+
+    // Case-sensitive: only the lowercase ones.
+    let hits = search_files(
+      root.clone(),
+      "hello".into(),
+      true,
+      false,
+      String::new(),
+      String::new(),
+    )
+    .unwrap();
+    assert_eq!(hits.len(), 2);
+
+    assert!(search(root.clone(), "nope").is_empty());
+    assert!(search(root, "").is_empty());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn search_files_respects_gitignore_and_skips_binary() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::write(dir.join(".gitignore"), "ignored/\n").unwrap();
+    fs::create_dir_all(dir.join("ignored")).unwrap();
+    fs::write(dir.join("ignored/x.txt"), "needle\n").unwrap();
+    fs::write(dir.join("bin.dat"), b"needle\x00\xff".to_vec()).unwrap();
+    fs::write(dir.join("keep.txt"), "needle\n").unwrap();
+
+    let hits = search(root, "needle");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, "keep.txt");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn search_files_regex_mode_reports_match_length() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::write(dir.join("a.ts"), "foo bar foobar x9x x99x\n").unwrap();
+
+    let hits = search_files(
+      root.clone(),
+      "x\\d+x".into(),
+      true,
+      true,
+      String::new(),
+      String::new(),
+    )
+    .unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].column, 16);
+    assert_eq!(hits[0].length, 3); // x9x
+    assert_eq!(hits[1].length, 4); // x99x
+
+    // Invalid regex surfaces a readable error.
+    let err = search_files(
+      root,
+      "[".into(),
+      true,
+      true,
+      String::new(),
+      String::new(),
+    )
+    .unwrap_err();
+    assert!(err.contains("invalid regex"), "unexpected error: {err}");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn search_files_include_exclude_globs() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/a.ts"), "needle\n").unwrap();
+    fs::write(dir.join("src/b.js"), "needle\n").unwrap();
+    fs::write(dir.join("c.ts"), "needle\n").unwrap();
+
+    let run = |inc: &str, exc: &str| {
+      let mut paths: Vec<String> = search_files(
+        root.clone(),
+        "needle".into(),
+        false,
+        false,
+        inc.into(),
+        exc.into(),
+      )
+      .unwrap()
+      .into_iter()
+      .map(|h| h.path)
+      .collect();
+      paths.sort();
+      paths
+    };
+
+    // Include only .ts files.
+    assert_eq!(run("*.ts", ""), vec!["c.ts", "src/a.ts"]);
+
+    // Include .ts but exclude c.ts.
+    assert_eq!(run("*.ts", "c.ts"), vec!["src/a.ts"]);
+
+    // Comma-separated include list.
+    assert_eq!(run("*.ts, *.js", "c.ts"), vec!["src/a.ts", "src/b.js"]);
+
+    // Dir-scoped include.
+    assert_eq!(run("src/**", "*.js"), vec!["src/a.ts"]);
+
+    // Invalid include pattern is an error.
+    let err = search_files(
+      root.clone(),
+      "needle".into(),
+      false,
+      false,
+      "[".into(),
+      String::new(),
+    )
+    .unwrap_err();
+    assert!(err.contains("invalid include pattern"), "unexpected: {err}");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn replace_in_files_replaces_all_occurrences() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/a.ts"), "hello hello\nbye hello\n").unwrap();
+    fs::write(dir.join("b.txt"), "hello\n").unwrap();
+
+    let summary = replace_in_files(
+      root.clone(),
+      "hello".into(),
+      "hi".into(),
+      true,
+      false,
+      String::new(),
+      String::new(),
+      None,
+    )
+    .unwrap();
+    assert_eq!(summary.len(), 2);
+    let a = summary.iter().find(|s| s.path == "src/a.ts").unwrap();
+    assert_eq!(a.count, 3);
+    assert_eq!(fs::read_to_string(dir.join("src/a.ts")).unwrap(), "hi hi\nbye hi\n");
+    assert_eq!(fs::read_to_string(dir.join("b.txt")).unwrap(), "hi\n");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn replace_in_files_regex_captures() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::write(dir.join("a.ts"), "foo(bar)\nfoo(baz)\n").unwrap();
+
+    let summary = replace_in_files(
+      root.clone(),
+      "foo\\((\\w+)\\)".into(),
+      "qux[$1]".into(),
+      true,
+      true,
+      String::new(),
+      String::new(),
+      None,
+    )
+    .unwrap();
+    assert_eq!(summary[0].count, 2);
+    assert_eq!(fs::read_to_string(dir.join("a.ts")).unwrap(), "qux[bar]\nqux[baz]\n");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn replace_in_files_honors_targets_and_literal_dollar() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::write(dir.join("a.txt"), "one one one\ntwo one\n").unwrap();
+
+    // Replace only the 2nd hit on line 1 (char column 5) and the hit on line 2.
+    let targets = vec![
+      ReplaceTarget { path: "a.txt".into(), line: 1, column: 5 },
+      ReplaceTarget { path: "a.txt".into(), line: 2, column: 5 },
+    ];
+    let summary = replace_in_files(
+      root.clone(),
+      "one".into(),
+      "$'$".into(),
+      true,
+      false,
+      String::new(),
+      String::new(),
+      Some(targets),
+    )
+    .unwrap();
+    assert_eq!(summary[0].count, 2);
+    // Literal replacement: $ is NOT expanded outside regex mode.
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "one $'$ one\ntwo $'$\n");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn replace_in_files_preserves_crlf_and_respects_globs() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    std::fs::write(dir.join("win.txt"), "a needle\r\nb needle\r\n").unwrap();
+    std::fs::write(dir.join("skip.md"), "needle\n").unwrap();
+
+    replace_in_files(
+      root.clone(),
+      "needle".into(),
+      "x".into(),
+      true,
+      false,
+      "*.txt".into(),
+      String::new(),
+      None,
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(dir.join("win.txt")).unwrap(), "a x\r\nb x\r\n");
+    assert_eq!(fs::read_to_string(dir.join("skip.md")).unwrap(), "needle\n");
     fs::remove_dir_all(&dir).ok();
   }
 

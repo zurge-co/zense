@@ -2,11 +2,13 @@ import { useUIStore } from "../../store/uiStore";
 import { FileTree } from "./FileTree";
 import { ReviewPanel } from "./ReviewPanel";
 import { HistoryPanel } from "./HistoryPanel";
+import { SearchPanel } from "./SearchPanel";
 
 const titles: Record<string, string> = {
   review: "Review",
   history: "History",
-  explorer: "Explorer",
+  editor: "Editor",
+  search: "Search",
 };
 
 export function SideBar() {
@@ -18,9 +20,10 @@ export function SideBar() {
         {titles[activity]}
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {activity === "explorer" && <FileTree />}
+        {activity === "editor" && <FileTree />}
         {activity === "review" && <ReviewPanel />}
         {activity === "history" && <HistoryPanel />}
+        {activity === "search" && <SearchPanel />}
       </div>
     </div>
   );

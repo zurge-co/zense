@@ -127,6 +127,15 @@ export function HistoryPanel() {
         </div>
       ) : (
         <>
+          {error && (
+            <div className="mb-1 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[11px] text-danger">
+              Refresh failed: {error}
+            </div>
+          )}
+        </>
+      )}
+      {!status.notARepo && commits.length > 0 && (
+        <>
           {commits.map((c) => (
             <div
               key={c.sha}

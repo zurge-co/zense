@@ -49,6 +49,7 @@ export function TitleBar() {
       className="flex h-10 shrink-0 items-center border-b border-border bg-panel pl-20 pr-2"
     >
       <div data-tauri-drag-region className="flex items-center gap-2 text-xs text-fg-muted">
+        <img src="/zense-logo.svg" alt="Zense" width={16} height={16} />
         <span className="font-semibold text-fg">zense</span>
         <span className="text-fg-muted">—</span>
         <span>{workspaceName ?? "no workspace"}</span>
