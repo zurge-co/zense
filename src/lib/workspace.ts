@@ -60,6 +60,21 @@ export async function touchRecent(path: string): Promise<void> {
   }
 }
 
+/** Remove a workspace from the recents list and persist it. No-op outside Tauri. */
+export async function removeRecent(path: string): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const store = await Store.load(STORE_FILE);
+    const recents = ((await store.get<RecentWorkspace[]>(STORE_KEY)) ?? []).filter(
+      (w) => w.path !== path,
+    );
+    await store.set(STORE_KEY, recents);
+    await store.save();
+  } catch (err) {
+    console.error("Failed to remove recent workspace:", err);
+  }
+}
+
 /**
  * Returns true when there are no unsaved editor changes, or when the user
  * confirms they want to discard them. Returns false (abort) if the user

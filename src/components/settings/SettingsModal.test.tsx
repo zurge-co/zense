@@ -68,9 +68,9 @@ describe("StatusBar.tsx — no agent button (task 1.5)", () => {
     expect(src.includes("Agent")).toBe(false);
   });
 
-  test("has a terminal toggle button (SquareTerminal + terminalStore)", () => {
+  test("has a terminal toggle button (SquareTerminal + activity via uiStore)", () => {
     expect(src.includes("SquareTerminal")).toBe(true);
-    expect(src.includes("terminalStore")).toBe(true);
+    expect(src.includes("toggleTerminal")).toBe(true);
     expect(src.includes("Toggle terminal")).toBe(true);
   });
 
@@ -565,11 +565,12 @@ describe("Task 1.5 — no dangling agent/terminal references across all 3 files"
     settingsSrc = await readSrc("../../lib/settings.ts");
   });
 
-  test("StatusBar.tsx: agent removed; terminal toggle restored (SquareTerminal + terminalStore)", () => {
+  test("StatusBar.tsx: agent removed; terminal toggle via ActivityBar activity", () => {
     expect(statusBarSrc.includes("agent")).toBe(false);
     expect(statusBarSrc.includes("Agent")).toBe(false);
     expect(statusBarSrc.includes("SquareTerminal")).toBe(true);
-    expect(statusBarSrc.includes("terminalStore")).toBe(true);
+    expect(statusBarSrc.includes("toggleTerminal")).toBe(true);
+    expect(statusBarSrc.includes("terminalStore")).toBe(false);
   });
 
   test("SettingsModal.tsx: no agent/terminal sections; AgentGuards (LLM) is expected", () => {

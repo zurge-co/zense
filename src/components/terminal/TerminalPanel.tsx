@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { RotateCw, X } from "lucide-react";
@@ -22,21 +23,28 @@ const TERM_THEME = {
   red: "#f85149",
 };
 
+/** Exit events arriving this soon after a (re)spawn are stale EOF from the
+ *  session pty_spawn just replaced — not the new shell dying. */
+const STALE_EXIT_MS = 500;
+
 /**
- * Bottom integrated terminal: xterm.js on top of a real PTY (see
- * src-tauri/src/ptycmd.rs). One session per window, rooted at the workspace
- * directory. The component stays mounted while hidden so the shell session
- * (and scrollback) survive panel toggles.
+ * Integrated terminal as an ActivityBar main view: xterm.js on top of a real
+ * PTY (see src-tauri/src/ptycmd.rs). One shell session per window, rooted at
+ * the workspace directory. The view is only mounted while
+ * `activity === "terminal"`, so being mounted *is* being visible: the shell
+ * spawns on mount and is killed on unmount (workspace switch and the restart
+ * button respawn it in place).
  */
 export function TerminalPanel() {
-  const { visible, status, setVisible, setStatus, restartNonce, fitNonce } =
-    useTerminalStore();
+  const { status, setStatus, restartNonce, fitNonce } = useTerminalStore();
   const workspacePath = useUIStore((s) => s.workspacePath);
 
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const spawnedRef = useRef(false);
+  const cwdRef = useRef<string | null>(null);
+  const lastSpawnAtRef = useRef(0);
 
   const fitAndNotify = () => {
     const term = termRef.current;
@@ -46,7 +54,7 @@ export function TerminalPanel() {
       fit.fit();
       void invoke("pty_resize", { cols: term.cols, rows: term.rows }).catch(() => {});
     } catch {
-      // hidden container (display:none) has zero size — skip
+      // container without layout yet has zero size — skip
     }
   };
 
@@ -60,7 +68,21 @@ export function TerminalPanel() {
       fontSize: 12,
       cursorBlink: true,
       scrollback: 5000,
+      // Required by the unicode graphemes addon (it uses the proposed
+      // unicode API); without it loadAddon throws and takes the app down.
+      allowProposedApi: true,
     });
+    // Grapheme clustering: Thai vowels/tone marks (and other combining
+    // marks, emoji ZWJ sequences) must share one cell with their base
+    // character. Without this addon xterm counts code points, so the cursor
+    // trails behind the glyph actually rendered — backspace/editing in Thai
+    // feels broken. Never let an addon failure kill the whole app — fall
+    // back to a working terminal without clustering.
+    try {
+      term.loadAddon(new UnicodeGraphemesAddon());
+    } catch (err) {
+      console.error("unicode-graphemes addon failed to load:", err);
+    }
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(hostRef.current);
@@ -73,8 +95,12 @@ export function TerminalPanel() {
 
     const unOut = listen<string>("pty://output", (e) => term.write(e.payload));
     const unExit = listen<number>("pty://exit", () => {
-      setStatus("exited");
+      // pty_spawn kills the previous session server-side; its reader thread
+      // hits EOF shortly *after* the new shell is up. Don't let that stale
+      // EOF mark the fresh session as exited.
+      if (Date.now() - lastSpawnAtRef.current < STALE_EXIT_MS) return;
       spawnedRef.current = false;
+      setStatus("exited");
       term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
     });
 
@@ -87,58 +113,58 @@ export function TerminalPanel() {
       termRef.current = null;
       fitRef.current = null;
       spawnedRef.current = false;
+      cwdRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Shell lifecycle: spawn lazily on first show; reset on workspace change
+  // ── Shell lifecycle: spawn on mount, respawn on workspace change/restart.
+  //    pty_spawn kills any existing session server-side, so a single invoke
+  //    is enough — the kill MUST NOT be a separate later effect (it would
+  //    kill the freshly spawned shell and nothing would respawn it).
   useEffect(() => {
-    if (!visible || !workspacePath || !isTauri() || spawnedRef.current) return;
+    const term = termRef.current;
+    if (!term || !workspacePath || !isTauri()) return;
+    if (spawnedRef.current && cwdRef.current === workspacePath) return;
 
     spawnedRef.current = true;
-    const fit = fitRef.current;
+    cwdRef.current = workspacePath;
+    lastSpawnAtRef.current = Date.now();
+    setStatus("idle");
+    term.reset();
+
     try {
-      fit?.fit();
+      fitRef.current?.fit();
     } catch {
-      /* panel still hidden → size unknown; pty starts at 80x24 */
+      /* container without layout yet → pty starts at 80x24, refit on resize */
     }
-    const cols = termRef.current?.cols ?? 80;
-    const rows = termRef.current?.rows ?? 24;
+    const cols = term.cols ?? 80;
+    const rows = term.rows ?? 24;
 
     invoke("pty_spawn", { cwd: workspacePath, cols, rows })
       .then(() => setStatus("running"))
       .catch((err) => {
         spawnedRef.current = false;
         setStatus("exited");
-        termRef.current?.write(`\r\n\x1b[31m[failed to spawn shell: ${err}]\x1b[0m\r\n`);
+        term.write(`\r\n\x1b[31m[failed to spawn shell: ${err}]\x1b[0m\r\n`);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, workspacePath, restartNonce]);
-
-  // Kill the session when the workspace changes (next show will respawn).
-  useEffect(() => {
-    spawnedRef.current = false;
-    setStatus("idle");
-    if (isTauri()) void invoke("pty_kill").catch(() => {});
-    termRef.current?.reset();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath]);
+  }, [workspacePath, restartNonce]);
 
   /** Kill the current shell (if any) and let the spawn effect start a new one. */
   const restartShell = () => {
-    termRef.current?.reset();
     spawnedRef.current = false;
     setStatus("idle");
     // pty_spawn kills any existing session server-side; bump restartNonce to
-    // re-run the spawn effect even when visible/workspacePath are unchanged.
+    // re-run the spawn effect even when workspacePath is unchanged.
     useTerminalStore.getState().requestRestart();
   };
 
-  // ── Refit on show / resize ──────────────────────────────────────────────
+  // ── Refit on request / container resize ────────────────────────────────
   useEffect(() => {
-    if (visible) fitAndNotify();
+    fitAndNotify();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, fitNonce]);
+  }, [fitNonce]);
 
   useEffect(() => {
     const el = hostRef.current;
@@ -149,11 +175,7 @@ export function TerminalPanel() {
   }, []);
 
   return (
-    <div
-      className={`flex h-56 shrink-0 flex-col border-t border-border bg-base ${
-        visible ? "" : "hidden"
-      }`}
-    >
+    <div className="flex min-h-0 flex-1 flex-col bg-base">
       <div className="flex h-7 shrink-0 items-center justify-between border-b border-border bg-panel px-3">
         <span className="flex items-center gap-2 text-[11px] tracking-wide text-fg-muted">
           TERMINAL
@@ -173,8 +195,8 @@ export function TerminalPanel() {
             <RotateCw size={12} strokeWidth={1.7} />
           </button>
           <button
-            title="Close panel (⌘`)"
-            onClick={() => setVisible(false)}
+            title="Back to editor (⌘`)"
+            onClick={() => useUIStore.getState().setActivity("editor")}
             className="rounded p-1 text-fg-muted transition-colors hover:text-fg"
           >
             <X size={13} strokeWidth={1.7} />

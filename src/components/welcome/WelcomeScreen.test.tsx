@@ -532,3 +532,28 @@ describe("Task 1.6 — no dangling references across both files", () => {
     });
   }
 });
+
+describe("WelcomeScreen — recent workspace remove button", () => {
+  let src: string;
+
+  beforeAll(async () => {
+    src = await readSrc("./WelcomeScreen.tsx");
+  });
+
+  test("imports removeRecent from lib/workspace", () => {
+    expect(src).toContain("removeRecent");
+  });
+
+  test("each recent row has a per-row remove (X) control", () => {
+    expect(src).toContain("from recent workspaces");
+    expect(src).toContain("<X size={12}");
+  });
+
+  test("remove click does not open the workspace (stopPropagation)", () => {
+    expect(src).toContain("e.stopPropagation()");
+  });
+
+  test("removes the row from local state immediately", () => {
+    expect(src).toContain("rs ?? []).filter((r) => r.path !== path)");
+  });
+});

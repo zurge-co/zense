@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Clock } from "lucide-react";
+import { FolderOpen, Clock, X } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
 import {
   formatRelativeTime,
   loadRecents,
   openFolderFlow,
+  removeRecent,
   touchRecent,
   type RecentWorkspace,
 } from "../../lib/workspace";
@@ -26,6 +27,12 @@ export function WelcomeScreen() {
   const openRecent = (w: RecentWorkspace) => {
     void touchRecent(w.path);
     openWorkspace(w.path);
+  };
+
+  const forgetRecent = (path: string) => {
+    // Update the UI immediately; persistence happens in the background.
+    setRecents((rs) => (rs ?? []).filter((r) => r.path !== path));
+    void removeRecent(path);
   };
 
   return (
@@ -59,19 +66,31 @@ export function WelcomeScreen() {
                   <p className="px-2 py-1.5 text-[12px] text-fg-muted">No recent workspaces</p>
                 ) : (
                   recents.map((w) => (
-                    <button
+                    <div
                       key={w.path}
-                      onClick={() => openRecent(w)}
-                      className="group flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-hover"
+                      className="group flex w-full items-center justify-between rounded px-2 py-1.5 hover:bg-hover"
                     >
-                      <span>
-                        <span className="block text-[13px] text-fg">{w.name}</span>
-                        <span className="block font-mono text-[10.5px] text-fg-muted">{w.path}</span>
+                      <button onClick={() => openRecent(w)} className="min-w-0 flex-1 text-left">
+                        <span className="block truncate text-[13px] text-fg">{w.name}</span>
+                        <span className="block truncate font-mono text-[10.5px] text-fg-muted">{w.path}</span>
+                      </button>
+                      <span className="flex shrink-0 items-center gap-1.5 pl-2">
+                        <span className="text-[10.5px] text-fg-muted group-hover:text-fg">
+                          {formatRelativeTime(w.lastOpenedAt)}
+                        </span>
+                        <button
+                          title={`Remove ${w.name} from recent workspaces`}
+                          aria-label={`Remove ${w.name} from recent workspaces`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            forgetRecent(w.path);
+                          }}
+                          className="rounded p-0.5 text-fg-muted opacity-0 transition-opacity hover:text-danger focus:opacity-100 group-hover:opacity-100"
+                        >
+                          <X size={12} strokeWidth={1.7} />
+                        </button>
                       </span>
-                      <span className="text-[10.5px] text-fg-muted group-hover:text-fg">
-                        {formatRelativeTime(w.lastOpenedAt)}
-                      </span>
-                    </button>
+                    </div>
                   ))
                 )}
               </div>

@@ -1,7 +1,6 @@
 import { GitBranch, CircleX, TriangleAlert, SquareTerminal } from "lucide-react";
 import { useUIStore, tabKey } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
-import { useTerminalStore } from "../../store/terminalStore";
 import { detectLanguage } from "../../lib/lang";
 import { TAB_SIZE } from "../editor/CodeEditor";
 
@@ -21,7 +20,7 @@ const LANGUAGE_LABELS: Record<string, string> = {
 
 export function StatusBar() {
   const { openTabs, activeTabKey } = useUIStore();
-  const terminalVisible = useTerminalStore((s) => s.visible);
+  const terminalActive = useUIStore((s) => s.activity) === "terminal";
   const cursorPos = useUIStore((s) => s.cursorPos);
   const { branchInfo, status } = useGitStore();
   const activeTab = openTabs.find((t) => tabKey(t) === activeTabKey);
@@ -50,8 +49,12 @@ export function StatusBar() {
       <div className="flex items-center gap-3">
         <button
           title="Toggle terminal (⌘`)"
-          onClick={() => useTerminalStore.getState().toggle()}
-          className={`transition-colors hover:text-fg ${terminalVisible ? "text-accent" : ""}`}
+          onClick={() => {
+            const ui = useUIStore.getState();
+            if (ui.activity === "terminal") ui.setActivity("editor");
+            else ui.toggleTerminal();
+          }}
+          className={`transition-colors hover:text-fg ${terminalActive ? "text-accent" : ""}`}
         >
           <SquareTerminal size={12} />
         </button>

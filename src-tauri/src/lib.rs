@@ -8,18 +8,20 @@ mod tools;
 mod watcher;
 
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{App, AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
+use tauri::{App, Emitter, Manager, WebviewWindowBuilder};
 
 /// Build the full native application menu (macOS menu bar; in-window menu on
 /// Windows/Linux), mirroring what users expect from standard desktop apps.
 fn build_menu(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
   // ── File ────────────────────────────────────────────────────────────────
-  let new_window = MenuItem::with_id(app, "new_window", "New Window", true, Some("CmdOrCtrl+N"))?;
+  let new_file = MenuItem::with_id(app, "new_file", "New File", true, Some("CmdOrCtrl+N"))?;
+  let new_window = MenuItem::with_id(app, "new_window", "New Window", true, Some("CmdOrCtrl+Shift+N"))?;
   let open_folder = MenuItem::with_id(app, "open_folder", "Open Folder…", true, Some("CmdOrCtrl+O"))?;
   let save_file = MenuItem::with_id(app, "save_file", "Save", true, Some("CmdOrCtrl+S"))?;
   let settings = MenuItem::with_id(app, "open_settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
   let file_menu = Submenu::new(app, "File", true)?;
   file_menu.append_items(&[
+    &new_file,
     &new_window,
     &open_folder,
     &PredefinedMenuItem::separator(app)?,
@@ -84,18 +86,6 @@ fn build_menu(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
     ],
   )?;
 
-  #[cfg(debug_assertions)]
-  {
-    view_menu.append(&PredefinedMenuItem::separator(app)?)?;
-    view_menu.append(&MenuItem::with_id(
-      app,
-      "toggle_devtools",
-      "Toggle Developer Tools",
-      true,
-      Some("Alt+CmdOrCtrl+I"),
-    )?)?;
-  }
-
   // ── Window ──────────────────────────────────────────────────────────────
   let window_menu = Submenu::with_items(
     app,
@@ -145,17 +135,6 @@ fn build_menu(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
   };
 
   Ok(menu)
-}
-
-/// The currently focused webview window, falling back to the main window.
-/// Used in devtools toggle; not needed except in debug builds.
-#[allow(dead_code)]
-fn focused_webview(app: &AppHandle) -> Option<WebviewWindow> {
-  app
-    .webview_windows()
-    .into_values()
-    .find(|w| w.is_focused().unwrap_or(false))
-    .or_else(|| app.get_webview_window("main"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -242,16 +221,6 @@ pub fn run() {
             let _ = win.set_menu(Some(menu.clone()));
           }
           built.ok();
-        }
-        #[cfg(debug_assertions)]
-        "toggle_devtools" => {
-          if let Some(win) = focused_webview(app) {
-            if win.is_devtools_open() {
-              win.close_devtools();
-            } else {
-              win.open_devtools();
-            }
-          }
         }
         // Everything else is an app action the web UI owns — forward it.
         other => {

@@ -229,12 +229,14 @@ describe("App.tsx — WorkspaceLayout (task 1.4)", () => {
     expect(src.includes("BottomPanel")).toBe(false);
   });
 
-  test("imports terminalStore", () => {
-    expect(src.includes("terminalStore")).toBe(true);
+  test("routes the ⌘` shortcut through uiStore.toggleTerminal", () => {
+    expect(src.includes("toggleTerminal")).toBe(true);
+    expect(src.includes("terminalStore")).toBe(false);
   });
 
-  test("renders TerminalPanel below EditorArea", () => {
+  test("renders TerminalPanel as an ActivityBar main-area activity", () => {
     expect(src.includes("TerminalPanel")).toBe(true);
+    expect(src.includes('activity === "terminal"')).toBe(true);
   });
 
   test("does NOT reference bottomVisible", () => {
@@ -790,9 +792,9 @@ describe("Task 1.4 — no dangling references to removed features", () => {
     workspaceSrc = await readSrc("lib/workspace.ts");
   });
 
-  test("App.tsx wires the integrated terminal (TerminalPanel + terminalStore)", () => {
+  test("App.tsx wires the integrated terminal (TerminalPanel + uiStore.toggleTerminal)", () => {
     expect(appSrc.includes("TerminalPanel")).toBe(true);
-    expect(appSrc.includes("terminalStore")).toBe(true);
+    expect(appSrc.includes("toggleTerminal")).toBe(true);
   });
 
   test("App.tsx has no graph references", () => {

@@ -269,3 +269,30 @@ describe("openFolderFlow — guard integration", () => {
     expect(useUIStore.getState().workspacePath).toBe("/original");
   });
 });
+
+describe("removeRecent — structural verification", () => {
+  let src: string;
+
+  beforeAll(async () => {
+    src = await Bun.file(`${import.meta.dir}/workspace.ts`).text();
+  });
+
+  test("exports removeRecent function", () => {
+    expect(src).toContain("export async function removeRecent(path: string)");
+  });
+
+  test("removeRecent filters the target path out of the recents list", () => {
+    expect(src).toContain("w.path !== path");
+  });
+
+  test("removeRecent persists via the same store file/key as touchRecent", () => {
+    expect(src).toContain('Store.load(STORE_FILE)');
+    expect(src).toContain('STORE_KEY');
+    expect(src).toContain("store.save()");
+  });
+
+  test("removeRecent is a no-op outside Tauri (browser/dev mode)", () => {
+    const body = src.slice(src.indexOf("export async function removeRecent"));
+    expect(body.slice(0, body.indexOf("\n}\n"))).toContain('if (!isTauri()) return;');
+  });
+});

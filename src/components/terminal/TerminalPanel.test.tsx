@@ -15,24 +15,20 @@ async function readSrc(relFromSrcDir: string): Promise<string> {
 describe("terminalStore — state transitions", () => {
   beforeEach(() => {
     useTerminalStore.setState({
-      visible: false,
       status: "idle",
       fitNonce: 0,
       restartNonce: 0,
     });
   });
 
-  test("toggle flips visible", () => {
-    useTerminalStore.getState().toggle();
-    expect(useTerminalStore.getState().visible).toBe(true);
-    useTerminalStore.getState().toggle();
-    expect(useTerminalStore.getState().visible).toBe(false);
+  test("has no visible flag (terminal is an ActivityBar main view)", () => {
+    expect("visible" in useTerminalStore.getState()).toBe(false);
+    expect("toggle" in useTerminalStore.getState()).toBe(false);
+    expect("setVisible" in useTerminalStore.getState()).toBe(false);
   });
 
-  test("setVisible / setStatus set state directly", () => {
-    useTerminalStore.getState().setVisible(true);
+  test("setStatus sets state directly", () => {
     useTerminalStore.getState().setStatus("running");
-    expect(useTerminalStore.getState().visible).toBe(true);
     expect(useTerminalStore.getState().status).toBe("running");
   });
 
@@ -56,6 +52,11 @@ describe("TerminalPanel.tsx — structural verification", () => {
     expect(src.includes("@xterm/xterm/css/xterm.css")).toBe(true);
   });
 
+  test("loads the unicode graphemes addon (Thai combining marks / cursor alignment)", () => {
+    expect(src.includes("@xterm/addon-unicode-graphemes")).toBe(true);
+    expect(src.includes("new UnicodeGraphemesAddon()")).toBe(true);
+  });
+
   test("talks to the Rust PTY commands", () => {
     expect(src.includes('"pty_spawn"')).toBe(true);
     expect(src.includes('"pty_write"')).toBe(true);
@@ -72,9 +73,22 @@ describe("TerminalPanel.tsx — structural verification", () => {
     expect(src.includes("cwd: workspacePath")).toBe(true);
   });
 
-  test("has restart + close controls", () => {
+  test("has restart + close controls (close navigates back to the editor)", () => {
     expect(src.includes("requestRestart")).toBe(true);
-    expect(src.includes("setVisible(false)")).toBe(true);
+    expect(src.includes('setActivity("editor")')).toBe(true);
+  });
+
+  test("mounted means visible (no hidden gating, no h-56 bottom-panel sizing)", () => {
+    expect(src.includes("hidden")).toBe(false);
+    expect(src.includes("h-56")).toBe(false);
+    expect(src.includes("setVisible")).toBe(false);
+  });
+
+  test("spawn effect has no !visible early-return and kills via pty_spawn only", () => {
+    expect(src.includes("!visible")).toBe(false);
+    // No standalone pty_kill effect besides the unmount cleanup.
+    const killCalls = src.split('invoke("pty_kill")').length - 1;
+    expect(killCalls).toBe(1);
   });
 });
 
