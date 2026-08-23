@@ -326,9 +326,10 @@ export function TerminalPanel() {
     const st = useTerminalStore.getState();
     const ws = useUIStore.getState().workspacePath;
     const sid = st.activeId;
-    const ctx = sid ? ctxsRef.current.get(sid) : undefined;
-    const backendId = ctx?.backendId ?? null;
-    if (!ctx || !ws || !backendId) return;
+    if (!sid || !ws) return;
+    const ctx = ctxsRef.current.get(sid);
+    if (!ctx || !ctx.backendId) return;
+    const backendId = ctx.backendId;
     void invoke("pty_kill", { id: backendId }).catch(() => {});
     backendToSessionRef.current.delete(backendId);
     ctx.backendId = null;
