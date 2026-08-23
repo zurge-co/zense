@@ -46,11 +46,16 @@ fn build_agent(
 
   let agent = match cfg.api_format {
     llm::LlmApiFormat::OpenaiCompatible => {
+      // `.completions_api()`: keep using the classic /chat/completions endpoint.
+      // rig 0.42's default OpenAI client targets the newer Responses API
+      // (/responses), which most OpenAI-compatible providers (Ollama,
+      // LM Studio, vLLM, OpenRouter, ...) don't implement.
       let client = openai::Client::builder()
         .api_key(key)
         .base_url(cfg.base_url.clone())
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .completions_api();
 
       // Chain tools conditionally. The first .tool() transitions the builder
       // typestate from NoToolConfig → WithBuilderTools; subsequent calls are
