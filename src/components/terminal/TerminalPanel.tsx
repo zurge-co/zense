@@ -36,6 +36,24 @@ interface TermCtx {
   spawned: boolean;
   lastSpawnAt: number;
   cwd: string | null;
+  /** Output chunks accumulated since the last frame (ADR-005 layer 2). */
+  pending: string;
+  /** Scheduled rAF flush handle (null when nothing is queued). */
+  raf: number | null;
+}
+
+/** Flush the session's pending output buffer synchronously (one write).
+ *  Cancels any scheduled rAF so a kill/unmount never double-writes. */
+function flushPending(ctx: TermCtx) {
+  if (ctx.raf !== null) {
+    cancelAnimationFrame(ctx.raf);
+    ctx.raf = null;
+  }
+  if (ctx.pending) {
+    const chunk = ctx.pending;
+    ctx.pending = "";
+    ctx.term.write(chunk);
+  }
 }
 
 const DOT: Record<TermSession["status"], string> = {
@@ -96,6 +114,13 @@ export function TerminalPanel() {
     ctx.lastSpawnAt = Date.now();
     useTerminalStore.getState().setStatus(id, "idle");
     term.reset();
+    // Drop anything buffered from the previous backend session — a stale
+    // rAF flush must not leak old output into the fresh term.
+    if (ctx.raf !== null) {
+      cancelAnimationFrame(ctx.raf);
+      ctx.raf = null;
+    }
+    ctx.pending = "";
 
     try {
       ctx.fit.fit();
@@ -158,6 +183,8 @@ export function TerminalPanel() {
       spawned: false,
       lastSpawnAt: 0,
       cwd: null,
+      pending: "",
+      raf: null,
     };
     ctxsRef.current.set(id, ctx);
     term.onData((data) => {
@@ -169,6 +196,8 @@ export function TerminalPanel() {
 
   /** Kill the backend session (if any) and dispose the xterm instance. */
   const killCtx = (ctx: TermCtx) => {
+    // Write out anything buffered for this frame before the term is gone.
+    flushPending(ctx);
     if (ctx.backendId) {
       void invoke("pty_kill", { id: ctx.backendId }).catch(() => {});
       backendToSessionRef.current.delete(ctx.backendId);
@@ -203,7 +232,21 @@ export function TerminalPanel() {
     const unOut = listen<{ id: string; data: string }>("pty://output", (e) => {
       const sid = backendToSessionRef.current.get(e.payload.id);
       if (!sid) return;
-      ctxsRef.current.get(sid)?.term.write(e.payload.data);
+      const ctx = ctxsRef.current.get(sid);
+      if (!ctx) return;
+      // ADR-005 layer 2: batch this frame's chunks into ONE term.write via
+      // rAF. Writing per event makes the viewport scroll/repaint at the
+      // bottom edge several times per frame — the scroll-to-bottom flicker
+      // seen while output streams in and the user is typing.
+      ctx.pending += e.payload.data;
+      if (ctx.raf === null) {
+        ctx.raf = requestAnimationFrame(() => {
+          ctx.raf = null;
+          const chunk = ctx.pending;
+          ctx.pending = "";
+          if (chunk) ctx.term.write(chunk);
+        });
+      }
     });
     const unExit = listen<{ id: string; code: number }>("pty://exit", (e) => {
       const sid = backendToSessionRef.current.get(e.payload.id);
@@ -224,7 +267,10 @@ export function TerminalPanel() {
       void unExit.then((u) => u());
       // No lingering shells when the panel is unmounted (window teardown).
       void invoke("pty_kill_all").catch(() => {});
-      for (const ctx of ctxsRef.current.values()) ctx.term.dispose();
+      for (const ctx of ctxsRef.current.values()) {
+        flushPending(ctx);
+        ctx.term.dispose();
+      }
       ctxsRef.current.clear();
       backendToSessionRef.current.clear();
       hostRefs.current.clear();

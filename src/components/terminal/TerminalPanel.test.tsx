@@ -121,6 +121,19 @@ describe("TerminalPanel.tsx — structural verification (multi-tab)", () => {
     expect(src.includes("backendToSessionRef")).toBe(true);
   });
 
+  test("batches output into one term.write per frame via rAF (ADR-005, no scroll flicker)", () => {
+    // Incoming chunks accumulate in a per-session pending buffer...
+    expect(src.includes("ctx.pending += e.payload.data")).toBe(true);
+    // ...and are flushed into a single write via requestAnimationFrame,
+    // at most one scheduled flush per session.
+    expect(src.includes("requestAnimationFrame")).toBe(true);
+    expect(src.includes("if (ctx.raf === null)")).toBe(true);
+    // Teardown cancels the scheduled flush (no write after dispose, no
+    // stale bytes on respawn).
+    expect(src.includes("cancelAnimationFrame")).toBe(true);
+    expect(src.includes("function flushPending")).toBe(true);
+  });
+
   test("spawns the shell at the workspace path", () => {
     expect(src.includes("{ cwd, cols, rows }")).toBe(true);
   });
