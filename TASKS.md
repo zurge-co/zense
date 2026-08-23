@@ -92,6 +92,18 @@
 - [ ] Keybinding rebinding (Shortcuts page แก้ไขได้)
 - [ ] Workspace-level settings override
 
+## 🖥 Terminal (integrated, multi-session)
+
+- [x] Integrated terminal: xterm.js + real PTY (portable-pty) as ActivityBar main view (⌘`)
+- [x] Thai cursor: unicode graphemes addon (combining marks share one cell)
+- [x] Shell survives activity swaps (panel kept mounted, CSS-concealed — ADR-004)
+- [x] Multi-session tabs (ADR-006): หลาย session พร้อมกััน — backend `PtyManager` HashMap keyed by session id, events `pty://output`/`pty://exit` พัก id
+- [x] เปิด tab/session ใหม้: ปุ่่ม + บน tab bar หรื่้่อ ⌘N / Ctrl+N (context-sensitive — ใน terminal view เปิ่่ม new terminal session, นอกนั้่นเปิ่่ม New File)
+- [x] ปิ่่ม tab/session: ปุ่่ม X บนแต่ละ tab (`pty_kill` ราย session; `pty_kill_all` ตอน unmount / สลับ workspace)
+- [x] Shell ใน tab ที่ไม่ active รันตอในเบื้องหลัง (xterm instance ถููก mount ถอดส, inactive display:none)
+- [x] Restart shell ราย tab (rotate ปุ่่ม) — kill + respawn ใน tab เดิม, title "Terminal N" ไม่เปลื่่ยน
+- [ ] Persist open terminal sessions / restore หนับ restart app
+
 ## 💬 AI Chat (LLM)
 
 - [x] Chat panel จริง (`ChatPanel.tsx` แทน stub `ComposerPanel`) — message list, streaming text, tool-call indicators, error banner

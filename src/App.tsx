@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useUIStore, tabKey } from "./store/uiStore";
+import { useTerminalStore } from "./store/terminalStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
 import { isTauri, openFolderFlow } from "./lib/workspace";
 import { loadUiPrefs } from "./lib/settings";
@@ -255,7 +256,14 @@ function useMenuEvents() {
       const ui = useUIStore.getState();
       switch (e.payload) {
         case "new_file":
-          startNewFile();
+          // Context-sensitive ⌘N: in the terminal view it opens a new
+          // terminal session, otherwise a new file (menu accelerator and
+          // keydown both route through here, so keep them in sync).
+          if (useUIStore.getState().activity === "terminal") {
+            newTerminalSession();
+          } else {
+            startNewFile();
+          }
           break;
         case "open_folder":
           void openFolderFlow();
@@ -304,6 +312,18 @@ function useMenuEvents() {
   }, []);
 }
 
+/**
+ * ⌘N while the terminal view is active — open a new terminal session tab
+ * (elsewhere ⌘N is New File). Used by both the keydown fallback and the
+ * native "new_file" menu action.
+ */
+function newTerminalSession() {
+  const ui = useUIStore.getState();
+  if (ui.screen !== "workspace" || !ui.workspacePath) return;
+  if (ui.activity !== "terminal") ui.setActivity("terminal");
+  useTerminalStore.getState().addSession();
+}
+
 function useKeyboardShortcuts() {
   const { toggleSidebar, toggleChat, closeSettings, openSettings, openSearch, toggleTerminal } =
     useUIStore();
@@ -318,7 +338,13 @@ function useKeyboardShortcuts() {
           saveActiveTab();
         } else if (e.key === "n" && !e.shiftKey) {
           e.preventDefault();
-          startNewFile();
+          // Context-sensitive ⌘N: terminal view → new terminal session,
+          // anywhere else → new file (mirrors the native-menu handler).
+          if (useUIStore.getState().activity === "terminal") {
+            newTerminalSession();
+          } else {
+            startNewFile();
+          }
         } else if (e.key === "b") {
           e.preventDefault();
           toggleSidebar();

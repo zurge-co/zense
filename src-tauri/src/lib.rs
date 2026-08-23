@@ -172,6 +172,7 @@ pub fn run() {
       ptycmd::pty_write,
       ptycmd::pty_resize,
       ptycmd::pty_kill,
+      ptycmd::pty_kill_all,
       watcher::watch_workspace,
       watcher::stop_watch,
     ])

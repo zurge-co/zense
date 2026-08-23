@@ -4,11 +4,11 @@ import { FitAddon } from "@xterm/addon-fit";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { RotateCw, X } from "lucide-react";
+import { Plus, RotateCw, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 import { useUIStore } from "../../store/uiStore";
-import { useTerminalStore } from "../../store/terminalStore";
+import { useTerminalStore, type TermSession } from "../../store/terminalStore";
 import { isTauri } from "../../lib/workspace";
 
 const TERM_THEME = {
@@ -24,46 +24,108 @@ const TERM_THEME = {
 };
 
 /** Exit events arriving this soon after a (re)spawn are stale EOF from the
- *  session pty_spawn just replaced — not the new shell dying. */
+ *  backend session this spawn just killed/replaced — not the new shell dying. */
 const STALE_EXIT_MS = 500;
 
+/** Per-tab runtime: the xterm instance plus its current backend PTY id. */
+interface TermCtx {
+  term: XTerm;
+  fit: FitAddon;
+  /** Backend session id (null while a spawn is in flight / after failure). */
+  backendId: string | null;
+  spawned: boolean;
+  lastSpawnAt: number;
+  cwd: string | null;
+}
+
+const DOT: Record<TermSession["status"], string> = {
+  running: "bg-accent",
+  exited: "bg-danger",
+  idle: "bg-fg-muted",
+};
+
 /**
- * Integrated terminal as an ActivityBar main view: xterm.js on top of a real
- * PTY (see src-tauri/src/ptycmd.rs). One shell session per window, rooted at
- * the workspace directory. The panel is mounted lazily on first visit and
- * afterwards stays mounted when another activity is selected (App.tsx
- * conceals it via CSS), so the shell session survives view switches — the
- * PTY is killed only on unmount, i.e. when the window/workspace is torn
- * down. Workspace switch and the restart button respawn the shell in place.
+ * Integrated terminal as an ActivityBar main view: xterm.js on top of real
+ * PTYs (see src-tauri/src/ptycmd.rs). Multiple shell sessions live in tabs —
+ * new via the + button or ⌘N (context-sensitive, App.tsx), close via the X
+ * on each tab. Each tab keeps its own xterm instance mounted (inactive tabs
+ * are display:none), so a background shell keeps running while you look at
+ * another session. The panel is mounted lazily on first visit and afterwards
+ * stays mounted when another activity is selected (App.tsx conceals it via
+ * CSS); PTYs are killed on unmount (pty_kill_all) or a workspace switch.
  */
 export function TerminalPanel() {
-  const { status, setStatus, restartNonce, fitNonce } = useTerminalStore();
+  const { sessions, activeId, fitNonce } = useTerminalStore();
   const workspacePath = useUIStore((s) => s.workspacePath);
   const activity = useUIStore((s) => s.activity);
 
-  const hostRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<XTerm | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
-  const spawnedRef = useRef(false);
-  const cwdRef = useRef<string | null>(null);
-  const lastSpawnAtRef = useRef(0);
+  /** Frontend session id → runtime context. */
+  const ctxsRef = useRef(new Map<string, TermCtx>());
+  /** Backend PTY id → frontend session id (event routing). */
+  const backendToSessionRef = useRef(new Map<string, string>());
+  /** Frontend session id → host div (xterm mount point). */
+  const hostRefs = useRef(new Map<string, HTMLDivElement>());
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const prevWsRef = useRef<string | null>(null);
 
-  const fitAndNotify = () => {
-    const term = termRef.current;
-    const fit = fitRef.current;
-    if (!term || !fit || !spawnedRef.current) return;
+  // ── Per-session lifecycle helpers ───────────────────────────────────────
+
+  const fitActive = () => {
+    const sid = useTerminalStore.getState().activeId;
+    const ctx = sid ? ctxsRef.current.get(sid) : undefined;
+    if (!ctx || !ctx.spawned) return;
     try {
-      fit.fit();
-      void invoke("pty_resize", { cols: term.cols, rows: term.rows }).catch(() => {});
+      ctx.fit.fit();
+      if (ctx.backendId) {
+        void invoke("pty_resize", {
+          id: ctx.backendId,
+          cols: ctx.term.cols,
+          rows: ctx.term.rows,
+        }).catch(() => {});
+      }
     } catch {
       // container without layout yet has zero size — skip
     }
   };
 
-  // ── Create the xterm instance once, wire listeners ─────────────────────
-  useEffect(() => {
-    if (!hostRef.current || termRef.current || !isTauri()) return;
+  /** Spawn (or respawn) the PTY behind a session, wired to ctx.term. */
+  const spawnSession = (id: string, ctx: TermCtx, cwd: string) => {
+    const term = ctx.term;
+    ctx.spawned = true;
+    ctx.cwd = cwd;
+    ctx.lastSpawnAt = Date.now();
+    useTerminalStore.getState().setStatus(id, "idle");
+    term.reset();
 
+    try {
+      ctx.fit.fit();
+    } catch {
+      /* container without layout yet → pty starts at 80x24, refit on resize */
+    }
+    const cols = term.cols ?? 80;
+    const rows = term.rows ?? 24;
+
+    invoke<string>("pty_spawn", { cwd, cols, rows }).then(
+      (backendId) => {
+        if (ctxsRef.current.get(id) !== ctx) {
+          // Tab closed while the spawn was in flight — don't leak the shell.
+          void invoke("pty_kill", { id: backendId }).catch(() => {});
+          return;
+        }
+        ctx.backendId = backendId;
+        backendToSessionRef.current.set(backendId, id);
+        useTerminalStore.getState().setStatus(id, "running");
+      },
+      (err) => {
+        ctx.spawned = false;
+        useTerminalStore.getState().setStatus(id, "exited");
+        term.write(`\r\n\x1b[31m[failed to spawn shell: ${err}]\x1b[0m\r\n`);
+      },
+    );
+  };
+
+  /** Create the xterm for a session and start its shell. */
+  const createSession = (id: string, host: HTMLDivElement, cwd: string) => {
     const term = new XTerm({
       theme: TERM_THEME,
       fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
@@ -87,118 +149,189 @@ export function TerminalPanel() {
     }
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.open(hostRef.current);
-    termRef.current = term;
-    fitRef.current = fit;
+    term.open(host);
 
-    const unData = term.onData((data) => {
-      void invoke("pty_write", { data }).catch(() => {});
+    const ctx: TermCtx = {
+      term,
+      fit,
+      backendId: null,
+      spawned: false,
+      lastSpawnAt: 0,
+      cwd: null,
+    };
+    ctxsRef.current.set(id, ctx);
+    term.onData((data) => {
+      if (ctx.backendId) void invoke("pty_write", { id: ctx.backendId, data }).catch(() => {});
     });
 
-    const unOut = listen<string>("pty://output", (e) => term.write(e.payload));
-    const unExit = listen<number>("pty://exit", () => {
-      // pty_spawn kills the previous session server-side; its reader thread
-      // hits EOF shortly *after* the new shell is up. Don't let that stale
-      // EOF mark the fresh session as exited.
-      if (Date.now() - lastSpawnAtRef.current < STALE_EXIT_MS) return;
-      spawnedRef.current = false;
-      setStatus("exited");
-      term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
+    spawnSession(id, ctx, cwd);
+  };
+
+  /** Kill the backend session (if any) and dispose the xterm instance. */
+  const killCtx = (ctx: TermCtx) => {
+    if (ctx.backendId) {
+      void invoke("pty_kill", { id: ctx.backendId }).catch(() => {});
+      backendToSessionRef.current.delete(ctx.backendId);
+    }
+    ctx.term.dispose();
+  };
+
+  // ── Workspace switch: tear down all sessions, start one fresh tab.
+  //    (Different cwd root — old sessions would be in the wrong directory.)
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (prevWsRef.current === workspacePath) return;
+    const prev = prevWsRef.current;
+    prevWsRef.current = workspacePath;
+    if (!workspacePath) return;
+    if (prev !== null) {
+      for (const ctx of [...ctxsRef.current.values()]) killCtx(ctx);
+      ctxsRef.current.clear();
+      backendToSessionRef.current.clear();
+      useTerminalStore.getState().reset();
+    } else if (useTerminalStore.getState().sessions.length === 0) {
+      useTerminalStore.getState().addSession();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspacePath]);
+
+  // ── Event routing: pty://output / pty://exit carry the backend session
+  //    id; map it back to the frontend tab. Single listeners for all tabs.
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    const unOut = listen<{ id: string; data: string }>("pty://output", (e) => {
+      const sid = backendToSessionRef.current.get(e.payload.id);
+      if (!sid) return;
+      ctxsRef.current.get(sid)?.term.write(e.payload.data);
+    });
+    const unExit = listen<{ id: string; code: number }>("pty://exit", (e) => {
+      const sid = backendToSessionRef.current.get(e.payload.id);
+      if (!sid) return;
+      const ctx = ctxsRef.current.get(sid);
+      if (!ctx) return;
+      // pty_kill from a restart makes the old session's reader hit EOF
+      // shortly *after* the new shell is up. Don't let that stale EOF mark
+      // the fresh session as exited.
+      if (Date.now() - ctx.lastSpawnAt < STALE_EXIT_MS) return;
+      ctx.spawned = false;
+      useTerminalStore.getState().setStatus(sid, "exited");
+      ctx.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
     });
 
     return () => {
-      unData.dispose();
       void unOut.then((u) => u());
       void unExit.then((u) => u());
-      void invoke("pty_kill").catch(() => {}); // no lingering shell on unmount
-      term.dispose();
-      termRef.current = null;
-      fitRef.current = null;
-      spawnedRef.current = false;
-      cwdRef.current = null;
+      // No lingering shells when the panel is unmounted (window teardown).
+      void invoke("pty_kill_all").catch(() => {});
+      for (const ctx of ctxsRef.current.values()) ctx.term.dispose();
+      ctxsRef.current.clear();
+      backendToSessionRef.current.clear();
+      hostRefs.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Shell lifecycle: spawn on mount, respawn on workspace change/restart.
-  //    pty_spawn kills any existing session server-side, so a single invoke
-  //    is enough — the kill MUST NOT be a separate later effect (it would
-  //    kill the freshly spawned shell and nothing would respawn it).
+  // ── Sync runtimes with the session list: spawn new tabs, kill closed ones.
   useEffect(() => {
-    const term = termRef.current;
-    if (!term || !workspacePath || !isTauri()) return;
-    if (spawnedRef.current && cwdRef.current === workspacePath) return;
+    if (!isTauri() || !workspacePath) return;
 
-    spawnedRef.current = true;
-    cwdRef.current = workspacePath;
-    lastSpawnAtRef.current = Date.now();
-    setStatus("idle");
-    term.reset();
-
-    try {
-      fitRef.current?.fit();
-    } catch {
-      /* container without layout yet → pty starts at 80x24, refit on resize */
+    for (const [id, ctx] of [...ctxsRef.current]) {
+      if (!sessions.some((s) => s.id === id)) {
+        killCtx(ctx);
+        ctxsRef.current.delete(id);
+      }
     }
-    const cols = term.cols ?? 80;
-    const rows = term.rows ?? 24;
-
-    invoke("pty_spawn", { cwd: workspacePath, cols, rows })
-      .then(() => setStatus("running"))
-      .catch((err) => {
-        spawnedRef.current = false;
-        setStatus("exited");
-        term.write(`\r\n\x1b[31m[failed to spawn shell: ${err}]\x1b[0m\r\n`);
-      });
+    for (const s of sessions) {
+      const host = hostRefs.current.get(s.id);
+      if (!ctxsRef.current.has(s.id) && host) {
+        createSession(s.id, host, workspacePath);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath, restartNonce]);
+  }, [sessions, workspacePath]);
 
-  /** Kill the current shell (if any) and let the spawn effect start a new one. */
-  const restartShell = () => {
-    spawnedRef.current = false;
-    setStatus("idle");
-    // pty_spawn kills any existing session server-side; bump restartNonce to
-    // re-run the spawn effect even when workspacePath is unchanged.
-    useTerminalStore.getState().requestRestart();
-  };
-
-  // ── Refit when the terminal view becomes active again after a swap — the
-  //    window may have been resized while the panel was concealed. ────────
+  // ── Fit + focus when the terminal view becomes active, and on tab switch.
   useEffect(() => {
-    if (activity === "terminal") fitAndNotify();
+    if (activity !== "terminal") return;
+    fitActive();
+    const sid = useTerminalStore.getState().activeId;
+    if (sid) ctxsRef.current.get(sid)?.term.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activity]);
+  }, [activity, activeId]);
 
-  // ── Refit on request / container resize ────────────────────────────────
+  // ── Refit the active session on request / container resize ─────────────
   useEffect(() => {
-    fitAndNotify();
+    fitActive();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitNonce]);
 
   useEffect(() => {
-    const el = hostRef.current;
+    const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => fitAndNotify());
+    const ro = new ResizeObserver(() => fitActive());
     ro.observe(el);
     return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Kill the active session's shell (if any) and spawn a new one in place. */
+  const restartActive = () => {
+    const st = useTerminalStore.getState();
+    const ws = useUIStore.getState().workspacePath;
+    const sid = st.activeId;
+    const ctx = sid ? ctxsRef.current.get(sid) : undefined;
+    const backendId = ctx?.backendId ?? null;
+    if (!ctx || !ws || !backendId) return;
+    void invoke("pty_kill", { id: backendId }).catch(() => {});
+    backendToSessionRef.current.delete(backendId);
+    ctx.backendId = null;
+    spawnSession(sid, ctx, ws);
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-base">
-      <div className="flex h-7 shrink-0 items-center justify-between border-b border-border bg-panel px-3">
-        <span className="flex items-center gap-2 text-[11px] tracking-wide text-fg-muted">
-          TERMINAL
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              status === "running" ? "bg-accent" : status === "exited" ? "bg-danger" : "bg-fg-muted"
-            }`}
-          />
-          {status === "exited" && <span>exited</span>}
-        </span>
-        <span className="flex items-center gap-1">
+      {/* ── Tab bar ── */}
+      <div className="flex h-7 shrink-0 items-center border-b border-border bg-panel">
+        <div className="flex min-w-0 flex-1 items-center overflow-x-auto">
+          {sessions.map((s) => {
+            const active = s.id === activeId;
+            return (
+              <div
+                key={s.id}
+                onClick={() => useTerminalStore.getState().setActiveId(s.id)}
+                className={`flex h-7 shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border px-2.5 text-[11px] ${
+                  active ? "bg-base text-fg" : "text-fg-muted hover:bg-base/50"
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${DOT[s.status]}`} />
+                {s.title}
+                <span
+                  role="button"
+                  title="Close terminal"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    useTerminalStore.getState().removeSession(s.id);
+                  }}
+                  className="rounded p-0.5 transition-colors hover:bg-base/60 hover:text-fg"
+                >
+                  <X size={11} strokeWidth={1.7} />
+                </span>
+              </div>
+            );
+          })}
           <button
-            title="Restart shell"
-            onClick={restartShell}
+            title="New terminal (⌘N)"
+            onClick={() => useTerminalStore.getState().addSession()}
+            className="rounded p-1 text-fg-muted transition-colors hover:text-fg"
+          >
+            <Plus size={12} strokeWidth={1.7} />
+          </button>
+        </div>
+        <div className="flex shrink-0 items-center gap-1 px-2">
+          <button
+            title="Restart active shell"
+            onClick={restartActive}
             className="rounded p-1 text-fg-muted transition-colors hover:text-fg"
           >
             <RotateCw size={12} strokeWidth={1.7} />
@@ -210,10 +343,36 @@ export function TerminalPanel() {
           >
             <X size={13} strokeWidth={1.7} />
           </button>
-        </span>
+        </div>
       </div>
+
+      {/* ── Sessions: all tabs stay mounted; inactive are display:none so
+             their shells keep running in the background ── */}
       {isTauri() ? (
-        <div ref={hostRef} className="min-h-0 flex-1 px-2 py-1" />
+        <div ref={bodyRef} className="relative min-h-0 flex-1 px-2 py-1">
+          {sessions.map((s) => (
+            <div
+              key={s.id}
+              ref={(el) => {
+                if (el) hostRefs.current.set(s.id, el);
+                else hostRefs.current.delete(s.id);
+              }}
+              style={{ display: s.id === activeId ? undefined : "none" }}
+              className="h-full"
+            />
+          ))}
+          {sessions.length === 0 && (
+            <div className="flex h-full items-center justify-center gap-2 text-[12px] text-fg-muted">
+              No terminal sessions
+              <button
+                onClick={() => useTerminalStore.getState().addSession()}
+                className="rounded border border-border px-2 py-0.5 transition-colors hover:text-fg"
+              >
+                + New terminal
+              </button>
+            </div>
+          )}
+        </div>
       ) : (
         <div className="flex flex-1 items-center justify-center text-[12px] text-fg-muted">
           Terminal is available in the desktop app only

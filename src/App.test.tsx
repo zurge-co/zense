@@ -231,7 +231,8 @@ describe("App.tsx — WorkspaceLayout (task 1.4)", () => {
 
   test("routes the ⌘` shortcut through uiStore.toggleTerminal", () => {
     expect(src.includes("toggleTerminal")).toBe(true);
-    expect(src.includes("terminalStore")).toBe(false);
+    // terminalStore is referenced for the context-sensitive ⌘N (new terminal session).
+    expect(src.includes("terminalStore")).toBe(true);
   });
 
   test("renders TerminalPanel as an ActivityBar main-area activity", () => {
@@ -354,7 +355,10 @@ describe("TitleBar.tsx — toggle buttons (task 1.4)", () => {
     expect(src.includes("PanelBottom")).toBe(false);
   });
 
-  test("does NOT reference terminalStore", () => {
+  test("does NOT reference terminalStore (⌘N lives in App.tsx, not TitleBar)", () => {
+    // The context-sensitive ⌘N handler (newTerminalSession) is in App.tsx —
+    // covered by the "App.tsx — context-sensitive ⌘N" suite. TitleBar only
+    // carries the sidebar/chat toggles.
     expect(src.includes("terminalStore")).toBe(false);
   });
 
