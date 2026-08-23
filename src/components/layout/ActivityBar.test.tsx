@@ -2,9 +2,9 @@
 /**
  * Task 1.3 tests — ActivityBar, SideBar, ReviewPanel
  *
- * The full app does not compile yet (pre-existing TS errors in App.tsx,
- * ComposerPanel.tsx, StatusBar.tsx, TitleBar.tsx, SettingsModal.tsx,
- * settings.ts, main.tsx — all scoped for tasks 1.4-1.6). The 3 files under
+ * Historical note: this suite predates full-app compilation (older errors
+ * in App.tsx, the former ComposerPanel.tsx, StatusBar.tsx, TitleBar.tsx,
+ * SettingsModal.tsx, settings.ts, main.tsx). The 3 files under
  * test here have zero TS errors. We follow the same structural-verification
  * pattern established in tests/task-1.2.uiStore.test.ts: read source text
  * directly and exercise the Zustand store that the components consume.

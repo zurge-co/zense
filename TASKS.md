@@ -6,7 +6,7 @@
 >
 > **Phase ปัจจุบัน:** UI v2 — 3 panels (Review / History / Explorer) + real git2 source control + real file system
 >
-> **เปลี่ยนแปลงครั้งล่าสุด:** ตัด Terminal / Agent Composer / Search / Code Graph / Prompt Library ออก ลด scope เหลือ code-understanding workspace (Review + Explorer + Editor + Diff). Git ใช้ git2 จริงแล้วทั้ง status/diff/stage/unstage/commit/log/show.
+> **เปลี่ยนแปลงครั้งล่าสุด:** AI Chat เชื่อมครบ end-to-end แล้ว (ChatPanel จริง + rig backend streaming + tool loop + multi-turn history + stop/clear) — ตอนนี้ตั้งค่า LLM ใน Settings > LLM แล้วคุยกับ codebase ได้เลย
 
 ---
 
@@ -52,9 +52,9 @@
 - [x] Branch info จริง (`git_branch_info` — name, detached, ahead/behind)
 - [ ] Branch: switch/create/list (dropdown ที่ branch name)
 - [ ] Blame view ใน editor gutter
-- [ ] AI commit message → ส่ง diff เข้า agent (defer — รอ LLM Phase)
+- [ ] AI commit message → ส่ง diff เข้า agent (LLM พร้อมแล้ว — เหลือ wiring Review panel)
 - [ ] Stage/unstage ระดับ hunk จาก diff view
-- [ ] AI Summary (diff) → defer รอ LLM Phase
+- [ ] AI Summary (diff) (LLM พร้อมแล้ว — เหลือ wiring)
 
 ## 📜 History
 
@@ -91,6 +91,21 @@
 - [ ] Theme จริง (dark/light + custom tokens)
 - [ ] Keybinding rebinding (Shortcuts page แก้ไขได้)
 - [ ] Workspace-level settings override
+
+## 💬 AI Chat (LLM)
+
+- [x] Chat panel จริง (`ChatPanel.tsx` แทน stub `ComposerPanel`) — message list, streaming text, tool-call indicators, error banner
+- [x] Backend `chat_send` (rig agent + `stream_prompt` streaming ผ่าน Tauri Channel) + `llm_test_connection`
+- [x] Multi-turn: backend ส่ง chat history เข้า agent ทุกครั้ง (ไม่ drop context)
+- [x] Stop button (UI-level abort ผ่าน generation guard — เก็บ partial text; หมายเหตุ: rig stream ไม่มี cancel token, backend run ต่อจนจบเบื้องหลัง)
+- [x] Clear conversation (ปุ่ม Eraser บน header)
+- [x] Settings > LLM: provider (OpenAI/Anthropic compatible), base URL, API key (optional สำหรับ Ollama), model, Test Connection, tool toggles (read_file / read_file_range / list_files), guards (max_turns 1–100, max_tool_output 1000–500000) + persist ผ่าน tauri-plugin-store (migrate config เก่า)
+- [x] Path-traversal guard + output cap ใน tools
+- [ ] เก็บ tool result preview ใน UI (ตอนนี้ ToolCallEnd ส่ง preview ว่าง)
+- [ ] แสดง markdown/code block ใน message จริง (ตอนนี้ plain text)
+- [ ] Token usage display (rig `extended_details`)
+- [ ] Backend cancel token จริง (rig stream ยังไม่มี cancellation signal)
+- [ ] @-mention context injection เข้า prompt
 
 ## 🧠 AI Context Engine (future)
 

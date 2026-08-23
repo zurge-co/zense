@@ -1,9 +1,9 @@
 // @ts-nocheck
 /**
  * Task 1.6 tests — WelcomeScreen (no Agent/Terminal buttons, new tagline
- * "Review before you commit.") and ComposerPanel (simplified placeholder
- * with header, close button, "AI chat coming soon" empty state, Open
- * Settings button).
+ * "Review before you commit.") and ChatPanel (real LLM chat panel:
+ * header, close/clear buttons, unconfigured empty state with Open
+ * Settings CTA, message list, streaming + tool indicators, input form).
  *
  * We follow the structural-verification pattern established in
  * App.test.tsx and ActivityBar.test.tsx: read source text via Bun.file()
@@ -217,20 +217,20 @@ describe("WelcomeScreen.tsx — task 1.6 structural verification", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ComposerPanel.tsx — Simplified placeholder (no agent pipe)
+// ChatPanel.tsx — Real LLM chat panel (rig backend, streaming, tools)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("ComposerPanel.tsx — task 1.6 structural verification", () => {
+describe("ChatPanel.tsx — structural verification", () => {
   let src: string;
 
   beforeAll(async () => {
-    src = await readSrc("../chat/ComposerPanel.tsx");
+    src = await readSrc("../chat/ChatPanel.tsx");
   });
 
   // ── Component export ───────────────────────────────────────────────────────
 
-  test("exports ComposerPanel component", () => {
-    expect(src).toContain("export function ComposerPanel");
+  test("exports ChatPanel component", () => {
+    expect(src).toContain("export function ChatPanel");
   });
 
   test("source file is non-empty (>50 chars)", () => {
@@ -269,15 +269,19 @@ describe("ComposerPanel.tsx — task 1.6 structural verification", () => {
     expect(src).toContain("lucide-react");
   });
 
-  // ── Empty state ──────────────────────────────────────────────────────────────
+  // ── Unconfigured empty state ──────────────────────────────────────────────
 
-  test('empty state shows "AI chat coming soon"', () => {
-    expect(src).toContain("AI chat coming soon");
+  test('unconfigured state shows "Configure an LLM to start chatting"', () => {
+    expect(src).toContain("Configure an LLM to start chatting");
   });
 
-  test("empty state has MessageSquare icon (large, thin stroke)", () => {
+  test("unconfigured state has MessageSquare icon (large, thin stroke)", () => {
     expect(src).toContain("strokeWidth={1.2}");
     expect(src).toContain("size={22}");
+  });
+
+  test('configured empty state asks "Ask about your code"', () => {
+    expect(src).toContain("Ask about your code");
   });
 
   // ── Open Settings button ──────────────────────────────────────────────────
@@ -286,15 +290,43 @@ describe("ComposerPanel.tsx — task 1.6 structural verification", () => {
     expect(src).toContain("Open Settings");
   });
 
-  test("Open Settings button calls openSettings on click", () => {
-    expect(src).toContain("onClick={() => openSettings()}");
+  test("Open Settings button opens the llm settings section on click", () => {
+    expect(src).toContain('onClick={() => openSettings("llm")}');
+  });
+
+  // ── Real chat input + send/stop ───────────────────────────────────────────
+
+  test("has a text input bound to send", () => {
+    expect(src).toContain("<input");
+    expect(src).toContain("onSubmit={handleSubmit}");
+  });
+
+  test("send button dispatches chatStore.send with workspace path", () => {
+    expect(src).toContain("void send(input.trim(), workspacePath)");
+  });
+
+  test("streaming state shows a working stop button", () => {
+    expect(src).toContain("<Square");
+    expect(src).toContain("onClick={stop}");
+  });
+
+  test("tool-call streaming indicators render via activeTools", () => {
+    expect(src).toContain("activeTools");
+    expect(src).toContain("Wrench");
+  });
+
+  test("clear button resets conversation via chatStore.clear", () => {
+    expect(src).toContain("<Eraser");
+    expect(src).toContain("onClick={clear}");
   });
 
   // ── Store usage ───────────────────────────────────────────────────────────
 
-  test("imports useUIStore from store", () => {
+  test("imports useUIStore and useChatStore from stores", () => {
     expect(src).toContain("useUIStore");
     expect(src).toContain('"../../store/uiStore"');
+    expect(src).toContain("useChatStore");
+    expect(src).toContain('"../../store/chatStore"');
   });
 
   test("destructures toggleChat and openSettings from store", () => {
@@ -342,16 +374,6 @@ describe("ComposerPanel.tsx — task 1.6 structural verification", () => {
     expect(src.includes("Terminal")).toBe(false);
   });
 
-  test("does NOT have textarea or input element (no composer)", () => {
-    expect(src.includes("<textarea")).toBe(false);
-    expect(src.includes("<input")).toBe(false);
-  });
-
-  test("does NOT have send button or submit handler", () => {
-    expect(src.includes("Send")).toBe(false);
-    expect(src.includes("submit")).toBe(false);
-    expect(src.includes("onSubmit")).toBe(false);
-  });
 
   // ── Layout ─────────────────────────────────────────────────────────────────
 
@@ -372,7 +394,7 @@ describe("ComposerPanel.tsx — task 1.6 structural verification", () => {
 // Store interaction — toggleChat and openSettings (used by ComposerPanel)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("ComposerPanel — store interaction (task 1.6)", () => {
+describe("ChatPanel — store interaction", () => {
   beforeEach(() => resetStore());
 
   test("default chatVisible is true", () => {
@@ -509,7 +531,7 @@ describe("Task 1.6 — no dangling references across both files", () => {
 
   beforeAll(async () => {
     welcomeSrc = await readSrc("./WelcomeScreen.tsx");
-    composerSrc = await readSrc("../chat/ComposerPanel.tsx");
+    composerSrc = await readSrc("../chat/ChatPanel.tsx");
   });
 
   const removedTerms = [
@@ -527,7 +549,7 @@ describe("Task 1.6 — no dangling references across both files", () => {
       expect(welcomeSrc.includes(term)).toBe(false);
     });
 
-    test(`ComposerPanel.tsx does NOT reference ${term}`, () => {
+    test(`ChatPanel.tsx does NOT reference ${term}`, () => {
       expect(composerSrc.includes(term)).toBe(false);
     });
   }

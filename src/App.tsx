@@ -11,7 +11,7 @@ import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { SideBar } from "./components/sidebar/SideBar";
 import { EditorArea } from "./components/editor/EditorArea";
-import { ComposerPanel } from "./components/chat/ComposerPanel";
+import { ChatPanel } from "./components/chat/ChatPanel";
 import { TerminalPanel } from "./components/terminal/TerminalPanel";
 import { QuickOpen } from "./components/QuickOpen";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -119,7 +119,7 @@ function WorkspaceLayout() {
             </div>
           )}
         </div>
-        {chatVisible && <ComposerPanel />}
+        {chatVisible && <ChatPanel />}
       </div>
       <StatusBar />
       <SettingsModal />

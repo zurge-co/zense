@@ -3,9 +3,9 @@
  * Task 1.4 tests — App.tsx keyboard shortcuts & layout, TitleBar.tsx
  * toggle buttons, workspace.ts openFolderFlow.
  *
- * The full app does not compile yet (pre-existing TS errors in
- * ComposerPanel.tsx, StatusBar.tsx, SettingsModal.tsx, settings.ts —
- * all scoped for tasks 1.5-1.6). The files under test here have zero
+ * Historical note: this suite predates full-app compilation; the older
+ * stub panels (incl. the former ComposerPanel.tsx) have since been
+ * replaced by real components. The files under test here have zero
  * TS errors. We follow the structural-verification pattern from
  * tests/task-1.2.uiStore.test.ts and ActivityBar.test.tsx: read source
  * text via Bun.file() (not Node.js fs) and exercise the Zustand store
@@ -207,8 +207,8 @@ describe("App.tsx — WorkspaceLayout (task 1.4)", () => {
     expect(src).toContain("<EditorArea");
   });
 
-  test("renders <ComposerPanel /> conditionally on chatVisible", () => {
-    expect(src).toContain("chatVisible && <ComposerPanel");
+  test("renders <ChatPanel /> conditionally on chatVisible", () => {
+    expect(src).toContain("chatVisible && <ChatPanel");
   });
 
   test("renders <StatusBar />", () => {

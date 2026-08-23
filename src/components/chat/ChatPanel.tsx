@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X, MessageSquare, Send, Square, Wrench } from "lucide-react";
+import { X, MessageSquare, Send, Square, Wrench, Eraser } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
 import { useChatStore } from "../../store/chatStore";
 
@@ -14,6 +14,8 @@ export function ChatPanel() {
     configLoaded,
     loadConfig,
     send,
+    stop,
+    clear,
     isConfigured,
   } = useChatStore();
   const workspacePath = useUIStore((s) => s.workspacePath);
@@ -45,9 +47,20 @@ export function ChatPanel() {
           <MessageSquare size={12} className="text-accent" />
           Chat
         </span>
-        <button onClick={toggleChat} className="rounded p-1 text-fg-muted hover:bg-hover hover:text-fg">
-          <X size={13} />
-        </button>
+        <div className="flex items-center gap-0.5">
+          {messages.length > 0 && (
+            <button
+              onClick={clear}
+              title="Clear conversation"
+              className="rounded p-1 text-fg-muted hover:bg-hover hover:text-fg"
+            >
+              <Eraser size={13} />
+            </button>
+          )}
+          <button onClick={toggleChat} className="rounded p-1 text-fg-muted hover:bg-hover hover:text-fg">
+            <X size={13} />
+          </button>
+        </div>
       </div>
 
       {!configured ? (
@@ -126,9 +139,14 @@ export function ChatPanel() {
               className="flex-1 rounded border border-border bg-base px-2 py-1.5 text-[12px] text-fg outline-none placeholder:text-fg-muted/50 focus:border-accent/50"
             />
             {streaming ? (
-              <div className="px-1 text-fg-muted">
+              <button
+                type="button"
+                onClick={stop}
+                title="Stop generating"
+                className="rounded p-1.5 text-fg-muted hover:bg-hover hover:text-danger"
+              >
                 <Square size={14} className="fill-current" />
-              </div>
+              </button>
             ) : (
               <button
                 type="submit"

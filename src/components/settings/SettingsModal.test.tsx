@@ -3,8 +3,8 @@
  * Task 1.5 tests — StatusBar (no agent button), SettingsModal (3 sections
  * only: General, Appearance, Shortcuts), settings.ts (no-op initSettings).
  *
- * The full app does not compile yet (pre-existing TS errors in
- * ComposerPanel.tsx — task 1.6). The 3 files under test here have zero TS
+ * Historical note: this suite predates full-app compilation (older errors
+ * in the former ComposerPanel.tsx). The 3 files under test here have zero TS
  * errors. We follow the structural-verification pattern established in
  * App.test.tsx: read source text via Bun.file() (not Node.js fs) and
  * exercise the Zustand store + pure functions directly.

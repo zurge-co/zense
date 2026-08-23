@@ -317,7 +317,7 @@ export const shortcutGroups: { title: string; items: { keys: string; action: str
     items: [
       { keys: "⌘B", action: "Toggle sidebar" },
       { keys: "⌘J", action: "Toggle terminal" },
-      { keys: "⌘⇧C", action: "Toggle agent composer" },
+      { keys: "⌘⇧C", action: "Toggle AI chat" },
     ],
   },
   {

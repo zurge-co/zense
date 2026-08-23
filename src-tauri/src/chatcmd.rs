@@ -180,16 +180,27 @@ pub async fn chat_send(
 ) -> Result<String, String> {
   let agent = build_agent(&config, &system_prompt, &root)?;
 
-  let prompt = messages
+  // Last user message is the prompt; everything before it is chat history
+  // so the agent keeps multi-turn context.
+  let prompt_idx = messages
     .iter()
-    .rev()
-    .find_map(|m| match m {
-      IpcMessage::User { content } => Some(content.clone()),
-      _ => None,
-    })
+    .rposition(|m| matches!(m, IpcMessage::User { .. }))
     .ok_or_else(|| "no user message".to_string())?;
+  let prompt = match &messages[prompt_idx] {
+    IpcMessage::User { content } => content.clone(),
+    _ => unreachable!(),
+  };
+  let history: Vec<rig::completion::Message> = messages[..prompt_idx]
+    .iter()
+    .map(|m| match m {
+      IpcMessage::User { content } => rig::completion::Message::user(content.clone()),
+      IpcMessage::Assistant { content } => {
+        rig::completion::Message::assistant(content.clone())
+      }
+    })
+    .collect();
 
-  let mut stream = agent.stream_prompt(&prompt).await;
+  let mut stream = agent.stream_prompt(&prompt).history(history).await;
   let final_text = Arc::new(std::sync::Mutex::new(String::new()));
 
   while let Some(item) = stream.next().await {
@@ -257,6 +268,7 @@ pub async fn llm_test_connection(config: LlmConfig) -> Result<String, String> {
   let agent = build_agent(&config, "You are a test endpoint. Reply briefly.", ".")?;
   let reply = agent
     .prompt("Hi")
+    .max_turns(1)
     .await
     .map_err(|e| {
       let msg = e.to_string();

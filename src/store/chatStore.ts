@@ -28,9 +28,17 @@ interface ChatState {
   loadConfig: () => Promise<void>;
   saveConfig: (config: LlmConfig) => Promise<void>;
   send: (text: string, workspaceRoot: string) => Promise<void>;
+  /** Abort the in-flight stream (UI-level: ignores further events/resolution).
+   *  The backend agent run continues until it finishes — rig streams have no
+   *  cancel signal; partial text already streamed is kept as a message. */
+  stop: () => void;
   clear: () => void;
   isConfigured: () => boolean;
 }
+
+/** Monotonic generation id; every send() bumps it and captures its value.
+ *  Events/resolutions from stale generations are ignored. */
+let nextGen = 0;
 
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
@@ -55,6 +63,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { config, streaming } = get();
     if (!config || streaming) return;
 
+    const gen = ++nextGen;
+    const stale = () => nextGen !== gen;
+
     set({
       streaming: true,
       error: null,
@@ -70,6 +81,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       const finalText = await chatSend(config, sysPrompt, allMessages, workspaceRoot, (e: StreamEvent) => {
+        if (stale()) return;
         switch (e.type) {
           case "textDelta":
             set((s) => ({ streamingText: s.streamingText + e.text }));
@@ -94,24 +106,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       });
 
-      const assistantMsg: IpcMessage = { role: "assistant", content: finalText };
-      set((s) => ({
-        messages: [...s.messages, assistantMsg],
-        streaming: false,
-        streamingText: "",
-        activeTools: [],
-      }));
+      if (!stale()) {
+        const assistantMsg: IpcMessage = { role: "assistant", content: finalText };
+        set((s) => ({
+          messages: [...s.messages, assistantMsg],
+          streaming: false,
+          streamingText: "",
+          activeTools: [],
+        }));
+      }
     } catch (err) {
-      set({
-        streaming: false,
-        streamingText: "",
-        activeTools: [],
-        error: String(err),
-      });
+      if (!stale()) {
+        set({
+          streaming: false,
+          streamingText: "",
+          activeTools: [],
+          error: String(err),
+        });
+      }
     }
   },
 
-  clear: () => set({ messages: [], error: null, streamingText: "" }),
+  stop: () => {
+    const { streaming, streamingText } = get();
+    if (!streaming) return;
+    // Invalidate the generation so late events are ignored, but keep whatever
+    // partial text already streamed as an assistant message.
+    nextGen++;
+    set((s) => ({
+      streaming: false,
+      activeTools: [],
+      streamingText: "",
+      messages: streamingText
+        ? [...s.messages, { role: "assistant", content: streamingText }]
+        : s.messages,
+    }));
+  },
+
+  clear: () => {
+    // Also invalidate any in-flight generation so a late resolution can't
+    // resurrect messages after the user cleared the conversation.
+    nextGen++;
+    set({ messages: [], error: null, streamingText: "", streaming: false, activeTools: [] });
+  },
 
   isConfigured: () => {
     const { config } = get();
