@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "build:native": "node scripts/build-native.mjs",
     "build:app": "bun tauri build --config '{\"identifier\":\"com.zense.app\"}'",
+    "publish": "node scripts/publish-update.mjs",
     "lint": "oxlint",
     "preview": "vite preview"
   },
@@ -15,6 +16,8 @@
     "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-process": "~2",
+    "@tauri-apps/plugin-updater": "~2",
     "@tauri-apps/plugin-store": "^2.4.4",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-unicode-graphemes": "0.4.0",

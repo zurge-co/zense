@@ -20,6 +20,7 @@ import { useState } from "react";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { WelcomeScreen } from "./components/welcome/WelcomeScreen";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { UpdateDialog } from "./components/UpdateDialog";
 
 export default function App() {
   const screen = useUIStore((s) => s.screen);
@@ -47,6 +48,7 @@ export default function App() {
       </ErrorBoundary>
       {closeGuardDialog}
       <ConflictSaveDialog />
+      <UpdateDialog />
     </>
   );
 }

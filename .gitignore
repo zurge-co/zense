@@ -26,3 +26,6 @@ dist-ssr
 .opencode
 .swarm
 .pi/
+
+# publish artifacts
+target-update
