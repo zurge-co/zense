@@ -78,10 +78,16 @@ describe("TerminalPanel.tsx — structural verification", () => {
     expect(src.includes('setActivity("editor")')).toBe(true);
   });
 
-  test("mounted means visible (no hidden gating, no h-56 bottom-panel sizing)", () => {
+  test("kept mounted across activity swaps (App.tsx owns visibility, panel never self-conceals)", () => {
+    // The PTY dies on unmount, so the panel must stay mounted once created;
+    // visibility while another activity is selected is handled in App.tsx.
     expect(src.includes("hidden")).toBe(false);
     expect(src.includes("h-56")).toBe(false);
     expect(src.includes("setVisible")).toBe(false);
+  });
+
+  test("refits xterm when the terminal view becomes active again after a swap", () => {
+    expect(src.includes('if (activity === "terminal") fitAndNotify()')).toBe(true);
   });
 
   test("spawn effect has no !visible early-return and kills via pty_spawn only", () => {
@@ -89,6 +95,39 @@ describe("TerminalPanel.tsx — structural verification", () => {
     // No standalone pty_kill effect besides the unmount cleanup.
     const killCalls = src.split('invoke("pty_kill")').length - 1;
     expect(killCalls).toBe(1);
+  });
+});
+
+describe("App.tsx — terminal persists across activity swaps", () => {
+  let src: string;
+
+  beforeAll(async () => {
+    src = await readSrc("../../App.tsx");
+  });
+
+  test("TerminalPanel is lazily mounted once (ref), never unmounted on swap", () => {
+    expect(src.includes("<TerminalPanel />")).toBe(true);
+    expect(src.includes("terminalMountedRef")).toBe(true);
+    // Not the old pattern: `activity === "terminal" ? (<TerminalPanel />`.
+    expect(src.includes('activity === "terminal" ? (')).toBe(false);
+  });
+
+  test("conceals the kept-mounted terminal via CSS (absolute + invisible)", () => {
+    expect(src.includes("invisible absolute inset-0")).toBe(true);
+    expect(src.includes("hidden")).toBe(false);
+  });
+});
+
+describe("SideBar.tsx — no empty section in terminal mode", () => {
+  let src: string;
+
+  beforeAll(async () => {
+    src = await readSrc("../sidebar/SideBar.tsx");
+  });
+
+  test("renders nothing while the terminal view is active", () => {
+    expect(src.includes('activity === "terminal"')).toBe(true);
+    expect(src.includes('if (activity === "terminal") return null')).toBe(true);
   });
 });
 

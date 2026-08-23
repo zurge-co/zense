@@ -345,11 +345,18 @@ describe("SideBar.tsx — task 1.3 structural verification", () => {
 
   test("does NOT have separate panel branches for removed activities", () => {
     expect(src.includes('"agent"')).toBe(false);
-    expect(src.includes('"terminal"')).toBe(false);
     expect(src.includes('"graph"')).toBe(false);
     expect(src.includes('"prompts"')).toBe(false);
     // "search" is now shipped: SearchPanel renders for it.
     expect(src).toContain('activity === "search" && <SearchPanel');
+  });
+
+  test("terminal activity renders no sidebar section (early return null, no panel branch)", () => {
+    // The terminal is an ActivityBar main view; its only mention here is the
+    // guard that removes the (otherwise empty) sidebar section.
+    expect(src).toContain('if (activity === "terminal") return null');
+    expect(src.includes('activity === "terminal" &&')).toBe(false);
+    expect(src.includes('"terminal":')).toBe(false); // no titles entry
   });
 });
 

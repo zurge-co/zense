@@ -14,6 +14,10 @@ const titles: Record<string, string> = {
 export function SideBar() {
   const { activity } = useUIStore();
 
+  // Terminal mode has no sidebar content — render nothing instead of an
+  // empty header over an empty body section.
+  if (activity === "terminal") return null;
+
   return (
     <div className="flex w-60 shrink-0 flex-col border-r border-border bg-panel">
       <div className="flex h-8 shrink-0 items-center px-3 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">

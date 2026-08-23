@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -91,17 +91,32 @@ function WorkspaceLayout() {
     }
   }, [workspacePath]);
 
+  // Lazily mount the terminal on its first visit, then keep it mounted so
+  // the PTY session survives activity swaps — unmounting kills the shell
+  // (pty_kill in TerminalPanel's unmount cleanup). While another activity is
+  // selected it is concealed via CSS (absolute + invisible), and its
+  // ResizeObserver refits xterm when it becomes visible again.
+  const terminalMountedRef = useRef(false);
+  if (activity === "terminal") terminalMountedRef.current = true;
+
   return (
     <div className="flex h-full flex-col">
       <TitleBar />
       <div className="flex min-h-0 flex-1">
         <ActivityBar />
         {sidebarVisible && <SideBar />}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {activity === "terminal" ? (
-            <TerminalPanel />
-          ) : (
-            <EditorArea />
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          {activity !== "terminal" && <EditorArea />}
+          {terminalMountedRef.current && (
+            <div
+              className={
+                activity === "terminal"
+                  ? "flex min-h-0 min-w-0 flex-1 flex-col"
+                  : "invisible absolute inset-0 flex flex-col"
+              }
+            >
+              <TerminalPanel />
+            </div>
           )}
         </div>
         {chatVisible && <ComposerPanel />}

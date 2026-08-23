@@ -30,14 +30,16 @@ const STALE_EXIT_MS = 500;
 /**
  * Integrated terminal as an ActivityBar main view: xterm.js on top of a real
  * PTY (see src-tauri/src/ptycmd.rs). One shell session per window, rooted at
- * the workspace directory. The view is only mounted while
- * `activity === "terminal"`, so being mounted *is* being visible: the shell
- * spawns on mount and is killed on unmount (workspace switch and the restart
- * button respawn it in place).
+ * the workspace directory. The panel is mounted lazily on first visit and
+ * afterwards stays mounted when another activity is selected (App.tsx
+ * conceals it via CSS), so the shell session survives view switches — the
+ * PTY is killed only on unmount, i.e. when the window/workspace is torn
+ * down. Workspace switch and the restart button respawn the shell in place.
  */
 export function TerminalPanel() {
   const { status, setStatus, restartNonce, fitNonce } = useTerminalStore();
   const workspacePath = useUIStore((s) => s.workspacePath);
+  const activity = useUIStore((s) => s.activity);
 
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -159,6 +161,13 @@ export function TerminalPanel() {
     // re-run the spawn effect even when workspacePath is unchanged.
     useTerminalStore.getState().requestRestart();
   };
+
+  // ── Refit when the terminal view becomes active again after a swap — the
+  //    window may have been resized while the panel was concealed. ────────
+  useEffect(() => {
+    if (activity === "terminal") fitAndNotify();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activity]);
 
   // ── Refit on request / container resize ────────────────────────────────
   useEffect(() => {
