@@ -345,6 +345,13 @@ function useKeyboardShortcuts() {
           } else {
             startNewFile();
           }
+        } else if (e.key === "t" && !e.shiftKey) {
+          // Ctrl/⌘T → new terminal session tab (switches to the terminal
+          // view if needed, same as the context-sensitive ⌘N).
+          if (useUIStore.getState().activity === "terminal") {
+            e.preventDefault();
+            newTerminalSession();
+          }
         } else if (e.key === "b") {
           e.preventDefault();
           toggleSidebar();

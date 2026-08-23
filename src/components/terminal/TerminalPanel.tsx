@@ -368,7 +368,7 @@ export function TerminalPanel() {
             );
           })}
           <button
-            title="New terminal (⌘N)"
+            title="New terminal (Ctrl+T / ⌘N)"
             onClick={() => useTerminalStore.getState().addSession()}
             className="rounded p-1 text-fg-muted transition-colors hover:text-fg"
           >
