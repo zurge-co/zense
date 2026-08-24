@@ -158,6 +158,7 @@ pub fn run() {
       fscmd::delete_file,
       fscmd::copy_entry,
       fscmd::import_entries,
+      fscmd::move_entries,
       gitcmd::git_status,
       gitcmd::git_branch_info,
       gitcmd::git_diff_summary,

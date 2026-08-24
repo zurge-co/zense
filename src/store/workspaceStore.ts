@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useUIStore, tabKey } from "./uiStore";
-import { copyEntry, createDir, deleteFile, importExternalEntries, listFiles, readFileContent, readFileTree, renameFile, writeFileContent } from "../lib/workspaceFs";
+import { copyEntry, createDir, deleteFile, importExternalEntries, listFiles, moveWorkspaceEntries, readFileContent, readFileTree, renameFile, writeFileContent } from "../lib/workspaceFs";
 import { isTauri } from "../lib/workspace";
 import {
   allFiles,
@@ -66,6 +66,8 @@ interface WorkspaceFsState {
   deleteEntry: (root: string, path: string) => Promise<void>;
   /** Import OS-drop paths into a workspace folder. Returns the created paths. */
   importEntries: (root: string, destDir: string, sources: string[]) => Promise<string[]>;
+  /** Move workspace entries into a workspace folder. Returns their final paths. */
+  moveEntries: (root: string, destDir: string, sources: string[]) => Promise<string[]>;
   /** Set the focused tree node (for keyboard shortcuts). */
   setSelectedTreeNode: (node: { path: string; type: "file" | "folder" } | null) => void;
   /** Copy a file/folder path into the in-memory clipboard. */
@@ -324,6 +326,13 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
     const imported = await importExternalEntries(root, destDir, sources);
     await get().refreshTree(root);
     return imported;
+  },
+
+  moveEntries: async (root, destDir, sources) => {
+    if (sources.length === 0) return [];
+    const moved = await moveWorkspaceEntries(root, destDir, sources);
+    await get().refreshTree(root);
+    return moved;
   },
 
   setSelectedTreeNode: (node) => set({ selectedTreeNode: node }),
