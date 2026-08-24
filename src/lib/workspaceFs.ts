@@ -55,3 +55,16 @@ export async function copyEntry(root: string, from: string, toDir: string): Prom
   if (!isTauri()) return "";
   return invoke<string>("copy_entry", { root, from, toDir });
 }
+
+/**
+ * Import files/folders dropped from the OS file manager. Returns the
+ * workspace-relative destination paths (collision-safe auto-renames included).
+ */
+export async function importExternalEntries(
+  root: string,
+  destDir: string,
+  sources: string[],
+): Promise<string[]> {
+  if (!isTauri()) return [];
+  return invoke<string[]>("import_entries", { root, sources, destDir });
+}

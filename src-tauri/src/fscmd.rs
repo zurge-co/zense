@@ -754,6 +754,104 @@ pub fn copy_entry(root: String, from: String, to_dir: String) -> Result<String, 
   Ok(rel)
 }
 
+/// Copy one OS-dropped file/folder/symlink into the destination.
+fn copy_dropped_entry(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+  let meta = std::fs::symlink_metadata(src)?;
+  if meta.file_type().is_symlink() {
+    #[cfg(unix)]
+    {
+      let target = std::fs::read_link(src)?;
+      return std::os::unix::fs::symlink(&target, dst);
+    }
+    #[cfg(not(unix))]
+    {
+      // Symlink creation often needs elevated privileges on Windows; importing
+      // the pointed-at content keeps drag-and-drop useful there.
+      let resolved = std::fs::metadata(src)?;
+      return if resolved.is_dir() {
+        copy_dir_recursive(src, dst)
+      } else {
+        std::fs::copy(src, dst).map(|_| ())
+      };
+    }
+  }
+  if meta.is_dir() {
+    copy_dir_recursive(src, dst)
+  } else if meta.is_file() {
+    std::fs::copy(src, dst).map(|_| ())
+  } else {
+    Err(std::io::Error::new(
+      std::io::ErrorKind::InvalidInput,
+      "unsupported filesystem entry",
+    ))
+  }
+}
+
+/// Import one or more files/folders dropped from the OS file manager into a
+/// workspace directory. Sources may live anywhere on the user's filesystem,
+/// but the destination always resolves inside the workspace. Names that would
+/// collide use the same " copy" convention as in-workspace duplication, so a
+/// Finder drop is never destructive. Returns workspace-relative paths in the
+/// same order as `sources`.
+#[tauri::command]
+pub fn import_entries(
+  root: String,
+  sources: Vec<String>,
+  dest_dir: String,
+) -> Result<Vec<String>, String> {
+  if sources.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let root_canon = std::fs::canonicalize(PathBuf::from(&root)).map_err(|e| e.to_string())?;
+  let dst_dir = if dest_dir.is_empty() || dest_dir == "." {
+    root_canon.clone()
+  } else {
+    resolve_inside(&root, &dest_dir)?
+  };
+  let dst_meta = std::fs::metadata(&dst_dir).map_err(|e| e.to_string())?;
+  if !dst_meta.is_dir() {
+    return Err(format!("destination is not a directory: {dest_dir}"));
+  }
+
+  // Validate every source before mutating the workspace so a missing/invalid
+  // drop path does not leave a half-imported batch behind.
+  let mut validated = Vec::with_capacity(sources.len());
+  for raw in sources {
+    let src = PathBuf::from(&raw);
+    let meta = std::fs::symlink_metadata(&src).map_err(|e| format!("{raw}: {e}"))?;
+    if !meta.is_file() && !meta.is_dir() && !meta.file_type().is_symlink() {
+      return Err(format!("unsupported filesystem entry: {raw}"));
+    }
+    let src_canon = std::fs::canonicalize(&src).map_err(|e| format!("{raw}: {e}"))?;
+
+    // This blocks copying a directory into itself/descendant, including the
+    // case where the dragged parent directory contains the workspace itself.
+    if src_canon.is_dir() && dst_dir.starts_with(&src_canon) {
+      return Err("cannot import a folder into itself".to_string());
+    }
+
+    let original_name = src
+      .file_name()
+      .map(|n| n.to_string_lossy().into_owned())
+      .ok_or_else(|| format!("cannot determine file name: {raw}"))?;
+    validated.push((src, original_name));
+  }
+
+  let mut imported = Vec::with_capacity(validated.len());
+  for (src, original_name) in validated {
+    let dst = unique_path_in_dir(&dst_dir, &original_name);
+    copy_dropped_entry(&src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;
+    let rel = dst
+      .strip_prefix(&root_canon)
+      .map_err(|e| e.to_string())?
+      .to_string_lossy()
+      .replace('\\', "/");
+    imported.push(rel);
+  }
+  Ok(imported)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1372,5 +1470,167 @@ mod tests {
     assert!(dir.join("Makefile copy").exists());
     assert!(dir.join("Makefile copy 2").exists());
     fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn import_entries_copies_files_and_folders_recursively() {
+    let workspace = temp_ws();
+    let root = workspace.to_string_lossy().into_owned();
+    let source = temp_ws();
+    create_dir(root.clone(), "dest".into()).unwrap();
+    fs::create_dir_all(source.join("bundle/nested")).unwrap();
+    fs::write(source.join("bundle/nested/a.txt"), "from finder\n").unwrap();
+    fs::write(source.join("notes.md"), "notes\n").unwrap();
+
+    let imported = import_entries(
+      root.clone(),
+      vec![
+        source.join("bundle").to_string_lossy().into_owned(),
+        source.join("notes.md").to_string_lossy().into_owned(),
+      ],
+      "dest".into(),
+    )
+    .unwrap();
+
+    assert_eq!(imported, vec!["dest/bundle", "dest/notes.md"]);
+    assert_eq!(
+      fs::read_to_string(workspace.join("dest/bundle/nested/a.txt")).unwrap(),
+      "from finder\n"
+    );
+    assert_eq!(
+      fs::read_to_string(workspace.join("dest/notes.md")).unwrap(),
+      "notes\n"
+    );
+    fs::remove_dir_all(&workspace).ok();
+    fs::remove_dir_all(&source).ok();
+  }
+
+  #[test]
+  fn import_entries_auto_renames_collisions_without_overwriting() {
+    let workspace = temp_ws();
+    let root = workspace.to_string_lossy().into_owned();
+    let source = temp_ws();
+    create_dir(root.clone(), "dest".into()).unwrap();
+    fs::write(workspace.join("dest/report.txt"), "original\n").unwrap();
+    fs::write(source.join("report.txt"), "incoming\n").unwrap();
+
+    let imported = import_entries(
+      root.clone(),
+      vec![source.join("report.txt").to_string_lossy().into_owned()],
+      "dest".into(),
+    )
+    .unwrap();
+
+    assert_eq!(imported, vec!["dest/report copy.txt"]);
+    assert_eq!(
+      fs::read_to_string(workspace.join("dest/report.txt")).unwrap(),
+      "original\n"
+    );
+    assert_eq!(
+      fs::read_to_string(workspace.join("dest/report copy.txt")).unwrap(),
+      "incoming\n"
+    );
+    fs::remove_dir_all(&workspace).ok();
+    fs::remove_dir_all(&source).ok();
+  }
+
+  #[test]
+  fn import_entries_handles_duplicate_names_within_one_batch() {
+    let workspace = temp_ws();
+    let root = workspace.to_string_lossy().into_owned();
+    let source_a = temp_ws();
+    let source_b = temp_ws();
+    create_dir(root.clone(), "dest".into()).unwrap();
+    fs::write(source_a.join("same.txt"), "one\n").unwrap();
+    fs::write(source_b.join("same.txt"), "two\n").unwrap();
+
+    let imported = import_entries(
+      root.clone(),
+      vec![
+        source_a.join("same.txt").to_string_lossy().into_owned(),
+        source_b.join("same.txt").to_string_lossy().into_owned(),
+      ],
+      "dest".into(),
+    )
+    .unwrap();
+
+    assert_eq!(imported, vec!["dest/same.txt", "dest/same copy.txt"]);
+    assert_eq!(fs::read_to_string(workspace.join("dest/same.txt")).unwrap(), "one\n");
+    assert_eq!(
+      fs::read_to_string(workspace.join("dest/same copy.txt")).unwrap(),
+      "two\n"
+    );
+    fs::remove_dir_all(&workspace).ok();
+    fs::remove_dir_all(&source_a).ok();
+    fs::remove_dir_all(&source_b).ok();
+  }
+
+  #[test]
+  fn import_entries_rejects_destination_traversal() {
+    let workspace = temp_ws();
+    let root = workspace.to_string_lossy().into_owned();
+    let source = temp_ws();
+    let outside = workspace.parent().unwrap().join("zense-import-escape");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(source.join("a.txt"), "x\n").unwrap();
+
+    let err = import_entries(
+      root,
+      vec![source.join("a.txt").to_string_lossy().into_owned()],
+      "../zense-import-escape".into(),
+    )
+    .unwrap_err();
+
+    assert!(err.contains("escapes workspace"), "unexpected error: {err}");
+    assert!(!outside.join("a.txt").exists());
+    fs::remove_dir_all(&workspace).ok();
+    fs::remove_dir_all(&source).ok();
+    fs::remove_dir_all(&outside).ok();
+  }
+
+  #[test]
+  fn import_entries_rejects_folder_into_itself_or_parent_of_workspace() {
+    let workspace = temp_ws();
+    let root = workspace.to_string_lossy().into_owned();
+    create_dir(root.clone(), "pkg/inner".into()).unwrap();
+    write_file(root.clone(), "pkg/a.txt".into(), "x\n".into()).unwrap();
+
+    let err = import_entries(
+      root.clone(),
+      vec![workspace.join("pkg").to_string_lossy().into_owned()],
+      "pkg/inner".into(),
+    )
+    .unwrap_err();
+    assert!(err.contains("into itself"), "unexpected error: {err}");
+    assert!(!workspace.join("pkg/inner/pkg").exists());
+
+    let parent = workspace.parent().unwrap().to_string_lossy().into_owned();
+    let err = import_entries(root, vec![parent], ".".into()).unwrap_err();
+    assert!(err.contains("into itself"), "unexpected error: {err}");
+    fs::remove_dir_all(&workspace).ok();
+  }
+
+  #[test]
+  fn import_entries_validates_batch_before_mutating_workspace() {
+    let workspace = temp_ws();
+    let root = workspace.to_string_lossy().into_owned();
+    let source = temp_ws();
+    create_dir(root.clone(), "dest".into()).unwrap();
+    fs::write(source.join("good.txt"), "x\n").unwrap();
+
+    let err = import_entries(
+      root,
+      vec![
+        source.join("good.txt").to_string_lossy().into_owned(),
+        source.join("missing.txt").to_string_lossy().into_owned(),
+      ],
+      "dest".into(),
+    )
+    .unwrap_err();
+
+    assert!(err.contains("missing.txt"), "unexpected error: {err}");
+    assert!(!workspace.join("dest/good.txt").exists());
+    fs::remove_dir_all(&workspace).ok();
+    fs::remove_dir_all(&source).ok();
   }
 }
