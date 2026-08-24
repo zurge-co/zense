@@ -852,6 +852,102 @@ pub fn import_entries(
   Ok(imported)
 }
 
+/// Move one or more workspace-relative files/folders into a workspace
+/// directory. This powers internal drag-and-drop in the file explorer. All
+/// sources are validated before the first rename, so invalid batches do not
+/// partially move their entries. Existing destination names receive the same
+/// collision-safe " copy" names as imports and duplicates.
+#[tauri::command]
+pub fn move_entries(
+  root: String,
+  sources: Vec<String>,
+  dest_dir: String,
+) -> Result<Vec<String>, String> {
+  if sources.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let root_canon = std::fs::canonicalize(PathBuf::from(&root)).map_err(|e| e.to_string())?;
+  let dst_dir = if dest_dir.is_empty() || dest_dir == "." {
+    root_canon.clone()
+  } else {
+    resolve_inside(&root, &dest_dir)?
+  };
+  let dst_meta = std::fs::metadata(&dst_dir).map_err(|e| e.to_string())?;
+  if !dst_meta.is_dir() {
+    return Err(format!("destination is not a directory: {dest_dir}"));
+  }
+
+  struct Candidate {
+    rel_path: String,
+    source: PathBuf,
+    name: String,
+    parent: PathBuf,
+    is_dir: bool,
+  }
+
+  let mut validated = Vec::with_capacity(sources.len());
+  for rel_path in sources {
+    if rel_path.is_empty() || rel_path == "." || rel_path == "./" {
+      return Err("cannot move the workspace root".to_string());
+    }
+    let source = resolve_inside(&root, &rel_path)?;
+    if source == root_canon {
+      return Err("cannot move the workspace root".to_string());
+    }
+    let meta = std::fs::metadata(&source).map_err(|e| e.to_string())?;
+    if meta.is_dir() && dst_dir.starts_with(&source) {
+      return Err("cannot move a folder into itself".to_string());
+    }
+    let name = source
+      .file_name()
+      .map(|n| n.to_string_lossy().into_owned())
+      .ok_or_else(|| format!("cannot determine file name: {rel_path}"))?;
+    let parent = source
+      .parent()
+      .map(PathBuf::from)
+      .ok_or_else(|| format!("cannot determine parent directory: {rel_path}"))?;
+    validated.push(Candidate {
+      rel_path,
+      source,
+      name,
+      parent,
+      is_dir: meta.is_dir(),
+    });
+  }
+
+  // Moving a selected folder plus a descendant in one batch is ambiguous and
+  // would invalidate the descendant before its turn, so reject it up front.
+  for candidate in &validated {
+    if validated.iter().any(|other| {
+      other.is_dir && other.source != candidate.source && candidate.source.starts_with(&other.source)
+    }) {
+      return Err("cannot move a folder and its descendant in the same batch".to_string());
+    }
+  }
+
+  let mut moved = Vec::with_capacity(validated.len());
+  for candidate in validated {
+    // No-op when dragging within the same parent; report the existing path.
+    if candidate.parent == dst_dir {
+      moved.push(candidate.rel_path);
+      continue;
+    }
+
+    let dst = unique_path_in_dir(&dst_dir, &candidate.name);
+    std::fs::rename(&candidate.source, &dst).map_err(|e| {
+      format!("{} -> {}: {e}", candidate.rel_path, dst.display())
+    })?;
+    let rel = dst
+      .strip_prefix(&root_canon)
+      .map_err(|e| e.to_string())?
+      .to_string_lossy()
+      .replace('\\', "/");
+    moved.push(rel);
+  }
+  Ok(moved)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1632,5 +1728,127 @@ mod tests {
     assert!(!workspace.join("dest/good.txt").exists());
     fs::remove_dir_all(&workspace).ok();
     fs::remove_dir_all(&source).ok();
+  }
+
+  #[test]
+  fn move_entries_moves_multiple_files_and_folders() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    create_dir(root.clone(), "src/pkg".into()).unwrap();
+    create_dir(root.clone(), "docs".into()).unwrap();
+    create_dir(root.clone(), "target".into()).unwrap();
+    write_file(root.clone(), "src/pkg/a.ts".into(), "a\n".into()).unwrap();
+    write_file(root.clone(), "docs/readme.md".into(), "docs\n".into()).unwrap();
+
+    let moved = move_entries(
+      root,
+      vec!["src".into(), "docs/readme.md".into()],
+      "target".into(),
+    )
+    .unwrap();
+
+    assert_eq!(moved, vec!["target/src", "target/readme.md"]);
+    assert!(!dir.join("src").exists());
+    assert!(!dir.join("docs/readme.md").exists());
+    assert_eq!(fs::read_to_string(dir.join("target/src/pkg/a.ts")).unwrap(), "a\n");
+    assert_eq!(fs::read_to_string(dir.join("target/readme.md")).unwrap(), "docs\n");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn move_entries_auto_renames_collisions_within_batch() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    create_dir(root.clone(), "one".into()).unwrap();
+    create_dir(root.clone(), "two".into()).unwrap();
+    create_dir(root.clone(), "dest".into()).unwrap();
+    write_file(root.clone(), "dest/a.txt".into(), "original\n".into()).unwrap();
+    write_file(root.clone(), "one/a.txt".into(), "one\n".into()).unwrap();
+    write_file(root.clone(), "two/a.txt".into(), "two\n".into()).unwrap();
+
+    let moved = move_entries(
+      root,
+      vec!["one/a.txt".into(), "two/a.txt".into()],
+      "dest".into(),
+    )
+    .unwrap();
+
+    assert_eq!(moved, vec!["dest/a copy.txt", "dest/a copy 2.txt"]);
+    assert_eq!(fs::read_to_string(dir.join("dest/a.txt")).unwrap(), "original\n");
+    assert_eq!(fs::read_to_string(dir.join("dest/a copy.txt")).unwrap(), "one\n");
+    assert_eq!(fs::read_to_string(dir.join("dest/a copy 2.txt")).unwrap(), "two\n");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn move_entries_rejects_source_and_destination_traversal() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    write_file(root.clone(), "a.txt".into(), "x\n".into()).unwrap();
+
+    assert!(move_entries(root.clone(), vec!["../a.txt".into()], ".".into()).is_err());
+    assert!(move_entries(root.clone(), vec!["a.txt".into()], "../".into()).is_err());
+    assert!(dir.join("a.txt").exists());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn move_entries_rejects_folder_into_itself_and_root_source() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    create_dir(root.clone(), "pkg/inner".into()).unwrap();
+    write_file(root.clone(), "pkg/a.txt".into(), "x\n".into()).unwrap();
+
+    let err = move_entries(root.clone(), vec!["pkg".into()], "pkg/inner".into()).unwrap_err();
+    assert!(err.contains("into itself"), "unexpected error: {err}");
+    assert!(dir.join("pkg/a.txt").exists());
+    assert!(!dir.join("pkg/inner/pkg").exists());
+
+    assert!(move_entries(root, vec![".".into()], ".".into()).is_err());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn move_entries_rejects_folder_and_descendant_in_same_batch_without_mutation() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    create_dir(root.clone(), "pkg/inner".into()).unwrap();
+    create_dir(root.clone(), "dest".into()).unwrap();
+    write_file(root.clone(), "pkg/inner/a.txt".into(), "x\n".into()).unwrap();
+
+    let err = move_entries(
+      root,
+      vec!["pkg".into(), "pkg/inner/a.txt".into()],
+      "dest".into(),
+    )
+    .unwrap_err();
+
+    assert!(err.contains("descendant"), "unexpected error: {err}");
+    assert!(dir.join("pkg/inner/a.txt").exists());
+    assert!(!dir.join("dest/pkg").exists());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn move_entries_validates_batch_before_mutation_and_rejects_file_destination() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    create_dir(root.clone(), "one".into()).unwrap();
+    write_file(root.clone(), "one/a.txt".into(), "x\n".into()).unwrap();
+    write_file(root.clone(), "target-file".into(), "not a dir\n".into()).unwrap();
+
+    let err = move_entries(
+      root.clone(),
+      vec!["one/a.txt".into(), "missing.txt".into()],
+      "one".into(),
+    )
+    .unwrap_err();
+    assert!(err.contains("No such file"), "unexpected error: {err}");
+    assert!(dir.join("one/a.txt").exists());
+
+    let err = move_entries(root, vec!["one/a.txt".into()], "target-file".into()).unwrap_err();
+    assert!(err.contains("not a directory"), "unexpected error: {err}");
+    assert!(dir.join("one/a.txt").exists());
+    fs::remove_dir_all(&dir).ok();
   }
 }

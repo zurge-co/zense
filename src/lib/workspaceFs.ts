@@ -68,3 +68,13 @@ export async function importExternalEntries(
   if (!isTauri()) return [];
   return invoke<string[]>("import_entries", { root, sources, destDir });
 }
+
+/** Move workspace-relative entries into a workspace folder (internal DnD). */
+export async function moveWorkspaceEntries(
+  root: string,
+  destDir: string,
+  sources: string[],
+): Promise<string[]> {
+  if (!isTauri()) return [];
+  return invoke<string[]>("move_entries", { root, sources, destDir });
+}
