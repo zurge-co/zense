@@ -13,9 +13,13 @@ scripts/publish-update.mjs         Cloudflare
                                    │  ├─ zense_<ver>_<arch>.dmg       │
                                    │  └─ install.sh                   │
                                    │ Worker "zense-dl" (public):      │
+                                   │  ├─ GET /      (landing page)    │
+                                   │  ├─ GET /dl/macos-{arm64,intel}  │
+                                   │  │   → 302 → dmg เวอร์ชันล่าสุด   │
                                    │  ├─ GET /latest.json             │
                                    │  ├─ GET /download/<file>         │
                                    │  └─ GET /install.sh              │
+                                   │ custom domain: zense.zurge.co    │
                                    └──────────────────────────────────┘
 ```
 
@@ -39,7 +43,7 @@ bunx wrangler r2 bucket create zense-releases
 bunx wrangler deploy          # deploy worker.ts
 ```
 
-จด URL ที่ได้ เช่น `https://zense-dl.<subdomain>.workers.dev`
+จด URL ที่ได้ เช่น `https://zense.zurge.co`
 (ถ้าจะใช้ custom domain: `bunx wrangler domains add dl.example.com` ในโฟลเดอร์นี้)
 
 ### 3. ผูก domain เข้ากับแอป
@@ -49,7 +53,7 @@ bunx wrangler deploy          # deploy worker.ts
 ```json
 "plugins": {
   "updater": {
-    "endpoints": ["https://zense-dl.<subdomain>.workers.dev/latest.json"]
+    "endpoints": ["https://zense.zurge.co/latest.json"]
   }
 }
 ```
@@ -61,7 +65,7 @@ bunx wrangler deploy          # deploy worker.ts
 ```bash
 # 1) อัปเดต version ใน src-tauri/tauri.conf.json
 # 2) publish
-export ZENSE_DOWNLOAD_URL="https://zense-dl.<subdomain>.workers.dev"
+export ZENSE_DOWNLOAD_URL="https://zense.zurge.co"
 bun run publish            # เต็ม: build + sign + latest.json + upload
 bun run publish -- --dry-run     # ดูก่อนว่าจะอัปโหลดอะไรบ้าง
 bun run publish -- --skip-build  # ใช้ bundle ที่ build ไว้แล้ว
@@ -75,7 +79,7 @@ bun run publish -- --skip-build  # ใช้ bundle ที่ build ไว้แ
 ## ผู้ใช้ติดตั้งครั้งแรก (macOS)
 
 ```bash
-curl -fsSL https://zense-dl.<subdomain>.workers.dev/install.sh | bash
+curl -fsSL https://zense.zurge.co/install.sh | bash
 ```
 
 สคริปต์จะโหลด dmg ล่าสุด → mount → copy ลง `/Applications` →
