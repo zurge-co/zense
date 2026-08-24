@@ -89,9 +89,15 @@ fn normalize_path(p: &std::path::Path) -> PathBuf {
   out
 }
 
-/// Walk a workspace: respects .gitignore (even outside git repos), shows
-/// dotfiles, but always skips `.git` itself. Returns (relative path, is_dir).
-fn walk_entries(root: &str) -> Result<Vec<(String, bool)>, String> {
+//// True when any workspace-relative path segment is a dot entry.
+fn has_dot_segment(rel: &str) -> bool {
+  rel.split('/').any(|segment| segment.starts_with('.'))
+}
+
+/// Walk a workspace: respects .gitignore (even outside git repos), can opt in
+/// or out of dotfiles/dotfolders, and always skips `.git` itself. Returns
+/// (relative path, is_dir).
+fn walk_entries(root: &str, include_hidden: bool) -> Result<Vec<(String, bool)>, String> {
   let root_path = std::fs::canonicalize(PathBuf::from(root)).map_err(|e| e.to_string())?;
   let mut out = Vec::new();
   for entry in WalkBuilder::new(&root_path)
@@ -107,10 +113,11 @@ fn walk_entries(root: &str) -> Result<Vec<(String, bool)>, String> {
     let Ok(rel) = entry.path().strip_prefix(&root_path) else {
       continue;
     };
-    out.push((
-      rel.to_string_lossy().replace('\\', "/"),
-      entry.file_type().is_some_and(|t| t.is_dir()),
-    ));
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    if !include_hidden && has_dot_segment(&rel) {
+      continue;
+    }
+    out.push((rel, entry.file_type().is_some_and(|t| t.is_dir())));
     if out.len() >= MAX_ENTRIES {
       break;
     }
@@ -120,8 +127,8 @@ fn walk_entries(root: &str) -> Result<Vec<(String, bool)>, String> {
 
 /// Flat index of all files (for @-mention autocomplete).
 #[tauri::command]
-pub fn list_files(root: String) -> Result<Vec<String>, String> {
-  let mut files: Vec<String> = walk_entries(&root)?
+pub fn list_files(root: String, include_hidden: bool) -> Result<Vec<String>, String> {
+  let mut files: Vec<String> = walk_entries(&root, include_hidden)?
     .into_iter()
     .filter(|(_, is_dir)| !is_dir)
     .map(|(p, _)| p)
@@ -132,7 +139,7 @@ pub fn list_files(root: String) -> Result<Vec<String>, String> {
 
 /// Nested file tree for the explorer (folders first, then files, A→Z).
 #[tauri::command]
-pub fn read_file_tree(root: String) -> Result<Vec<FsNode>, String> {
+pub fn read_file_tree(root: String, include_hidden: bool) -> Result<Vec<FsNode>, String> {
   #[derive(Default)]
   struct Builder {
     dirs: BTreeMap<String, Builder>,
@@ -181,7 +188,7 @@ pub fn read_file_tree(root: String) -> Result<Vec<FsNode>, String> {
   }
 
   let mut root_builder = Builder::default();
-  for (rel, is_dir) in walk_entries(&root)? {
+  for (rel, is_dir) in walk_entries(&root, include_hidden)? {
     let segments: Vec<String> = rel.split('/').map(String::from).collect();
     insert(&mut root_builder, &segments, is_dir);
   }
@@ -402,9 +409,10 @@ fn scan_files(
   root_path: &Path,
   inc: &Override,
   exc: &Override,
+  include_hidden: bool,
   mut f: impl FnMut(&str, &Path, &str),
 ) -> Result<(), String> {
-  for (rel, is_dir) in walk_entries(root)? {
+  for (rel, is_dir) in walk_entries(root, include_hidden)? {
     if is_dir || !globs_allow(&rel, inc, exc) {
       continue;
     }
@@ -438,6 +446,7 @@ pub fn search_files(
   is_regex: bool,
   include: String,
   exclude: String,
+  include_hidden: bool,
 ) -> Result<Vec<SearchMatch>, String> {
   if query.is_empty() {
     return Ok(Vec::new());
@@ -447,7 +456,7 @@ pub fn search_files(
   let (inc, exc) = build_glob_filters(&root_path, &include, &exclude)?;
 
   let mut matches = Vec::new();
-  scan_files(&root, &root_path, &inc, &exc, |rel, _full, content| {
+  scan_files(&root, &root_path, &inc, &exc, include_hidden, |rel, _full, content| {
     if matches.len() >= MAX_SEARCH_MATCHES {
       return;
     }
@@ -483,6 +492,7 @@ pub fn replace_in_files(
   is_regex: bool,
   include: String,
   exclude: String,
+  include_hidden: bool,
   targets: Option<Vec<ReplaceTarget>>,
 ) -> Result<Vec<ReplaceSummary>, String> {
   if query.is_empty() {
@@ -494,7 +504,7 @@ pub fn replace_in_files(
 
   let target_list = targets.as_ref().map(|v| v.as_slice());
   let mut summaries = Vec::new();
-  scan_files(&root, &root_path, &inc, &exc, |rel, full, content| {
+  scan_files(&root, &root_path, &inc, &exc, include_hidden, |rel, full, content| {
     let hits = scan_content(&matcher, content);
     if hits.is_empty() {
       return;
@@ -983,12 +993,99 @@ mod tests {
     fs::create_dir_all(dir.join("src")).unwrap();
     fs::write(dir.join("src/keep.ts"), "x").unwrap();
 
-    let files = list_files(root.clone()).unwrap();
+    let files = list_files(root.clone(), true).unwrap();
     assert_eq!(files, vec![".gitignore", "src/keep.ts"]);
 
-    let tree = read_file_tree(root).unwrap();
+    let tree = read_file_tree(root, true).unwrap();
     let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
     assert_eq!(names, vec!["src", ".gitignore"]); // folders first
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn hidden_entries_are_shown_by_default_and_can_be_filtered() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::create_dir_all(dir.join(".git")).unwrap();
+    fs::write(dir.join(".git/HEAD"), "x").unwrap();
+    fs::create_dir_all(dir.join(".github/workflows")).unwrap();
+    fs::write(dir.join(".github/workflows/ci.yml"), "x").unwrap();
+    fs::write(dir.join(".env"), "x").unwrap();
+    fs::create_dir_all(dir.join("src/.cache")).unwrap();
+    fs::write(dir.join("src/.cache/tmp.ts"), "x").unwrap();
+    fs::create_dir_all(dir.join("src/lib")).unwrap();
+    fs::write(dir.join("src/lib/visible.ts"), "x").unwrap();
+
+    let shown = list_files(root.clone(), true).unwrap();
+    assert!(shown.contains(&".env".to_string()));
+    assert!(shown.contains(&".github/workflows/ci.yml".to_string()));
+    assert!(shown.contains(&"src/.cache/tmp.ts".to_string()));
+    assert!(shown.contains(&"src/lib/visible.ts".to_string()));
+    assert!(!shown.iter().any(|p| p.starts_with(".git/")));
+
+    let hidden = list_files(root.clone(), false).unwrap();
+    assert_eq!(hidden, vec!["src/lib/visible.ts"]);
+
+    let tree = read_file_tree(root, false).unwrap();
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].path, "src");
+    assert_eq!(tree[0].children.as_ref().unwrap()[0].path, "src/lib");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn hidden_entry_filter_applies_to_search_and_replace() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::write(dir.join(".env"), "needle\n").unwrap();
+    fs::create_dir_all(dir.join(".private")).unwrap();
+    fs::write(dir.join(".private/secret.txt"), "needle\n").unwrap();
+    fs::create_dir_all(dir.join("src/.cache")).unwrap();
+    fs::write(dir.join("src/.cache/generated.ts"), "needle\n").unwrap();
+    fs::write(dir.join("normal.txt"), "needle\n").unwrap();
+
+    let shown = search_files(
+      root.clone(),
+      "needle".into(),
+      false,
+      false,
+      String::new(),
+      String::new(),
+      true,
+    )
+    .unwrap();
+    assert_eq!(shown.len(), 4);
+
+    let hidden = search_files(
+      root.clone(),
+      "needle".into(),
+      false,
+      false,
+      String::new(),
+      String::new(),
+      false,
+    )
+    .unwrap();
+    assert_eq!(hidden.len(), 1);
+    assert_eq!(hidden[0].path, "normal.txt");
+
+    let summary = replace_in_files(
+      root,
+      "needle".into(),
+      "changed".into(),
+      false,
+      false,
+      String::new(),
+      String::new(),
+      false,
+      None,
+    )
+    .unwrap();
+    assert_eq!(summary.len(), 1);
+    assert_eq!(summary[0].path, "normal.txt");
+    assert_eq!(summary[0].count, 1);
+    assert_eq!(fs::read_to_string(dir.join("normal.txt")).unwrap(), "changed\n");
+    assert_eq!(fs::read_to_string(dir.join(".env")).unwrap(), "needle\n");
     fs::remove_dir_all(&dir).ok();
   }
 
@@ -1000,7 +1097,7 @@ mod tests {
     fs::create_dir_all(dir.join("src")).unwrap();
     fs::write(dir.join("src/keep.ts"), "x").unwrap();
 
-    let tree = read_file_tree(root).unwrap();
+    let tree = read_file_tree(root, true).unwrap();
 
     // Flatten the tree, collecting every node path (folders + files).
     fn flatten(nodes: &[FsNode], out: &mut Vec<String>) {
@@ -1048,6 +1145,7 @@ mod tests {
       false,
       String::new(),
       String::new(),
+      true,
     )
     .unwrap()
   }
@@ -1081,6 +1179,7 @@ mod tests {
       false,
       String::new(),
       String::new(),
+      true,
     )
     .unwrap();
     assert_eq!(hits.len(), 2);
@@ -1119,6 +1218,7 @@ mod tests {
       true,
       String::new(),
       String::new(),
+      true,
     )
     .unwrap();
     assert_eq!(hits.len(), 2);
@@ -1134,6 +1234,7 @@ mod tests {
       true,
       String::new(),
       String::new(),
+      true,
     )
     .unwrap_err();
     assert!(err.contains("invalid regex"), "unexpected error: {err}");
@@ -1157,6 +1258,7 @@ mod tests {
         false,
         inc.into(),
         exc.into(),
+        true,
       )
       .unwrap()
       .into_iter()
@@ -1186,6 +1288,7 @@ mod tests {
       false,
       "[".into(),
       String::new(),
+      true,
     )
     .unwrap_err();
     assert!(err.contains("invalid include pattern"), "unexpected: {err}");
@@ -1208,6 +1311,7 @@ mod tests {
       false,
       String::new(),
       String::new(),
+      true,
       None,
     )
     .unwrap();
@@ -1233,6 +1337,7 @@ mod tests {
       true,
       String::new(),
       String::new(),
+      true,
       None,
     )
     .unwrap();
@@ -1260,6 +1365,7 @@ mod tests {
       false,
       String::new(),
       String::new(),
+      true,
       Some(targets),
     )
     .unwrap();
@@ -1284,6 +1390,7 @@ mod tests {
       false,
       "*.txt".into(),
       String::new(),
+      true,
       None,
     )
     .unwrap();

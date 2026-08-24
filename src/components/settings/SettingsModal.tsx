@@ -4,7 +4,7 @@ import { useUIStore, type SettingsSection } from "../../store/uiStore";
 import { shortcutGroups } from "../../lib/mockData";
 import { useChatStore } from "../../store/chatStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { applyAutoSave } from "../../lib/settings";
+import { applyAutoSave, applyShowHiddenFiles } from "../../lib/settings";
 import type { LlmConfig, EnabledTools, AgentGuards } from "../../lib/llm";
 import { DEFAULT_ENABLED_TOOLS, DEFAULT_GUARDS, llmTestConnection } from "../../lib/llm";
 
@@ -97,10 +97,14 @@ function Toggle({ on, onClick }: { on: boolean; onClick?: () => void }) {
 
 function GeneralSection() {
   const autoSave = useWorkspaceStore((s) => s.autoSave);
+  const showHiddenFiles = useWorkspaceStore((s) => s.showHiddenFiles);
   return (
     <div>
       <Row label="Auto-save files" hint="Save dirty files 1s after typing stops">
         <Toggle on={autoSave} onClick={() => void applyAutoSave(!autoSave)} />
+      </Row>
+      <Row label="Show hidden files" hint="Show .files and .folders in Explorer, Quick Open, and Search">
+        <Toggle on={showHiddenFiles} onClick={() => void applyShowHiddenFiles(!showHiddenFiles)} />
       </Row>
       <Row label="Restore previous session" hint="Reopen files and chats from last time">
         <Toggle on />

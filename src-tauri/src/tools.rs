@@ -181,7 +181,8 @@ impl PortableTool for ListFilesTool {
   }
 
   async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
-    let files = crate::fscmd::list_files(self.root.clone())?;
+    // The LLM tool keeps the default visibility mode (dotfiles shown).
+    let files = crate::fscmd::list_files(self.root.clone(), true)?;
     Ok(files.into_iter().take(200).collect())
   }
 }

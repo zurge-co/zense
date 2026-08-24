@@ -23,6 +23,8 @@ export interface SearchOptions {
   include: string;
   /** Comma-separated gitignore-style globs ("" = none). */
   exclude: string;
+  /** Include dotfiles/dotfolders in the backend walk. */
+  includeHidden: boolean;
 }
 
 /** A match the backend should replace (mirrors the Rust ReplaceTarget). */
