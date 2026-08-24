@@ -14,12 +14,27 @@ import {
   Files,
   RefreshCw,
 } from "lucide-react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type FileNode } from "../../lib/mockData";
+import { isTauri } from "../../lib/workspace";
 import { useUIStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { useGitStore } from "../../store/gitStore";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { ConfirmDialog } from "../ConfirmDialog";
+
+function dropTargetAt(position: { x: number; y: number }, scaleFactor: number): string | null {
+  const x = position.x / scaleFactor;
+  const y = position.y / scaleFactor;
+  for (const element of document.elementsFromPoint(x, y)) {
+    const target = element.closest?.("[data-file-drop-path]");
+    if (target instanceof HTMLElement) {
+      return target.dataset.fileDropPath ?? "";
+    }
+  }
+  return null;
+}
 
 export function FileTree() {
   const fileTree = useWorkspaceStore((s) => s.fileTree);
@@ -30,7 +45,51 @@ export function FileTree() {
   const createEntry = useWorkspaceStore((s) => s.createEntry);
   const pendingCreate = useWorkspaceStore((s) => s.pendingCreate);
   const setPendingCreate = useWorkspaceStore((s) => s.setPendingCreate);
+  const importEntries = useWorkspaceStore((s) => s.importEntries);
   const [refreshing, setRefreshing] = useState(false);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+
+  // Native Finder drops do not dispatch browser drag/drop events in Tauri.
+  // Use the webview's native event paths and hit-test the DOM at the cursor
+  // to determine which folder row (or the workspace root) received the drop.
+  useEffect(() => {
+    if (!isTauri() || !workspacePath) return;
+
+    let disposed = false;
+    let scaleFactor = window.devicePixelRatio || 1;
+    void getCurrentWindow()
+      .scaleFactor()
+      .then((factor) => {
+        scaleFactor = factor || 1;
+      })
+      .catch(() => undefined);
+
+    const unlistenPromise = getCurrentWebview().onDragDropEvent((event) => {
+      if (disposed) return;
+      const payload = event.payload;
+      if (payload.type === "enter" || payload.type === "over") {
+        setDropTargetPath(dropTargetAt(payload.position, scaleFactor));
+        return;
+      }
+      if (payload.type === "leave") {
+        setDropTargetPath(null);
+        return;
+      }
+
+      setDropTargetPath(null);
+      const target = dropTargetAt(payload.position, scaleFactor);
+      if (target === null || payload.paths.length === 0) return;
+      void importEntries(workspacePath, target, payload.paths).catch((err) => {
+        console.error("import dropped files failed:", err);
+      });
+    });
+
+    return () => {
+      disposed = true;
+      setDropTargetPath(null);
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => undefined);
+    };
+  }, [workspacePath, importEntries]);
 
   // ⌘N (New File) targeting the workspace root.
   const rootCreate = pendingCreate && pendingCreate.parentPath === "" ? pendingCreate : null;
@@ -50,7 +109,11 @@ export function FileTree() {
   };
 
   return (
-    <div className="pb-4" onContextMenu={(e) => e.preventDefault()}>
+    <div
+      data-file-drop-path=""
+      className={`min-h-full pb-4 ${dropTargetPath === "" ? "ring-1 ring-inset ring-accent" : ""}`}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       <Section
         title={workspaceName ?? "workspace"}
         defaultOpen
@@ -70,7 +133,7 @@ export function FileTree() {
         }
       >
         {fileTree.map((node) => (
-          <TreeNode key={node.path} node={node} depth={0} />
+          <TreeNode key={node.path} node={node} depth={0} dropTargetPath={dropTargetPath} />
         ))}
         {rootCreate && (
           <InlineInput
@@ -143,7 +206,15 @@ function pasteDirFor(node: FileNode): string {
   return node.path.includes("/") ? node.path.slice(0, node.path.lastIndexOf("/")) : ".";
 }
 
-function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
+function TreeNode({
+  node,
+  depth,
+  dropTargetPath,
+}: {
+  node: FileNode;
+  depth: number;
+  dropTargetPath: string | null;
+}) {
   const [open, setOpen] = useState(depth === 0);
   const { selectedFile, openFile, workspacePath } = useUIStore();
   const { createEntry, renameEntry, deleteEntry, setSelectedTreeNode, copyNode, pasteNode, duplicateNode, setPendingRename, setPendingDelete } = useWorkspaceStore();
@@ -161,6 +232,7 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
 
   const isClipboardNode = clipboard?.path === node.path;
   const isTreeSelected = selectedTreeNode?.path === node.path;
+  const isDropTarget = node.type === "folder" && dropTargetPath === node.path;
 
   // Keyboard shortcut: ⌘N → create inside this folder (expands it too)
   useEffect(() => {
@@ -226,6 +298,7 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
     return (
       <>
         <button
+          data-file-drop-path={node.path}
           onClick={() => { setOpen(!open); handleSelect(); }}
           onContextMenu={(e) => {
             e.preventDefault();
@@ -235,7 +308,7 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
           }}
           style={pad}
           className={`flex w-full items-center gap-1.5 py-0.5 pr-2 text-[12.5px] hover:bg-hover hover:text-fg ${
-            isTreeSelected ? "bg-active text-fg" : "text-fg-muted"
+            isDropTarget ? "bg-active text-fg ring-1 ring-inset ring-accent" : isTreeSelected ? "bg-active text-fg" : "text-fg-muted"
           } ${isClipboardNode ? "opacity-50" : ""}`}
         >
           <span className="text-fg-muted">
@@ -250,7 +323,9 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
         </button>
         {open && (
           <>
-            {node.children?.map((child) => <TreeNode key={child.path} node={child} depth={depth + 1} />)}
+            {node.children?.map((child) => (
+              <TreeNode key={child.path} node={child} depth={depth + 1} dropTargetPath={dropTargetPath} />
+            ))}
             {inline && inline.parentPath === node.path && (
               <InlineInput
                 depth={depth + 1}
