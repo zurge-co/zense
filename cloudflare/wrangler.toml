@@ -2,6 +2,11 @@ name = "zense-dl"
 main = "worker.ts"
 compatibility_date = "2026-03-01"
 
+# Custom domain (zurge.co zone อยู่บน Cloudflare แล้ว — deploy แล้ว CF สร้าง DNS+cert ให้เอง)
+routes = [
+  { pattern = "zense-sh.zurge.co", custom_domain = true },
+]
+
 # Bucket ที่เก็บ latest.json + update artifacts + installer
 # สร้างครั้งแรกด้วย: bunx wrangler r2 bucket create zense-releases
 [[r2_buckets]]
