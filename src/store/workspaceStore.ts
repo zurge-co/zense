@@ -32,6 +32,8 @@ interface WorkspaceFsState {
   conflicts: Record<string, "modified" | "deleted">;
   /** Auto-save dirty buffers ~1s after typing stops (Settings > General). */
   autoSave: boolean;
+  /** Show dotfiles/dotfolders in explorer, quick-open and workspace search. */
+  showHiddenFiles: boolean;
   /** Currently focused tree node (file or folder) for keyboard shortcuts. */
   selectedTreeNode: { path: string; type: "file" | "folder" } | null;
   /** In-memory clipboard for copy/paste (path + type). */
@@ -90,6 +92,7 @@ interface WorkspaceFsState {
   /** Save every dirty file. Returns paths that failed to save. */
   saveAllDirty: (root: string) => Promise<string[]>;
   setAutoSave: (v: boolean) => void;
+  setShowHiddenFiles: (v: boolean) => void;
   /** Subscribe to fs://changed watcher events for `root` (idempotent). */
   initWatcher: (root: string) => void;
 }
@@ -114,13 +117,18 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   pendingConflictSave: null,
   conflicts: {},
   autoSave: false,
+  showHiddenFiles: true,
 
   loadWorkspace: async (root) => {
     if (!isTauri()) return; // browser dev keeps the mock workspace
     cancelAutosave();
     get().initWatcher(root);
     try {
-      const [fileTree, fileIndex] = await Promise.all([readFileTree(root), listFiles(root)]);
+      const includeHidden = get().showHiddenFiles;
+      const [fileTree, fileIndex] = await Promise.all([
+        readFileTree(root, includeHidden),
+        listFiles(root, includeHidden),
+      ]);
       // Drop contents of any previous workspace along with the tree.
       set({ fileTree, fileIndex, fileContents: {}, fileErrors: {}, originalContents: {}, dirtyPaths: new Set(), clipboard: null, selectedTreeNode: null, pendingRename: null, pendingDelete: null, pendingCreate: null, conflicts: {} });
     } catch (err) {
@@ -235,6 +243,8 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
     set({ autoSave: v });
   },
 
+  setShowHiddenFiles: (v) => set({ showHiddenFiles: v }),
+
   initWatcher: (root) => {
     if (!isTauri() || watcherRoot === root) return;
     watcherRoot = root;
@@ -293,9 +303,12 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   },
 
   refreshTree: async (root) => {
-    if (!isTauri()) return;
     try {
-      const [fileTree, fileIndex] = await Promise.all([readFileTree(root), listFiles(root)]);
+      const includeHidden = get().showHiddenFiles;
+      const [fileTree, fileIndex] = await Promise.all([
+        readFileTree(root, includeHidden),
+        listFiles(root, includeHidden),
+      ]);
       set({ fileTree, fileIndex });
     } catch (err) {
       console.error("failed to refresh file tree:", err);

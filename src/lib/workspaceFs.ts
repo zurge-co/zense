@@ -14,14 +14,24 @@ import {
  * mock data in plain browser dev so the UI stays explorable without Tauri.
  */
 
-export async function listFiles(root: string): Promise<string[]> {
-  if (!isTauri()) return allFiles;
-  return invoke<string[]>("list_files", { root });
+function hasDotSegment(path: string): boolean {
+  return path.split("/").some((segment) => segment.startsWith("."));
 }
 
-export async function readFileTree(root: string): Promise<FileNode[]> {
-  if (!isTauri()) return mockTree;
-  return invoke<FileNode[]>("read_file_tree", { root });
+function filterHiddenTree(nodes: FileNode[]): FileNode[] {
+  return nodes
+    .filter((node) => !node.path.split("/").some((segment) => segment.startsWith(".")))
+    .map((node) => (node.children ? { ...node, children: filterHiddenTree(node.children) } : node));
+}
+
+export async function listFiles(root: string, includeHidden = true): Promise<string[]> {
+  if (!isTauri()) return includeHidden ? allFiles : allFiles.filter((p) => !hasDotSegment(p));
+  return invoke<string[]>("list_files", { root, includeHidden });
+}
+
+export async function readFileTree(root: string, includeHidden = true): Promise<FileNode[]> {
+  if (!isTauri()) return includeHidden ? mockTree : filterHiddenTree(mockTree);
+  return invoke<FileNode[]>("read_file_tree", { root, includeHidden });
 }
 
 export async function readFileContent(root: string, path: string): Promise<string> {

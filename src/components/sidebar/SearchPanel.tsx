@@ -32,6 +32,7 @@ import { ConfirmDialog, type ConfirmDialogProps } from "../ConfirmDialog";
 export function SearchPanel() {
   const workspacePath = useUIStore((s) => s.workspacePath);
   const searchFocusNonce = useUIStore((s) => s.searchFocusNonce);
+  const showHiddenFiles = useWorkspaceStore((s) => s.showHiddenFiles);
 
   const [query, setQuery] = useState("");
   const [replacement, setReplacement] = useState("");
@@ -58,7 +59,13 @@ export function SearchPanel() {
     inputRef.current?.select();
   }, [searchFocusNonce]);
 
-  const opts: SearchOptions = { caseSensitive, isRegex, include, exclude };
+  const opts: SearchOptions = {
+    caseSensitive,
+    isRegex,
+    include,
+    exclude,
+    includeHidden: showHiddenFiles,
+  };
 
   // Debounced search on query / options / workspace / post-replace refresh.
   useEffect(() => {
@@ -72,7 +79,13 @@ export function SearchPanel() {
     }
     setSearching(true);
     const timer = setTimeout(() => {
-      void searchWorkspace(workspacePath, query, { caseSensitive, isRegex, include, exclude })
+      void searchWorkspace(workspacePath, query, {
+        caseSensitive,
+        isRegex,
+        include,
+        exclude,
+        includeHidden: showHiddenFiles,
+      })
         .then((hits) => {
           if (searchSeq.current !== seq) return;
           setMatches(hits);
@@ -86,7 +99,7 @@ export function SearchPanel() {
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [workspacePath, query, caseSensitive, isRegex, include, exclude, refreshNonce]);
+  }, [workspacePath, query, caseSensitive, isRegex, include, exclude, showHiddenFiles, refreshNonce]);
 
   const openMatch = (match: SearchMatch) => {
     useUIStore.getState().openFile(match.path);
