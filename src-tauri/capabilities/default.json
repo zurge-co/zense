@@ -9,6 +9,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-destroy",
     "core:window:allow-create",
     "dialog:default",
     "store:default",
