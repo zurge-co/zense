@@ -144,7 +144,7 @@ describe("TerminalPanel.tsx — structural verification (multi-tab)", () => {
     expect(src.includes("setActiveId(s.id)")).toBe(true);
     expect(src.includes('<Plus size={12}')).toBe(true);
     expect(src.includes('title="Close terminal"')).toBe(true);
-    expect(src.includes('title="New terminal (⌘N)"')).toBe(true);
+    expect(src.includes('title="New terminal (Ctrl+T / ⌘N)"')).toBe(true);
   });
 
   test("keeps inactive tabs mounted (display:none) so background shells keep running", () => {
