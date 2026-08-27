@@ -37,10 +37,10 @@ if [ -z "$version" ]; then
 fi
 
 dmg_name="zense_${version}_${TAURI_ARCH}.dmg"
-echo "→ Downloading $dmg_name…"
+echo "→ Downloading ${dmg_name}…"
 curl -fSL --progress-bar "$BASE_URL/download/$dmg_name" -o "$TMP_DMG"
 
-echo "→ Installing to $INSTALL_DIR…"
+echo "→ Installing to ${INSTALL_DIR}…"
 MOUNT_POINT="$(hdiutil attach "$TMP_DMG" -nobrowse -quiet | tail -1 | awk -F'\t' '{print $NF}' | sed 's/^ *//')"
 rm -rf "$INSTALL_DIR/$APP_NAME"
 cp -R "$MOUNT_POINT/$APP_NAME" "$INSTALL_DIR/"
