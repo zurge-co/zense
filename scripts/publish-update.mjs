@@ -63,7 +63,7 @@ if (!SKIP_BUILD) {
     stdio: "inherit",
     env: {
       ...process.env,
-      TAURI_SIGNING_PRIVATE_KEY_PATH: KEY_PATH,
+      TAURI_SIGNING_PRIVATE_KEY: KEY_PATH,
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
         process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "",
     },
