@@ -92,6 +92,14 @@ fn shell_command(cwd: &str) -> CommandBuilder {
     let mut c = CommandBuilder::new(shell);
     c.arg("-l"); // login shell: pick up the user's PATH/profile
     c.cwd(cwd);
+    // A Finder-launched .app has no TERM in its environment, and without it
+    // the shell's line editor (zsh ZLE) can't find terminfo capabilities, so
+    // erase/ repaint escape sequences are missing: BACKSPACE removes the char
+    // from the buffer but the screen keeps showing it ("backspace doesn't
+    // delete"). Advertise the frontend — xterm.js — explicitly, and truecolor
+    // so TUI apps don't fall back to 256/16 colors.
+    c.env("TERM", "xterm-256color");
+    c.env("COLORTERM", "truecolor");
     c
   }
 }

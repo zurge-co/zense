@@ -13,6 +13,7 @@ import { useGitStore } from "../../store/gitStore";
 import { gitDiffFile, gitDiffCommitFile } from "../../lib/git";
 import { detectLanguage } from "../../lib/lang";
 import { defineTheme } from "./monacoSetup";
+import { PathBreadcrumb } from "./PathBreadcrumb";
 
 export function DiffView({ tab }: { tab: EditorTab }) {
   const { diffMode, toggleDiffMode, workspacePath } = useUIStore();
@@ -101,6 +102,9 @@ export function DiffView({ tab }: { tab: EditorTab }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* File path breadcrumb — files opened from Review land here as diff
+          tabs, and must show their path like editor file tabs do */}
+      <PathBreadcrumb path={path} />
       {/* Diff toolbar */}
       <div className="flex h-8 shrink-0 items-center gap-3 border-b border-border bg-panel px-3 text-[11.5px]">
         <span className="flex items-center gap-1.5 text-fg-muted">
