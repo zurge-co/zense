@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { X, ChevronRight, File, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle, RotateCcw } from "lucide-react";
+import { X, File, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle, RotateCcw } from "lucide-react";
 import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { detectLanguage } from "../../lib/lang";
 import { CodeEditor } from "./CodeEditor";
+import { PathBreadcrumb } from "./PathBreadcrumb";
 import { DiffView } from "./DiffView";
 import { CommitDetail } from "./CommitDetail";
 import { CompareView } from "./CompareView";
@@ -327,16 +328,7 @@ function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: b
             </span>
           </div>
         )}
-        {showBreadcrumb && (
-          <div className="flex h-7 shrink-0 items-center gap-1 border-b border-border px-3 text-[11.5px] text-fg-muted">
-            {path.split("/").map((seg, i) => (
-              <span key={i} className="flex items-center gap-1">
-                {i > 0 && <ChevronRight size={11} />}
-                <span>{seg}</span>
-              </span>
-            ))}
-          </div>
-        )}
+        {showBreadcrumb && <PathBreadcrumb path={path} />}
         <div className="min-h-0 flex-1">
           <CodeEditor
             language={detectLanguage(path)}
