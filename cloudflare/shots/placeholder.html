@@ -1,0 +1,93 @@
+<!doctype html>
+<!--
+  Placeholder screenshot generator for the Zense landing page.
+  Served from R2 at /shots/<name>.png until real app screenshots replace them.
+
+  Render (from the repo root, requires Google Chrome):
+    for n in workspace chat terminal git; do
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+        --headless=new --disable-gpu --hide-scrollbars \
+        --window-size=1600,1000 \
+        --screenshot="cloudflare/shots/$n.png" \
+        "file://$PWD/cloudflare/shots/placeholder.html#$n"
+    done
+
+  Upload (from cloudflare/):
+    bunx wrangler r2 object put "zense-releases/shots/$n.png" --file "shots/$n.png"
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --base:#0d0d0d; --panel:#1a1a1a; --fg:#e8e8e8; --muted:#888;
+    --border:rgba(255,255,255,.06); --accent:#00c55a; --lime:#6cdd25; --gold:#facd04;
+  }
+  * { box-sizing:border-box; margin:0 }
+  body { font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+         background:var(--base); color:var(--fg); height:100vh; overflow:hidden }
+  .chrome { height:44px; background:var(--panel); border-bottom:1px solid var(--border);
+            display:flex; align-items:center; padding:0 18px; gap:8px }
+  .dot { width:12px; height:12px; border-radius:50% }
+  .r { background:#ff5f57 } .y { background:#febc2e } .g { background:#28c840 }
+  .title { margin-left:14px; font-size:13px; color:var(--muted) }
+  .body { height:calc(100vh - 44px - 30px); display:flex; flex-direction:column;
+          align-items:center; justify-content:center; gap:14px;
+          background:
+            radial-gradient(1200px 500px at 50% -10%, rgba(0,197,90,.07), transparent 60%),
+            var(--base); }
+  .mark { width:150px; height:150px; opacity:.9 }
+  .label { font-size:34px; font-weight:700; letter-spacing:-.5px }
+  .grad { background:linear-gradient(90deg,var(--accent),var(--lime),var(--gold));
+          -webkit-background-clip:text; background-clip:text; color:transparent }
+  .hint { font-size:15px; color:var(--muted) }
+  .status { height:30px; background:var(--panel); border-top:1px solid var(--border);
+            display:flex; align-items:center; padding:0 14px; gap:16px;
+            font-size:11.5px; color:var(--muted) }
+  .status .ok { color:var(--accent) }
+</style>
+</head>
+<body>
+  <div class="chrome">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="title" id="title">Zense</span>
+  </div>
+  <div class="body">
+    <svg class="mark" viewBox="0 0 1059.13 1059.13" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="zg" x1="415.388" y1="725.477" x2="753.406" y2="387.459"
+          gradientTransform="translate(-195.413 587.36) rotate(-45)" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#00c55a"/><stop offset=".5" stop-color="#6cdd25"/><stop offset="1" stop-color="#facd04"/>
+        </linearGradient>
+        <linearGradient id="zg2" x1="284.438" y1="568.258" x2="451.813" y2="735.633"
+          gradientTransform="translate(145.4684 1320.2132) rotate(-135)" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#00c55a"/><stop offset="1" stop-color="#00c55a" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="525.577" y="183.834" width="171.446" height="691.462" rx="85.723" ry="85.723"
+        transform="translate(553.504 -277.148) rotate(45)" fill="url(#zg)"/>
+      <rect x="260.436" y="428.032" width="171.446" height="403.894" rx="85.723" ry="85.723"
+        transform="translate(1036.3934 830.67) rotate(135)" fill="url(#zg2)"/>
+      <circle cx="264.125" cy="548.115" r="85.787" fill="#00c55a"/>
+    </svg>
+    <div class="label" id="label">Zense</div>
+    <div class="hint" id="hint">App screenshot coming soon</div>
+  </div>
+  <div class="status">
+    <span class="ok">● ready</span><span>main</span><span style="margin-left:auto">zense 0.1.0</span>
+  </div>
+<script>
+  const SCREENS = {
+    workspace: ["Editor workspace", "Files · Tabs · Monaco editor · Review panel"],
+    chat:      ["AI chat, built in", "Ask about your codebase — bring your own API key"],
+    terminal:  ["Integrated terminal", "Real shell tabs inside the workspace"],
+    git:       ["Git review", "Diffs · Staging · History — review before you commit"],
+  };
+  const key = (location.hash || "#workspace").slice(1);
+  const [label, hint] = SCREENS[key] || SCREENS.workspace;
+  document.getElementById("label").innerHTML = '<span class="grad">' + label + "</span>";
+  document.getElementById("hint").textContent = hint + " — screenshot coming soon";
+  document.getElementById("title").textContent = "Zense — " + label;
+</script>
+</body>
+</html>
