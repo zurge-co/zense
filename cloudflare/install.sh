@@ -16,7 +16,10 @@ TMP_DMG="$(mktemp -t zense-install).dmg"
 MOUNT_POINT=""
 
 cleanup() {
-  [ -n "$MOUNT_POINT" ] && hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
+  if [ -n "$MOUNT_POINT" ]; then
+    hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
+    rmdir "$MOUNT_POINT" 2>/dev/null || true
+  fi
   rm -f "$TMP_DMG"
 }
 trap cleanup EXIT
@@ -41,10 +44,14 @@ echo "→ Downloading ${dmg_name}…"
 curl -fSL --progress-bar "$BASE_URL/download/$dmg_name" -o "$TMP_DMG"
 
 echo "→ Installing to ${INSTALL_DIR}…"
-MOUNT_POINT="$(hdiutil attach "$TMP_DMG" -nobrowse -quiet | tail -1 | awk -F'\t' '{print $NF}' | sed 's/^ *//')"
+# Mount at an explicit known path: `hdiutil attach -quiet` on recent macOS
+# no longer prints the device table, so stdout-parsing yields an empty path.
+MOUNT_POINT="$(mktemp -d -t zense-mount)"
+hdiutil attach "$TMP_DMG" -nobrowse -readonly -mountpoint "$MOUNT_POINT" -quiet
 rm -rf "$INSTALL_DIR/$APP_NAME"
 cp -R "$MOUNT_POINT/$APP_NAME" "$INSTALL_DIR/"
 hdiutil detach "$MOUNT_POINT" -quiet
+rmdir "$MOUNT_POINT" 2>/dev/null || true
 MOUNT_POINT=""
 
 # Skip Gatekeeper: the binary was fetched over HTTPS from our own endpoint.
