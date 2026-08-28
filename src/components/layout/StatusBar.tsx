@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { GitBranch, CircleX, TriangleAlert, SquareTerminal } from "lucide-react";
+import { BranchMenu } from "./BranchMenu";
 import { useUIStore, tabKey } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
 import { detectLanguage } from "../../lib/lang";
@@ -28,14 +30,21 @@ export function StatusBar() {
   const langLabel = langId ? (LANGUAGE_LABELS[langId] ?? langId) : null;
   const branchLabel = branchInfo.detached ? "detached HEAD" : (branchInfo.branch ?? "main");
   const dirty = status.files.length > 0;
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
 
   return (
     <div className="flex h-6 shrink-0 items-center justify-between border-t border-border bg-panel px-3 text-[11px] text-fg-muted">
       <div className="flex items-center gap-3">
-        <span className="flex items-center gap-1 hover:text-fg">
-          <GitBranch size={11} />
-          {branchLabel}{dirty ? "*" : ""}{branchInfo.ahead > 0 && ` ↑${branchInfo.ahead}`}{branchInfo.behind > 0 && ` ↓${branchInfo.behind}`}
-        </span>
+        {!status.notARepo && (
+          <button
+            title="Git: fetch · pull · switch branch (no terminal needed)"
+            onClick={() => setBranchMenuOpen(true)}
+            className="flex items-center gap-1 hover:text-fg"
+          >
+            <GitBranch size={11} />
+            {branchLabel}{dirty ? "*" : ""}{branchInfo.ahead > 0 && ` ↑${branchInfo.ahead}`}{branchInfo.behind > 0 && ` ↓${branchInfo.behind}`}
+          </button>
+        )}
         <span className="flex items-center gap-1 hover:text-fg">
           <CircleX size={11} className="text-danger" />
           1
@@ -62,6 +71,7 @@ export function StatusBar() {
         <span>Spaces: {TAB_SIZE}</span>
         {langLabel && <span>{langLabel}</span>}
       </div>
+      {branchMenuOpen && <BranchMenu onClose={() => setBranchMenuOpen(false)} />}
     </div>
   );
 }
