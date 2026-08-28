@@ -18,6 +18,7 @@ export async function initSettings(): Promise<void> {
 const PREFS_FILE = "ui-prefs.json";
 const KEY_AUTO_SAVE = "autoSave";
 const KEY_SHOW_HIDDEN_FILES = "showHiddenFiles";
+const KEY_EDITOR_FONT_SIZE = "editorFontSize";
 
 /**
  * Load persisted UI prefs (currently: auto-save) into the stores.
@@ -29,8 +30,12 @@ export async function loadUiPrefs(): Promise<void> {
     const store = await load(PREFS_FILE);
     const autoSave = await store.get<boolean>(KEY_AUTO_SAVE);
     const showHiddenFiles = await store.get<boolean>(KEY_SHOW_HIDDEN_FILES);
+    const editorFontSize = await store.get<number>(KEY_EDITOR_FONT_SIZE);
     useWorkspaceStore.getState().setAutoSave(autoSave ?? false);
     useWorkspaceStore.getState().setShowHiddenFiles(showHiddenFiles ?? true);
+    if (typeof editorFontSize === "number" && editorFontSize > 0) {
+      useWorkspaceStore.getState().setEditorFontSize(editorFontSize);
+    }
 
     // Settings may load after a workspace is already open; bring the current
     // tree/index into sync without waiting for the next filesystem event.
@@ -51,6 +56,19 @@ export async function applyAutoSave(v: boolean): Promise<void> {
     await store.save();
   } catch (err) {
     console.error("applyAutoSave failed:", err);
+  }
+}
+
+/** Set the editor font size and persist it (Settings > Appearance). */
+export async function applyEditorFontSize(v: number): Promise<void> {
+  useWorkspaceStore.getState().setEditorFontSize(v);
+  if (!isTauri()) return;
+  try {
+    const store = await load(PREFS_FILE);
+    await store.set(KEY_EDITOR_FONT_SIZE, v);
+    await store.save();
+  } catch (err) {
+    console.error("applyEditorFontSize failed:", err);
   }
 }
 

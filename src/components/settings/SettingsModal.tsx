@@ -4,7 +4,7 @@ import { useUIStore, type SettingsSection } from "../../store/uiStore";
 import { shortcutGroups } from "../../lib/mockData";
 import { useChatStore } from "../../store/chatStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { applyAutoSave, applyShowHiddenFiles } from "../../lib/settings";
+import { applyAutoSave, applyEditorFontSize, applyShowHiddenFiles } from "../../lib/settings";
 import type { LlmConfig, EnabledTools, AgentGuards } from "../../lib/llm";
 import { DEFAULT_ENABLED_TOOLS, DEFAULT_GUARDS, llmTestConnection } from "../../lib/llm";
 
@@ -119,7 +119,10 @@ function GeneralSection() {
   );
 }
 
+const FONT_SIZES = [11, 12, 12.5, 13, 14, 15, 16, 18];
+
 function AppearanceSection() {
+  const editorFontSize = useWorkspaceStore((s) => s.editorFontSize);
   return (
     <div>
       <Row label="Theme" hint="More themes coming soon">
@@ -129,10 +132,16 @@ function AppearanceSection() {
         </select>
       </Row>
       <Row label="Editor font size">
-        <select className="rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none">
-          <option>12</option>
-          <option>13</option>
-          <option>14</option>
+        <select
+          value={editorFontSize}
+          onChange={(e) => void applyEditorFontSize(Number(e.target.value))}
+          className="rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none"
+        >
+          {FONT_SIZES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
         </select>
       </Row>
       <Row label="UI density">

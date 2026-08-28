@@ -3,6 +3,7 @@ import { defineTheme } from "./monacoSetup";
 import { setupKeybindings } from "./monacoKeybindings";
 import { setActiveEditor } from "../../lib/editorRef";
 import { useUIStore } from "../../store/uiStore";
+import { useWorkspaceStore } from "../../store/workspaceStore";
 
 /** Editor indent width (mirrored in the StatusBar). */
 export const TAB_SIZE = 2;
@@ -18,6 +19,9 @@ export function CodeEditor({
   readOnly?: boolean;
   onChange?: (value: string) => void;
 }) {
+  // Live from Settings > Appearance (workspaceStore is persisted) so the
+  // editor re-renders with the new size the moment the user changes it.
+  const fontSize = useWorkspaceStore((s) => s.editorFontSize);
   return (
     <Editor
       language={language}
@@ -42,7 +46,7 @@ export function CodeEditor({
       }}
       options={{
         readOnly,
-        fontSize: 12.5,
+        fontSize,
         fontFamily: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace",
         minimap: { enabled: false },
         lineNumbersMinChars: 3,

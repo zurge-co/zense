@@ -34,6 +34,8 @@ interface WorkspaceFsState {
   autoSave: boolean;
   /** Show dotfiles/dotfolders in explorer, quick-open and workspace search. */
   showHiddenFiles: boolean;
+  /** Editor + diff-view font size in px (Settings > Appearance). */
+  editorFontSize: number;
   /** Currently focused tree node (file or folder) for keyboard shortcuts. */
   selectedTreeNode: { path: string; type: "file" | "folder" } | null;
   /** In-memory clipboard for copy/paste (path + type). */
@@ -93,6 +95,7 @@ interface WorkspaceFsState {
   saveAllDirty: (root: string) => Promise<string[]>;
   setAutoSave: (v: boolean) => void;
   setShowHiddenFiles: (v: boolean) => void;
+  setEditorFontSize: (v: number) => void;
   /** Subscribe to fs://changed watcher events for `root` (idempotent). */
   initWatcher: (root: string) => void;
 }
@@ -118,6 +121,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   conflicts: {},
   autoSave: false,
   showHiddenFiles: true,
+  editorFontSize: 12.5,
 
   loadWorkspace: async (root) => {
     if (!isTauri()) return; // browser dev keeps the mock workspace
@@ -244,6 +248,8 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   },
 
   setShowHiddenFiles: (v) => set({ showHiddenFiles: v }),
+
+  setEditorFontSize: (v) => set({ editorFontSize: v }),
 
   initWatcher: (root) => {
     if (!isTauri() || watcherRoot === root) return;

@@ -10,12 +10,14 @@ import {
 } from "lucide-react";
 import { useUIStore, type EditorTab } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
+import { useWorkspaceStore } from "../../store/workspaceStore";
 import { gitDiffFile, gitDiffCommitFile } from "../../lib/git";
 import { detectLanguage } from "../../lib/lang";
 import { defineTheme } from "./monacoSetup";
 import { PathBreadcrumb } from "./PathBreadcrumb";
 
 export function DiffView({ tab }: { tab: EditorTab }) {
+  const editorFontSize = useWorkspaceStore((s) => s.editorFontSize);
   const { diffMode, toggleDiffMode, workspacePath } = useUIStore();
   const { status, diffSummary } = useGitStore();
   const path = tab.path;
@@ -205,7 +207,7 @@ export function DiffView({ tab }: { tab: EditorTab }) {
             options={{
               readOnly: true,
               renderSideBySide: diffMode === "split",
-              fontSize: 12.5,
+              fontSize: editorFontSize,
               fontFamily: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace",
               minimap: { enabled: false },
               lineNumbersMinChars: 3,

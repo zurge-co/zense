@@ -132,6 +132,7 @@
 - [x] Tauri commands: fs (`list_files`, `read_file_tree`, `read_file`, `read_file_range`, `write_file`, `rename_file`, `delete_file` — กัน path traversal, มี unit test)
 - [x] Tauri commands: git (`git_status`, `git_branch_info`, `git_diff_summary`, `git_diff_file`, `git_stage`, `git_unstage`, `git_commit`, `git_log`, `git_show`, `git_diff_commits` — git2, มี unit test)
 - [x] UI components กลาง: `ContextMenu` + `ConfirmDialog` (reusable)
+- [ ] จำขนาดหน้าจอล่าสุดก่อนจะปิด (persist window size/position ผ่าน plugin-store หรือ tauri-plugin-window-state)
 - [ ] CLI entry: `zense .`, `zense --profile backend` (ตาม README)
 - [ ] CI: build + typecheck + lint
 

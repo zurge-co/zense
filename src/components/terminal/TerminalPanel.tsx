@@ -190,6 +190,18 @@ export function TerminalPanel() {
     term.onData((data) => {
       if (ctx.backendId) void invoke("pty_write", { id: ctx.backendId, data }).catch(() => {});
     });
+    // Shift+Enter: xterm.js collapses it to a plain CR (same as Enter), so
+    // CLI agents (Claude Code & co.) that read the kitty keyboard protocol
+    // never see it as a newline request. Intercept the key and send the
+    // CSI-u key event ( ESC [ 13 ; 2 u = shift+enter ) they decode as
+    // "insert newline". Returning false stops xterm from also emitting \r.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.key !== "Enter" || !e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return true;
+      if (e.type === "keydown" && ctx.backendId) {
+        void invoke("pty_write", { id: ctx.backendId, data: "\x1b[13;2u" }).catch(() => {});
+      }
+      return false;
+    });
 
     spawnSession(id, ctx, cwd);
   };
