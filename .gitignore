@@ -29,3 +29,6 @@ dist-ssr
 
 # publish artifacts
 target-update
+
+# zense harness state
+.zense/
