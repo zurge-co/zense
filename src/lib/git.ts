@@ -237,6 +237,9 @@ export async function gitDiffCommits(root: string, fromSha: string, toSha: strin
 export interface GitBranchEntry {
   name: string;
   isHead: boolean;
+  /** Remote-tracking entries ("origin/x") — shown after locals with a
+   *  server tag; checking out creates a local tracking branch. */
+  isRemote: boolean;
 }
 
 export interface GitOpResult {
@@ -247,8 +250,9 @@ export interface GitOpResult {
 export async function gitListBranches(root: string): Promise<GitBranchEntry[]> {
   if (!isTauri()) {
     return [
-      { name: "main", isHead: true },
-      { name: "feature/demo", isHead: false },
+      { name: "main", isHead: true, isRemote: false },
+      { name: "feature/demo", isHead: false, isRemote: false },
+      { name: "origin/new-teammate-work", isHead: false, isRemote: true },
     ];
   }
   return invoke<GitBranchEntry[]>("git_list_branches", { root });
@@ -257,6 +261,13 @@ export async function gitListBranches(root: string): Promise<GitBranchEntry[]> {
 export async function gitCheckoutBranch(root: string, name: string): Promise<void> {
   if (!isTauri()) return;
   return invoke("git_checkout_branch", { root, name });
+}
+
+/** Checkout "origin/x": switch if local exists, else create tracking
+ *  branch + switch — same dwim behavior as the git CLI. */
+export async function gitCheckoutRemoteBranch(root: string, name: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke("git_checkout_remote_branch", { root, name });
 }
 
 export async function gitCreateBranch(root: string, name: string): Promise<string> {

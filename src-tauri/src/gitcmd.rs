@@ -1135,6 +1135,10 @@ pub fn git_diff_commit_file(
 pub struct GitBranchEntry {
   name: String,
   is_head: bool,
+  /// True for remote-tracking entries ("origin/x") — the menu shows these
+  /// after locals with a "server" tag; checking one out creates a local
+  /// tracking branch automatically (see git_checkout_remote_branch).
+  is_remote: bool,
 }
 
 /// Result of a junior-friendly git action. Expected failures (diverged pull,
@@ -1147,28 +1151,44 @@ pub struct GitOpResult {
   message: String,
 }
 
-/// Local branches with the checked-out one flagged. Empty repo → empty list.
+/// Local branches (checked-out one flagged) followed by remote-tracking
+/// branches as of the last fetch — symbolic refs like origin/HEAD skipped.
+/// Empty repo → empty list. No hidden fetch; refs are as the user left them.
 #[tauri::command]
 pub fn git_list_branches(root: String) -> Result<Vec<GitBranchEntry>, String> {
   let repo = open_repo_or_err(&root)?;
   if !has_head(&repo) {
     return Ok(vec![]);
   }
-  let mut out = Vec::new();
+  let mut locals = Vec::new();
+  let mut remotes = Vec::new();
   let iter = repo
-    .branches(Some(git2::BranchType::Local))
+    .branches(None)
     .map_err(|e| e.to_string())?;
   for item in iter {
-    let (branch, _) = item.map_err(|e| e.to_string())?;
-    if let Some(name) = branch.name().map_err(|e| e.to_string())? {
-      out.push(GitBranchEntry {
-        name: name.to_string(),
-        is_head: branch.is_head(),
-      });
+    let (branch, kind) = item.map_err(|e| e.to_string())?;
+    let Some(name) = branch.name().map_err(|e| e.to_string())? else {
+      continue;
+    };
+    // Remote's “default branch” pointer, not a real branch — same as the CLI.
+    if kind == git2::BranchType::Remote && name.ends_with("/HEAD") {
+      continue;
+    }
+    let entry = GitBranchEntry {
+      name: name.to_string(),
+      is_head: branch.is_head(),
+      is_remote: kind == git2::BranchType::Remote,
+    };
+    if entry.is_remote {
+      remotes.push(entry);
+    } else {
+      locals.push(entry);
     }
   }
-  out.sort_by(|a, b| a.name.cmp(&b.name));
-  Ok(out)
+  locals.sort_by(|a, b| a.name.cmp(&b.name));
+  remotes.sort_by(|a, b| a.name.cmp(&b.name));
+  locals.extend(remotes);
+  Ok(locals)
 }
 
 /// Switch HEAD + worktree to a local branch. checkout_tree runs BEFORE
@@ -1206,6 +1226,49 @@ fn checkout_local_branch(repo: &Repository, name: &str) -> Result<(), String> {
 pub fn git_checkout_branch(root: String, name: String) -> Result<(), String> {
   let repo = open_repo_or_err(&root)?;
   checkout_local_branch(&repo, name.trim())
+}
+
+/// Checkout a remote-tracking branch ("origin/feature-x") the way the CLI
+/// does: if a local branch of the same name exists, just switch to it;
+/// otherwise create it from the remote commit, link upstream tracking, and
+/// switch — juniors never type `git checkout -b x --track origin/x`.
+#[tauri::command]
+pub fn git_checkout_remote_branch(root: String, name: String) -> Result<(), String> {
+  let repo = open_repo_or_err(&root)?;
+  let name = name.trim();
+  // "origin/feature-x" → local "feature-x".
+  let local = name
+    .split_once('/')
+    .map(|(_, rest)| rest)
+    .filter(|rest| !rest.is_empty())
+    .ok_or_else(|| format!("'{name}' doesn't look like a remote branch (expected e.g. 'origin/main')"))?;
+
+  // Local branch already exists → plain switch (same as `git checkout x`).
+  if repo.find_branch(local, git2::BranchType::Local).is_ok() {
+    return checkout_local_branch(&repo, local);
+  }
+
+  let remote = repo
+    .find_branch(name, git2::BranchType::Remote)
+    .map_err(|_| format!("remote branch '{name}' not found — Fetch first to refresh the list"))?;
+  let commit = remote
+    .get()
+    .peel_to_commit()
+    .map_err(|e| e.to_string())?;
+  repo.branch(local, &commit, false).map_err(|e| e.to_string())?;
+  let mut new_branch = repo
+    .find_branch(local, git2::BranchType::Local)
+    .map_err(|e| e.to_string())?;
+  // Link upstream so ahead/behind and future pulls work out of the box.
+  if let Err(e) = new_branch.set_upstream(Some(name)) {
+    // Roll back the half-created branch rather than leave it untracked.
+    let _ = new_branch.delete();
+    return Err(format!("could not set upstream for '{local}': {e}"));
+  }
+  checkout_local_branch(&repo, local).map_err(|e| {
+    let _ = new_branch.delete();
+    e
+  })
 }
 
 /// Basic branch-name sanity; git2's is_valid_name does the heavy lifting.
@@ -2528,6 +2591,114 @@ mod tests {
     let r = git_pull(root_a.clone()).unwrap();
     assert!(r.ok, "{}", r.message);
     assert_eq!(fs::read_to_string(a.join("file.txt")).unwrap(), "v2\n");
+
+    fs::remove_dir_all(bare.parent().unwrap()).ok();
+    fs::remove_dir_all(a.parent().unwrap()).ok();
+    fs::remove_dir_all(b.parent().unwrap()).ok();
+  }
+
+  /// Two clones of a local bare remote wired with pushup upstream; returns
+  /// (bare, a, b, cleanup_roots). Extracted helper shared by remote tests.
+  fn two_clones() -> (PathBuf, PathBuf, PathBuf) {
+    let bare_root = temp_ws();
+    let bare = bare_root.join("remote.git");
+    let a_root = temp_ws();
+    let a = a_root.join("a");
+    let b_root = temp_ws();
+    let b = b_root.join("b");
+    let run = |dir: &Path, args: &[&str]| {
+      let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+      assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+      );
+    };
+    run(&temp_ws(), &["init", "--bare", bare.to_str().unwrap()]);
+    run(&temp_ws(), &["clone", bare.to_str().unwrap(), a.to_str().unwrap()]);
+    run(&a, &["config", "user.email", "t@t"]);
+    run(&a, &["config", "user.name", "t"]);
+    fs::write(a.join("file.txt"), "v1\n").unwrap();
+    run(&a, &["add", "."]);
+    run(&a, &["commit", "-m", "v1"]);
+    run(&a, &["push", "origin", "HEAD"]);
+    run(&temp_ws(), &["clone", bare.to_str().unwrap(), b.to_str().unwrap()]);
+    run(&b, &["config", "user.email", "t@t"]);
+    run(&b, &["config", "user.name", "t"]);
+    (bare, a, b)
+  }
+
+  #[test]
+  fn test_git_list_branches_includes_remote_tracking() {
+    let (bare, a, b) = two_clones();
+    let run = |dir: &Path, args: &[&str]| {
+      std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+    };
+    // B creates a branch that exists only on the remote.
+    run(&b, &["checkout", "-b", "feature-remote"]);
+    fs::write(b.join("remote-only.txt"), "r\n").unwrap();
+    run(&b, &["add", "."]);
+    run(&b, &["commit", "-m", "remote only"]);
+    run(&b, &["push", "origin", "feature-remote"]);
+
+    let root_a = a.to_string_lossy().into_owned();
+    git_fetch(root_a.clone()).unwrap();
+
+    let branches = git_list_branches(root_a).unwrap();
+    // Local entries come first and are never flagged remote.
+    let split = branches.iter().position(|b| b.is_remote);
+    assert!(split.is_some(), "expected remote entries in {branches:?}");
+    assert!(!branches[..split.unwrap()].iter().any(|b| b.is_remote));
+    assert!(branches.iter().any(|b| b.is_remote && b.name == "origin/feature-remote"));
+    // The default-branch pointer is hidden, like the CLI.
+    assert!(!branches.iter().any(|b| b.name.ends_with("/HEAD")));
+
+    fs::remove_dir_all(bare.parent().unwrap()).ok();
+    fs::remove_dir_all(a.parent().unwrap()).ok();
+    fs::remove_dir_all(b.parent().unwrap()).ok();
+  }
+
+  #[test]
+  fn test_git_checkout_remote_branch_creates_tracking_branch() {
+    let (bare, a, b) = two_clones();
+    let run = |dir: &Path, args: &[&str]| {
+      std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+    };
+    run(&b, &["checkout", "-b", "feature-remote"]);
+    fs::write(b.join("remote-only.txt"), "r\n").unwrap();
+    run(&b, &["add", "."]);
+    run(&b, &["commit", "-m", "remote only"]);
+    run(&b, &["push", "origin", "feature-remote"]);
+
+    let root_a = a.to_string_lossy().into_owned();
+    git_fetch(root_a.clone()).unwrap();
+    assert!(!a.join("remote-only.txt").exists());
+
+    // First checkout: creates the local tracking branch and switches.
+    git_checkout_remote_branch(root_a.clone(), "origin/feature-remote".into()).unwrap();
+    assert!(a.join("remote-only.txt").exists());
+    let repo = Repository::open(&a).unwrap();
+    let lb = repo.find_branch("feature-remote", git2::BranchType::Local).unwrap();
+    assert!(lb.is_head());
+    let upstream = lb.get().name().map(|_| repo.branch_upstream_name(lb.get().name().unwrap()));
+    assert_eq!(
+      upstream.unwrap().ok().and_then(|r| r.as_str().map(String::from)).as_deref(),
+      Some("refs/remotes/origin/feature-remote")
+    );
+
+    // Second checkout with the local branch in place: plain switch, no error.
+    let local_head = repo.head().unwrap().shorthand().unwrap().to_string();
+    assert_eq!(local_head, "feature-remote");
+    git_checkout_remote_branch(root_a.clone(), "origin/feature-remote".into()).unwrap();
+
+    // Remote branch that doesn't exist → friendly error.
+    let err = git_checkout_remote_branch(root_a, "origin/nope".into()).unwrap_err();
+    assert!(err.contains("not found"), "unexpected error: {err}");
 
     fs::remove_dir_all(bare.parent().unwrap()).ok();
     fs::remove_dir_all(a.parent().unwrap()).ok();

@@ -10,6 +10,7 @@
 import { describe, test, expect, beforeAll } from "bun:test";
 import {
   gitCheckoutBranch,
+  gitCheckoutRemoteBranch,
   gitCreateBranch,
   gitFetch,
   gitListBranches,
@@ -39,6 +40,7 @@ describe("BranchMenu.tsx — git menu for beginners", () => {
 
   test("imports all git wrappers from lib/git", () => {
     expect(src).toContain("gitCheckoutBranch");
+    expect(src).toContain("gitCheckoutRemoteBranch");
     expect(src).toContain("gitCreateBranch");
     expect(src).toContain("gitFetch");
     expect(src).toContain("gitListBranches");
@@ -59,7 +61,13 @@ describe("BranchMenu.tsx — git menu for beginners", () => {
   test("has a switch-branch list fed by gitListBranches", () => {
     expect(src).toContain("Switch branch");
     expect(src).toContain("gitListBranches(root).then(setBranches");
-    expect(src).toContain("doCheckout(b.name)");
+    expect(src).toContain("doCheckout(b)");
+  });
+
+  test("remote entries get a 'server' tag and the tracking-branch wrapper", () => {
+    expect(src).toMatch(/>\s*server\s*<\/span>/);
+    expect(src).toContain("b.isRemote ? gitCheckoutRemoteBranch(root, b.name)");
+    expect(src).toContain("creates your own local copy");
   });
 
   test("has new-branch mode: input, Enter creates, Esc cancels", () => {
@@ -132,6 +140,13 @@ describe("lib/git.ts — menu wrappers (mock mode)", () => {
     expect(branches[0].name).toBeTruthy();
   });
 
+  test("gitListBranches mock includes a remote-tracking entry", async () => {
+    const branches = await gitListBranches("/mock/root");
+    const remote = branches.find((b) => b.isRemote);
+    expect(remote).toBeTruthy();
+    expect(remote!.name).toContain("origin/");
+  });
+
   test("gitFetch / gitPull resolve to a friendly ok result", async () => {
     const fetchRes = await gitFetch("/mock/root");
     expect(fetchRes.ok).toBe(true);
@@ -144,6 +159,7 @@ describe("lib/git.ts — menu wrappers (mock mode)", () => {
   test("gitCheckoutBranch / gitCreateBranch resolve in browser dev", async () => {
     await expect(gitCheckoutBranch("/mock/root", "feature/x")).resolves.toBeUndefined();
     await expect(gitCreateBranch("/mock/root", "feature/x")).resolves.toBe("feature/x");
+    await expect(gitCheckoutRemoteBranch("/mock/root", "origin/feature-x")).resolves.toBeUndefined();
   });
 });
 
@@ -162,6 +178,7 @@ describe("gitcmd.rs — backend contract for the menu", () => {
     for (const cmd of [
       "git_list_branches",
       "git_checkout_branch",
+      "git_checkout_remote_branch",
       "git_create_branch",
       "git_fetch",
       "git_pull",
@@ -183,5 +200,14 @@ describe("gitcmd.rs — backend contract for the menu", () => {
   test("no-remote and network failures get plain-language messages", () => {
     expect(src).toContain("ensure_has_remote");
     expect(src).toContain("friendly_net_error");
+  });
+
+  test("remote listing hides */HEAD pointers and flags is_remote", () => {
+    expect(src).toContain('name.ends_with("/HEAD")');
+    expect(src).toContain("is_remote");
+  });
+
+  test("checkout-remote sets upstream tracking", () => {
+    expect(src).toContain("set_upstream");
   });
 });
