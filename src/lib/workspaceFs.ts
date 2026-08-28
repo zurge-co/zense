@@ -53,6 +53,20 @@ export async function writeFileContent(root: string, path: string, content: stri
   return invoke<void>("write_file", { root, path, content });
 }
 
+/** Append content to a workspace file (creates it + parents if missing).
+ *  Used by the focus journal so appends stay O(1). */
+export async function appendToFile(root: string, path: string, content: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("append_file", { root, path, content });
+}
+
+/** Atomic write (tmp + rename in Rust): target is never observed half-written.
+ *  Used for the focus snapshot (.zense/focus.json). */
+export async function writeFileAtomic(root: string, path: string, content: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("write_file_atomic", { root, path, content });
+}
+
 export async function createDir(root: string, path: string): Promise<void> {
   if (!isTauri()) return;
   return invoke<void>("create_dir", { root, path });

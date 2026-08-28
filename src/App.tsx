@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useUIStore, tabKey } from "./store/uiStore";
 import { useTerminalStore } from "./store/terminalStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
+import { useFocusStore } from "./store/focusStore";
 import { isTauri, openFolderFlow } from "./lib/workspace";
 import { adjustUiZoom, applyUiZoom, loadUiPrefs, UI_ZOOM_STEP } from "./lib/settings";
 import { TitleBar } from "./components/layout/TitleBar";
@@ -92,6 +93,7 @@ function WorkspaceLayout() {
   useEffect(() => {
     if (workspacePath) {
       void useWorkspaceStore.getState().loadWorkspace(workspacePath);
+      void useFocusStore.getState().load(workspacePath);
     }
   }, [workspacePath]);
 
