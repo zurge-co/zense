@@ -1124,6 +1124,245 @@ pub fn git_diff_commit_file(
 // Tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Commands 12–16: branch/network ops for the StatusBar branch menu. Aimed at
+// users who don't know the git CLI — local ops via git2, network ops via the
+// user's own `git` binary (their ssh config / credential helpers just work).
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchEntry {
+  name: String,
+  is_head: bool,
+}
+
+/// Result of a junior-friendly git action. Expected failures (diverged pull,
+/// no network, …) come back as `ok: false` with a plain-language message;
+/// `Err` is reserved for hard problems (not a repo, git binary missing).
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GitOpResult {
+  ok: bool,
+  message: String,
+}
+
+/// Local branches with the checked-out one flagged. Empty repo → empty list.
+#[tauri::command]
+pub fn git_list_branches(root: String) -> Result<Vec<GitBranchEntry>, String> {
+  let repo = open_repo_or_err(&root)?;
+  if !has_head(&repo) {
+    return Ok(vec![]);
+  }
+  let mut out = Vec::new();
+  let iter = repo
+    .branches(Some(git2::BranchType::Local))
+    .map_err(|e| e.to_string())?;
+  for item in iter {
+    let (branch, _) = item.map_err(|e| e.to_string())?;
+    if let Some(name) = branch.name().map_err(|e| e.to_string())? {
+      out.push(GitBranchEntry {
+        name: name.to_string(),
+        is_head: branch.is_head(),
+      });
+    }
+  }
+  out.sort_by(|a, b| a.name.cmp(&b.name));
+  Ok(out)
+}
+
+/// Switch HEAD + worktree to a local branch. checkout_tree runs BEFORE
+/// set_head and uses `safe()` so a conflicting uncommitted change aborts the
+/// whole switch instead of leaving a half-checked-out tree.
+fn checkout_local_branch(repo: &Repository, name: &str) -> Result<(), String> {
+  let branch = repo
+    .find_branch(name, git2::BranchType::Local)
+    .map_err(|_| format!("branch '{name}' not found"))?;
+  let commit = branch
+    .get()
+    .peel_to_commit()
+    .map_err(|e| e.to_string())?;
+  repo
+    .checkout_tree(commit.as_object(), Some(git2::build::CheckoutBuilder::new().safe()))
+    .map_err(|e| {
+      let msg = e.to_string();
+      let l = msg.to_lowercase();
+      if l.contains("conflict") || l.contains("would be overwritten") || l.contains("prevent") {
+        format!(
+          "Can't switch to '{name}': your uncommitted changes would be overwritten. \
+           Commit them first (or run `git stash` in the terminal)."
+        )
+      } else {
+        msg
+      }
+    })?;
+  repo
+    .set_head(branch.get().name().ok_or("invalid branch reference")?)
+    .map_err(|e| e.to_string())
+}
+
+/// Switch to an existing local branch.
+#[tauri::command]
+pub fn git_checkout_branch(root: String, name: String) -> Result<(), String> {
+  let repo = open_repo_or_err(&root)?;
+  checkout_local_branch(&repo, name.trim())
+}
+
+/// Basic branch-name sanity; git2's is_valid_name does the heavy lifting.
+fn validate_branch_name(name: &str) -> Result<&str, String> {
+  let n = name.trim();
+  if n.is_empty() {
+    return Err("branch name is empty".to_string());
+  }
+  if !git2::Reference::is_valid_name(&format!("refs/heads/{n}")) {
+    return Err(format!(
+      "'{n}' is not a valid branch name (avoid spaces, '..', '~', '^', ':', '?', '*', '[')"
+    ));
+  }
+  Ok(n)
+}
+
+/// Create a new branch from the current HEAD and switch to it.
+#[tauri::command]
+pub fn git_create_branch(root: String, name: String) -> Result<String, String> {
+  let repo = open_repo_or_err(&root)?;
+  if !has_head(&repo) {
+    return Err(
+      "this repository has no commits yet — commit something first, then create a branch".to_string(),
+    );
+  }
+  let name = validate_branch_name(&name)?.to_string();
+  let head = repo
+    .head()
+    .and_then(|h| h.peel_to_commit())
+    .map_err(|e| e.to_string())?;
+  repo.branch(&name, &head, false).map_err(|e| {
+    if e.code() == git2::ErrorCode::Exists {
+      format!("branch '{name}' already exists — pick another name or switch to it")
+    } else {
+      e.to_string()
+    }
+  })?;
+  checkout_local_branch(&repo, &name)?;
+  Ok(name)
+}
+
+/// Fetch/pull go through the `git` CLI so the user's own ssh keys, credential
+/// helpers and gh/keychain auth apply — nothing to configure inside Zense.
+fn run_git_cli(root: &str, args: &[&str]) -> Result<(bool, String), String> {
+  let out = std::process::Command::new("git")
+    .arg("-C")
+    .arg(root)
+    .args(args)
+    .output()
+    .map_err(|e| format!("could not run `git` ({e}) — is git installed?"))?;
+  let mut text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+  let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+  if !err.is_empty() {
+    if !text.is_empty() {
+      text.push('\n');
+    }
+    text.push_str(&err);
+  }
+  Ok((out.status.success(), text))
+}
+
+/// Plain-language rewrite of git's most common network errors — the branch
+/// menu's audience doesn't know git jargon.
+fn friendly_net_error(raw: &str) -> String {
+  let l = raw.to_lowercase();
+  if l.contains("could not resolve hostname")
+    || l.contains("could not resolve host")
+    || l.contains("name or service not known")
+    || l.contains("temporary failure in name resolution")
+  {
+    "Can't reach the remote server — check your internet connection (or the remote URL).".to_string()
+  } else if l.contains("permission denied") {
+    "The remote rejected your SSH key — make sure it's added to your git host (e.g. GitHub).".to_string()
+  } else if l.contains("authentication failed")
+    || l.contains("invalid username or password")
+    || l.contains("could not read username")
+  {
+    "Login to the remote failed — check your credentials/token (e.g. sign in with `gh auth login`).".to_string()
+  } else if l.contains("does not appear to be a git repository") {
+    "The remote URL doesn't point at a git repository — check the remote settings.".to_string()
+  } else {
+    raw.trim().to_string()
+  }
+}
+
+/// A repo without any remote has nothing to fetch/pull — say so up front
+/// instead of silently succeeding like `git fetch --all` would.
+fn ensure_has_remote(repo: &Repository) -> Result<(), String> {
+  let remotes = repo.remotes().map_err(|e| e.to_string())?;
+  if remotes.is_empty() {
+    Err("this repository has no remote connected (no GitHub server) — nothing to fetch or pull from".to_string())
+  } else {
+    Ok(())
+  }
+}
+
+/// `git fetch --all --prune`: download updates, never touch the worktree.
+#[tauri::command]
+pub fn git_fetch(root: String) -> Result<GitOpResult, String> {
+  let repo = open_repo_or_err(&root)?;
+  ensure_has_remote(&repo)?;
+  let (ok, text) = run_git_cli(&root, &["fetch", "--all", "--prune"])?;
+  if ok {
+    Ok(GitOpResult {
+      ok: true,
+      message: if text.is_empty() {
+        "Fetched — nothing new on the remote.".to_string()
+      } else {
+        format!("Fetched the latest remote info.\n{text}")
+      },
+    })
+  } else {
+    Ok(GitOpResult {
+      ok: false,
+      message: friendly_net_error(&text),
+    })
+  }
+}
+
+/// `git pull --ff-only`: only ever fast-forward. Diverged branches need a
+/// real merge decision — out of scope for the one-click menu, so explain.
+#[tauri::command]
+pub fn git_pull(root: String) -> Result<GitOpResult, String> {
+  let repo = open_repo_or_err(&root)?;
+  ensure_has_remote(&repo)?;
+  let (ok, text) = run_git_cli(&root, &["pull", "--ff-only"])?;
+  if ok {
+    let message = if text.to_lowercase().contains("already up to date") {
+      "Already up to date — you have the latest code.".to_string()
+    } else {
+      format!("Pulled the latest changes.\n{text}")
+    };
+    Ok(GitOpResult { ok: true, message })
+  } else {
+    let l = text.to_lowercase();
+    let message = if l.contains("not possible to fast-forward")
+      || l.contains("non-fast-forward")
+      || l.contains("diverged")
+    {
+      "Your branch and the remote have both moved on (diverged). Zense only does safe \
+       fast-forward pulls — run `git pull` in the terminal to merge, or ask a teammate for help."
+        .to_string()
+    } else if l.contains("would be overwritten") || l.contains("local changes") || l.contains("untracked working tree")
+    {
+      "You have local changes that would be overwritten by the pull — commit or discard them first."
+        .to_string()
+    } else if l.contains("no tracking information") || l.contains("no such ref was fetched") {
+      "This branch isn't linked to a remote branch yet — run `git push -u origin <branch>` \
+       in the terminal once."
+        .to_string()
+    } else {
+      friendly_net_error(&text)
+    };
+    Ok(GitOpResult { ok: false, message })
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -2109,5 +2348,189 @@ mod tests {
       git_diff_commit_file(root.clone(), "../x".into(), None, c1.to_string()).is_err()
     );
     fs::remove_dir_all(&dir).ok();
+  }
+
+  // -- branch menu tests ---------------------------------------------------
+
+  /// Repo with one commit on the default branch; returns (dir, repo, branch).
+  fn repo_one_commit() -> (PathBuf, Repository, String) {
+    let dir = temp_ws();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "hello\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    let branch = repo
+      .head()
+      .unwrap()
+      .shorthand()
+      .unwrap()
+      .to_string();
+    (dir, repo, branch)
+  }
+
+  #[test]
+  fn test_git_list_branches() {
+    let (dir, repo, main) = repo_one_commit();
+    let root = dir.to_string_lossy().into_owned();
+
+    let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.branch("feature/x", &head_commit, false).unwrap();
+
+    let branches = git_list_branches(root).unwrap();
+    assert_eq!(branches.len(), 2);
+    let head = branches.iter().find(|b| b.is_head).unwrap();
+    assert_eq!(head.name, main);
+    assert!(branches.iter().any(|b| b.name == "feature/x"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_checkout_branch_switches_worktree() {
+    let (dir, repo, main) = repo_one_commit();
+    let root = dir.to_string_lossy().into_owned();
+
+    let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.branch("feature", &head_commit, false).unwrap();
+
+    // Commit an extra file only on `feature`.
+    git_checkout_branch(root.clone(), "feature".into()).unwrap();
+    fs::write(dir.join("only-on-feature.txt"), "x\n").unwrap();
+    stage_file(&repo, "only-on-feature.txt").unwrap();
+    commit_head(&repo, "feature commit").unwrap();
+
+    // Switching back must remove that file from the worktree.
+    git_checkout_branch(root.clone(), main.clone()).unwrap();
+    assert!(!dir.join("only-on-feature.txt").exists());
+    let info = git_branch_info(root.clone()).unwrap();
+    assert_eq!(info.branch.as_deref(), Some(main.as_str()));
+
+    // Unknown branch errors, no state change.
+    assert!(git_checkout_branch(root, "nope".into()).is_err());
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_checkout_branch_refuses_to_clobber() {
+    let (dir, repo, main) = repo_one_commit();
+    let root = dir.to_string_lossy().into_owned();
+
+    let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.branch("feature", &head_commit, false).unwrap();
+    git_checkout_branch(root.clone(), "feature".into()).unwrap();
+    fs::write(dir.join("file.txt"), "feature version\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    commit_head(&repo, "change file").unwrap();
+
+    git_checkout_branch(root.clone(), main.clone()).unwrap();
+    // Uncommitted edit to a file that differs between the branches.
+    fs::write(dir.join("file.txt"), "local dirty\n").unwrap();
+
+    let err = git_checkout_branch(root.clone(), "feature".into()).unwrap_err();
+    assert!(err.contains("uncommitted"), "unexpected error: {err}");
+    // HEAD must not have moved.
+    let info = git_branch_info(root).unwrap();
+    assert_eq!(info.branch.as_deref(), Some(main.as_str()));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_create_branch() {
+    let (dir, _repo, _main) = repo_one_commit();
+    let root = dir.to_string_lossy().into_owned();
+
+    let created = git_create_branch(root.clone(), "feature/new-ui".into()).unwrap();
+    assert_eq!(created, "feature/new-ui");
+    let info = git_branch_info(root.clone()).unwrap();
+    assert_eq!(info.branch.as_deref(), Some("feature/new-ui"));
+
+    // Duplicate, empty and invalid names are rejected.
+    assert!(git_create_branch(root.clone(), "feature/new-ui".into()).unwrap_err().contains("already exists"));
+    assert!(git_create_branch(root.clone(), "   ".into()).is_err());
+    assert!(git_create_branch(root.clone(), "bad name".into()).is_err());
+    assert!(git_create_branch(root.clone(), "bad..dots".into()).is_err());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_friendly_net_error_mappings() {
+    assert!(friendly_net_error("fatal: Could not resolve hostname github.com").contains("internet"));
+    assert!(friendly_net_error("git@github.com: Permission denied (publickey).").contains("SSH key"));
+    assert!(friendly_net_error("fatal: Authentication failed for 'https://x'").contains("credentials"));
+    assert!(friendly_net_error("some other error").contains("some other error"));
+  }
+
+  #[test]
+  fn test_git_pull_no_remote_is_explained() {
+    let (dir, _repo, _main) = repo_one_commit();
+    let root = dir.to_string_lossy().into_owned();
+    let err = git_pull(root.clone()).unwrap_err();
+    assert!(err.contains("no remote"), "unexpected error: {err}");
+    let err = git_fetch(root).unwrap_err();
+    assert!(err.contains("no remote"), "unexpected error: {err}");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  /// Offline end-to-end: two clones of a local bare remote — fetch in one
+  /// sees the other's push, pull fast-forwards the worktree. Uses the `git`
+  /// CLI exactly like the commands do, but purely on the filesystem.
+  #[test]
+  fn test_git_fetch_and_pull_offline() {
+    let bare = temp_ws().join("remote.git");
+    let a = temp_ws().join("a");
+    let b = temp_ws().join("b");
+    let run = |dir: &Path, args: &[&str]| {
+      let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+      assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+      );
+    };
+
+    run(&temp_ws(), &["init", "--bare", bare.to_str().unwrap()]);
+    run(&temp_ws(), &["clone", bare.to_str().unwrap(), a.to_str().unwrap()]);
+    run(&a, &["config", "user.email", "t@t"]);
+    run(&a, &["config", "user.name", "t"]);
+    fs::write(a.join("file.txt"), "v1\n").unwrap();
+    run(&a, &["add", "."]);
+    run(&a, &["commit", "-m", "v1"]);
+    run(&a, &["push", "-u", "origin", "HEAD"]);
+
+    run(&temp_ws(), &["clone", bare.to_str().unwrap(), b.to_str().unwrap()]);
+    run(&b, &["config", "user.email", "t@t"]);
+    run(&b, &["config", "user.name", "t"]);
+
+    let root_a = a.to_string_lossy().into_owned();
+
+    // Nothing new yet → up to date.
+    let r = git_pull(root_a.clone()).unwrap();
+    assert!(r.ok);
+    assert!(r.message.to_lowercase().contains("up to date"), "{}", r.message);
+
+    // B pushes v2; A fetches (worktree untouched) then pulls (fast-forward).
+    fs::write(b.join("file.txt"), "v2\n").unwrap();
+    run(&b, &["add", "."]);
+    run(&b, &["commit", "-m", "v2"]);
+    run(&b, &["push", "origin", "HEAD"]);
+
+    let r = git_fetch(root_a.clone()).unwrap();
+    assert!(r.ok, "{}", r.message);
+    assert_eq!(fs::read_to_string(a.join("file.txt")).unwrap(), "v1\n");
+
+    let r = git_pull(root_a.clone()).unwrap();
+    assert!(r.ok, "{}", r.message);
+    assert_eq!(fs::read_to_string(a.join("file.txt")).unwrap(), "v2\n");
+
+    fs::remove_dir_all(bare.parent().unwrap()).ok();
+    fs::remove_dir_all(a.parent().unwrap()).ok();
+    fs::remove_dir_all(b.parent().unwrap()).ok();
   }
 }

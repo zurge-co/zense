@@ -231,3 +231,45 @@ export async function gitDiffCommits(root: string, fromSha: string, toSha: strin
   }
   return invoke<GitDiffCommits>("git_diff_commits", { root, fromSha, toSha });
 }
+
+// ── Branch menu (StatusBar): junior-friendly fetch/pull/checkout ──────────
+
+export interface GitBranchEntry {
+  name: string;
+  isHead: boolean;
+}
+
+export interface GitOpResult {
+  ok: boolean;
+  message: string;
+}
+
+export async function gitListBranches(root: string): Promise<GitBranchEntry[]> {
+  if (!isTauri()) {
+    return [
+      { name: "main", isHead: true },
+      { name: "feature/demo", isHead: false },
+    ];
+  }
+  return invoke<GitBranchEntry[]>("git_list_branches", { root });
+}
+
+export async function gitCheckoutBranch(root: string, name: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke("git_checkout_branch", { root, name });
+}
+
+export async function gitCreateBranch(root: string, name: string): Promise<string> {
+  if (!isTauri()) return name;
+  return invoke<string>("git_create_branch", { root, name });
+}
+
+export async function gitFetch(root: string): Promise<GitOpResult> {
+  if (!isTauri()) return { ok: true, message: "Fetched — nothing new on the remote. (preview)" };
+  return invoke<GitOpResult>("git_fetch", { root });
+}
+
+export async function gitPull(root: string): Promise<GitOpResult> {
+  if (!isTauri()) return { ok: true, message: "Already up to date. (preview)" };
+  return invoke<GitOpResult>("git_pull", { root });
+}
