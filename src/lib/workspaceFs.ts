@@ -41,6 +41,13 @@ export async function readFileContent(root: string, path: string): Promise<strin
   return invoke<string>("read_file", { root, path });
 }
 
+/** Read a file as base64, for image previews of binary files. The browser
+ *  dev fallback has no real filesystem, so there is nothing to preview. */
+export async function readFileBinary(root: string, path: string): Promise<string> {
+  if (!isTauri()) throw new Error("image preview requires the desktop app");
+  return invoke<string>("read_file_binary", { root, path });
+}
+
 export async function writeFileContent(root: string, path: string, content: string): Promise<void> {
   if (!isTauri()) return; // browser dev: no-op
   return invoke<void>("write_file", { root, path, content });

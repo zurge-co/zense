@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 const MAX_ENTRIES: usize = 20_000;
 /// Refuse to load huge files into the editor.
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+/// Refuse to load huge binary files (images) into the preview.
+const MAX_BINARY_FILE_BYTES: u64 = 10 * 1024 * 1024;
 /// Skip files larger than this during workspace search (per-file cap).
 const MAX_SEARCH_FILE_BYTES: u64 = 256 * 1024;
 /// Cap total search matches returned to the UI.
@@ -563,6 +565,45 @@ pub fn read_file(root: String, path: String) -> Result<String, String> {
   }
   let bytes = std::fs::read(&full).map_err(|e| e.to_string())?;
   String::from_utf8(bytes).map_err(|_| format!("not a UTF-8 text file: {path}"))
+}
+
+/// Encode bytes as base64 (RFC 4648, standard alphabet, with padding).
+/// Hand-rolled to avoid adding a crate dependency just for image previews.
+fn base64_encode(bytes: &[u8]) -> String {
+  const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+  for chunk in bytes.chunks(3) {
+    let n = ((chunk[0] as u32) << 16)
+      | ((*chunk.get(1).unwrap_or(&0) as u32) << 8)
+      | (*chunk.get(2).unwrap_or(&0) as u32);
+    out.push(ALPHABET[((n >> 18) & 63) as usize] as char);
+    out.push(ALPHABET[((n >> 12) & 63) as usize] as char);
+    out.push(if chunk.len() > 1 {
+      ALPHABET[((n >> 6) & 63) as usize] as char
+    } else {
+      '='
+    });
+    out.push(if chunk.len() > 2 {
+      ALPHABET[(n & 63) as usize] as char
+    } else {
+      '='
+    });
+  }
+  out
+}
+
+/// Read a workspace file as base64, for binary previews (images) that the
+/// text-only `read_file` rejects. Same `resolve_inside` path guard, with its
+/// own 10 MiB size cap.
+#[tauri::command]
+pub fn read_file_binary(root: String, path: String) -> Result<String, String> {
+  let full = resolve_inside(&root, &path)?;
+  let meta = std::fs::metadata(&full).map_err(|e| e.to_string())?;
+  if meta.len() > MAX_BINARY_FILE_BYTES {
+    return Err(format!("file too large ({} bytes)", meta.len()));
+  }
+  let bytes = std::fs::read(&full).map_err(|e| e.to_string())?;
+  Ok(base64_encode(&bytes))
 }
 
 /// Read a 1-based inclusive line range (composer snippets).
@@ -1396,6 +1437,55 @@ mod tests {
     .unwrap();
     assert_eq!(fs::read_to_string(dir.join("win.txt")).unwrap(), "a x\r\nb x\r\n");
     assert_eq!(fs::read_to_string(dir.join("skip.md")).unwrap(), "needle\n");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn base64_encode_known_vectors() {
+    assert_eq!(base64_encode(b""), "");
+    assert_eq!(base64_encode(b"f"), "Zg==");
+    assert_eq!(base64_encode(b"fo"), "Zm8=");
+    assert_eq!(base64_encode(b"foo"), "Zm9v");
+    assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+    // Non-UTF-8 bytes round-trip through the encoder.
+    assert_eq!(base64_encode(&[0xff, 0xfe, 0xfd]), "//79");
+    // PNG magic header.
+    assert_eq!(
+      base64_encode(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      "iVBORw0KGgo="
+    );
+  }
+
+  #[test]
+  fn read_file_binary_reads_non_utf8_and_guards() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::write(dir.join("pic.png"), [0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe].to_vec()).unwrap();
+
+    // Binary content that read_file rejects comes back as base64 here.
+    assert!(read_file(root.clone(), "pic.png".into()).is_err());
+    assert_eq!(
+      read_file_binary(root.clone(), "pic.png".into()).unwrap(),
+      "iVBOR//+"
+    );
+
+    // Path escape is rejected.
+    assert!(read_file_binary(root
+      .clone(), "../nope.png".into())
+    .is_err());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn read_file_binary_rejects_oversized_file() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    // Sparse file just over the cap — no need to write 10 MiB of data.
+    let f = fs::File::create(dir.join("huge.png")).unwrap();
+    f.set_len(MAX_BINARY_FILE_BYTES + 1).unwrap();
+
+    let err = read_file_binary(root, "huge.png".into()).unwrap_err();
+    assert!(err.contains("file too large"), "unexpected error: {err}");
     fs::remove_dir_all(&dir).ok();
   }
 
