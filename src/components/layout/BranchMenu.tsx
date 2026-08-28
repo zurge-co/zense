@@ -5,6 +5,7 @@ import { useGitStore } from "../../store/gitStore";
 import { useUIStore } from "../../store/uiStore";
 import {
   gitCheckoutBranch,
+  gitCheckoutRemoteBranch,
   gitCreateBranch,
   gitFetch,
   gitListBranches,
@@ -89,11 +90,14 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
       return r;
     });
 
-  const doCheckout = (name: string) => {
+  const doCheckout = (b: GitBranchEntry) => {
     if (busy || !root) return;
-    setBusy(`switch:${name}`);
+    setBusy(`switch:${b.name}`);
     setFeedback(null);
-    gitCheckoutBranch(root, name).then(
+    // Remote entries get the CLI dwim behavior: existing local → switch,
+    // otherwise create a tracking branch from the server copy and switch.
+    const op = b.isRemote ? gitCheckoutRemoteBranch(root, b.name) : gitCheckoutBranch(root, b.name);
+    op.then(
       () => {
         refreshGit();
         onClose();
@@ -177,12 +181,17 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
             <button
               key={b.name}
               disabled={b.isHead || busy !== null}
-              onClick={() => doCheckout(b.name)}
+              onClick={() => doCheckout(b)}
+              title={
+                b.isRemote
+                  ? "Only exists on the server — clicking creates your own local copy and switches to it"
+                  : undefined
+              }
               className={`flex w-full items-center gap-2 px-3 py-1 text-left text-[12.5px] transition-colors ${
                 b.isHead ? "cursor-default text-accent" : "text-fg hover:bg-hover disabled:opacity-50"
               }`}
             >
-              <span className="flex w-3.5 justify-center">
+              <span className="flex w-3.5 shrink-0 justify-center">
                 {b.isHead ? (
                   <Check size={11} />
                 ) : busy === `switch:${b.name}` ? (
@@ -190,6 +199,11 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
                 ) : null}
               </span>
               <span className="truncate">{b.name}</span>
+              {b.isRemote && (
+                <span className="ml-auto shrink-0 rounded border border-border px-1 text-[9px] uppercase tracking-wide text-fg-muted">
+                  server
+                </span>
+              )}
             </button>
           ))}
         </div>

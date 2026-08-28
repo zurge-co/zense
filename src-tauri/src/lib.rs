@@ -173,6 +173,7 @@ pub fn run() {
       gitcmd::git_diff_commit_file,
       gitcmd::git_list_branches,
       gitcmd::git_checkout_branch,
+      gitcmd::git_checkout_remote_branch,
       gitcmd::git_create_branch,
       gitcmd::git_fetch,
       gitcmd::git_pull,

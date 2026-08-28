@@ -131,7 +131,7 @@
 - [x] Tauri v2 scaffold + cargo check ผ่าน
 - [x] Tauri commands: fs (`list_files`, `read_file_tree`, `read_file`, `read_file_range`, `write_file`, `rename_file`, `delete_file` — กัน path traversal, มี unit test)
 - [x] Tauri commands: git (`git_status`, `git_branch_info`, `git_diff_summary`, `git_diff_file`, `git_stage`, `git_unstage`, `git_commit`, `git_log`, `git_show`, `git_diff_commits` — git2, มี unit test)
-- [x] Branch menu ใน StatusBar (junior-friendly): fetch / pull / switch branch / new branch — `git_list_branches`, `git_checkout_branch`, `git_create_branch` (git2, safe checkout) + `git_fetch`, `git_pull` (git CLI, friendly errors) + `BranchMenu.tsx`
+- [x] Branch menu ใน StatusBar (junior-friendly): fetch / pull / switch branch / new branch — `git_list_branches`, `git_checkout_branch`, `git_create_branch` (git2, safe checkout) + `git_fetch`, `git_pull` (git CLI, friendly errors) + `BranchMenu.tsx` (รวม remote-tracking branch checkout: `git_checkout_remote_branch` — เลือก origin/x แล้วสร้าง local tracking branch ให้อัตโนมัติ)
 - [x] UI components กลาง: `ContextMenu` + `ConfirmDialog` (reusable)
 - [ ] จำขนาดหน้าจอล่าสุดก่อนจะปิด (persist window size/position ผ่าน plugin-store หรือ tauri-plugin-window-state)
 - [ ] CLI entry: `zense .`, `zense --profile backend` (ตาม README)
