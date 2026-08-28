@@ -149,6 +149,7 @@ pub fn run() {
       fscmd::list_files,
       fscmd::read_file_tree,
       fscmd::read_file,
+      fscmd::read_file_binary,
       fscmd::read_file_range,
       fscmd::write_file,
       fscmd::search_files,

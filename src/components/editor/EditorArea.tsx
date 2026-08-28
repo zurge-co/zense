@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { X, File, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle, RotateCcw } from "lucide-react";
+import { X, File, FileImage, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle, RotateCcw } from "lucide-react";
 import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { detectLanguage } from "../../lib/lang";
+import { isImagePath } from "../../lib/image";
 import { CodeEditor } from "./CodeEditor";
+import { ImageViewer } from "./ImageViewer";
 import { PathBreadcrumb } from "./PathBreadcrumb";
 import { DiffView } from "./DiffView";
 import { CommitDetail } from "./CommitDetail";
@@ -151,6 +153,8 @@ export function EditorArea() {
                 <GitCompareArrows size={13} className={active ? "text-accent" : "text-fg-muted"} />
               ) : tab.kind === "commit" ? (
                 <GitCommitHorizontal size={13} className={active ? "text-accent" : "text-fg-muted"} />
+              ) : tab.kind === "file" && isImagePath(tab.path) ? (
+                <FileImage size={13} className={active ? "text-accent" : "text-fg-muted"} />
               ) : (
                 <File size={13} className={active ? "text-accent" : "text-fg-muted"} />
               )}
@@ -272,14 +276,34 @@ function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: b
   const conflicts = useWorkspaceStore((s) => s.conflicts);
 
   const path = tab.kind === "file" ? tab.path : null;
+  const isImage = path !== null && isImagePath(path);
   useEffect(() => {
-    if (path && workspacePath) void loadFile(workspacePath, path);
-  }, [path, workspacePath, loadFile]);
+    // Image files render via ImageViewer (binary fetch) — never through the
+    // text-only loadFile/read_file path, which rejects non-UTF-8 bytes.
+    if (path && workspacePath && !isImage) void loadFile(workspacePath, path);
+  }, [path, workspacePath, loadFile, isImage]);
 
   const content = path ? fileContents[path] : undefined;
   const loadError = path ? fileErrors[path] : undefined;
   const conflict = path ? conflicts[path] : undefined;
 
+  if (path && isImage) {
+    if (!workspacePath) {
+      return (
+        <div className="flex flex-1 items-center justify-center text-[12px] text-fg-muted">
+          Image preview requires the desktop app.
+        </div>
+      );
+    }
+    return (
+      <>
+        {showBreadcrumb && <PathBreadcrumb path={path} />}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <ImageViewer root={workspacePath} path={path} />
+        </div>
+      </>
+    );
+  }
   if (tab.kind === "diff" || tab.kind === "commitDiff") return <DiffView tab={tab} />;
   if (tab.kind === "commit") return <CommitDetail sha={tab.path} />;
   if (tab.kind === "compare") {
