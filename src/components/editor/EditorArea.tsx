@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { X, File, FileImage, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle, RotateCcw } from "lucide-react";
+import { X, File, FileImage, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle, RotateCcw, Eye } from "lucide-react";
 import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { detectLanguage } from "../../lib/lang";
 import { isImagePath } from "../../lib/image";
 import { CodeEditor } from "./CodeEditor";
 import { ImageViewer } from "./ImageViewer";
+import { PreviewView } from "./PreviewView";
 import { PathBreadcrumb } from "./PathBreadcrumb";
 import { DiffView } from "./DiffView";
 import { CommitDetail } from "./CommitDetail";
@@ -153,6 +154,8 @@ export function EditorArea() {
                 <GitCompareArrows size={13} className={active ? "text-accent" : "text-fg-muted"} />
               ) : tab.kind === "commit" ? (
                 <GitCommitHorizontal size={13} className={active ? "text-accent" : "text-fg-muted"} />
+              ) : tab.kind === "preview" ? (
+                <Eye size={13} className={active ? "text-accent" : "text-fg-muted"} />
               ) : tab.kind === "file" && isImagePath(tab.path) ? (
                 <FileImage size={13} className={active ? "text-accent" : "text-fg-muted"} />
               ) : (
@@ -300,6 +303,23 @@ function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: b
         {showBreadcrumb && <PathBreadcrumb path={path} />}
         <div className="flex min-h-0 flex-1 flex-col">
           <ImageViewer root={workspacePath} path={path} />
+        </div>
+      </>
+    );
+  }
+  if (tab.kind === "preview") {
+    if (!workspacePath) {
+      return (
+        <div className="flex flex-1 items-center justify-center text-[12px] text-fg-muted">
+          File preview requires the desktop app.
+        </div>
+      );
+    }
+    return (
+      <>
+        {showBreadcrumb && <PathBreadcrumb path={tab.path} />}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <PreviewView root={workspacePath} path={tab.path} />
         </div>
       </>
     );

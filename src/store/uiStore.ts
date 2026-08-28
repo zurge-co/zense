@@ -13,9 +13,11 @@ export type DiffMode = "split" | "inline";
  * - `commitDiff` — file diff between commits (`path` = file path,
  *   `toSha` = commit, `fromSha` = explicit base or null → first parent)
  * - `compare` — compare view between two commits (`path` = "from..to")
+ * - `preview` — read-only rendered preview of a doc file (svg/md/html),
+ *   opened via the file tree's right-click "Open Preview"
  */
 export interface EditorTab {
-  kind: "file" | "diff" | "commit" | "commitDiff" | "compare";
+  kind: "file" | "diff" | "commit" | "commitDiff" | "compare" | "preview";
   path: string;
   fromSha?: string | null;
   toSha?: string;
@@ -83,6 +85,7 @@ interface UIState {
   openCommit: (sha: string) => void;
   openCompare: (fromSha: string, toSha: string) => void;
   openCommitFileDiff: (path: string, toSha: string, fromSha?: string | null) => void;
+  openPreview: (path: string) => void;
   setHistoryCompareBase: (sha: string | null) => void;
   closeTab: (key: string) => void;
   closeOtherTabs: (key: string) => void;
@@ -188,6 +191,15 @@ export const useUIStore = create<UIState>((set) => ({
     set((s) => ({
       activeTabKey: key,
       historyCompareBase: null,
+      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
+    }));
+  },
+  openPreview: (path) => {
+    const tab: EditorTab = { kind: "preview", path };
+    const key = tabKey(tab);
+    set((s) => ({
+      selectedFile: path,
+      activeTabKey: key,
       openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
     }));
   },
