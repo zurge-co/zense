@@ -11,11 +11,13 @@ import {
   Trash2,
   Copy,
   ClipboardPaste,
+  Eye,
   Files,
   RefreshCw,
 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { type FileNode } from "../../lib/mockData";
+import { isPreviewablePath } from "../../lib/preview";
 import { isTauri } from "../../lib/workspace";
 import { useUIStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
@@ -393,7 +395,7 @@ function TreeNode({
   onEndTreeDrag: () => void;
 }) {
   const open = node.type === "folder" && expandedPaths.has(node.path);
-  const { selectedFile, openFile, workspacePath } = useUIStore();
+  const { selectedFile, openFile, openPreview, workspacePath } = useUIStore();
   const { createEntry, renameEntry, deleteEntry, setSelectedTreeNode, copyNode, pasteNode, duplicateNode, setPendingRename, setPendingDelete } = useWorkspaceStore();
   const clipboard = useWorkspaceStore((s) => s.clipboard);
   const selectedTreeNode = useWorkspaceStore((s) => s.selectedTreeNode);
@@ -446,6 +448,18 @@ function TreeNode({
 
   const menuItems: ContextMenuItem[] = menu
     ? [
+        // Doc preview (svg/md/html) — left-click still opens the source in
+        // Monaco; this is opt-in per file via right-click.
+        ...(menu.node.type === "file" && isPreviewablePath(menu.node.path)
+          ? [
+              {
+                id: "open-preview",
+                label: "Open Preview",
+                icon: Eye,
+                onClick: () => openPreview(menu.node.path),
+              } satisfies ContextMenuItem,
+            ]
+          : []),
         { id: "new-file", label: "New File", icon: FilePlus, onClick: () => startCreate(false) },
         { id: "new-folder", label: "New Folder", icon: FolderPlus, onClick: () => startCreate(true) },
         { id: "copy", label: "Copy", icon: Copy, onClick: () => { copyNode(node.path, node.type); setSelectedTreeNode({ path: node.path, type: node.type }); } },
