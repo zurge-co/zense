@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type Activity = "review" | "history" | "editor" | "search" | "terminal";
+export type Activity = "review" | "history" | "editor" | "focus" | "search" | "terminal";
 export type Screen = "welcome" | "workspace";
 export type SettingsSection = "general" | "appearance" | "llm" | "shortcuts";
 export type DiffMode = "split" | "inline";

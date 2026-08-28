@@ -152,6 +152,8 @@ pub fn run() {
       fscmd::read_file_binary,
       fscmd::read_file_range,
       fscmd::write_file,
+      fscmd::append_file,
+      fscmd::write_file_atomic,
       fscmd::search_files,
       fscmd::replace_in_files,
       fscmd::create_dir,

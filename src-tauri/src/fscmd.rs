@@ -638,6 +638,50 @@ pub fn write_file(root: String, path: String, content: String) -> Result<(), Str
   Ok(())
 }
 
+/// Append content to a workspace file, creating it and parent directories if
+/// missing. Same write guard as `write_file`. Used by the focus journal
+/// (.zense/focus.log/…) so appends don't round-trip the whole file.
+#[tauri::command]
+pub fn append_file(root: String, path: String, content: String) -> Result<(), String> {
+  let full = resolve_for_write(&root, &path)?;
+  if let Some(parent) = full.parent() {
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  use std::io::Write;
+  let mut file = std::fs::OpenOptions::new()
+    .create(true)
+    .append(true)
+    .open(&full)
+    .map_err(|e| e.to_string())?;
+  file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Atomic write: write to a sibling temp file, then rename over the target.
+/// `rename` replaces an existing destination on the same filesystem, so the
+/// target is never observed half-written (a crash mid-write leaves only the
+/// temp file). Same write guard as `write_file`. Used for the focus snapshot
+/// (.zense/focus.json), the source of truth on load.
+#[tauri::command]
+pub fn write_file_atomic(root: String, path: String, content: String) -> Result<(), String> {
+  let full = resolve_for_write(&root, &path)?;
+  if let Some(parent) = full.parent() {
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  let mut tmp_name = full
+    .file_name()
+    .ok_or_else(|| format!("invalid path: {path}"))?
+    .to_os_string();
+  tmp_name.push(".tmp");
+  let tmp = full.with_file_name(tmp_name);
+  std::fs::write(&tmp, content).map_err(|e| e.to_string())?;
+  if let Err(e) = std::fs::rename(&tmp, &full) {
+    std::fs::remove_file(&tmp).ok();
+    return Err(e.to_string());
+  }
+  Ok(())
+}
+
 /// Create a directory (including parents) inside the workspace. No-op if it
 /// already exists. Rejects path escapes.
 #[tauri::command]
@@ -1546,6 +1590,50 @@ mod tests {
       read_file(root.clone(), "existing.txt".into()).unwrap(),
       "new content\n"
     );
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn append_file_creates_and_appends() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    append_file(root.clone(), ".zense/focus.log/2026-08.jsonl".into(), "l1\n".into()).unwrap();
+    append_file(root.clone(), ".zense/focus.log/2026-08.jsonl".into(), "l2\n".into()).unwrap();
+    assert_eq!(
+      read_file(root, ".zense/focus.log/2026-08.jsonl".into()).unwrap(),
+      "l1\nl2\n"
+    );
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn append_file_rejects_traversal() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    assert!(append_file(root, "../../etc/zense-test-append".into(), "x".into()).is_err());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn write_file_atomic_overwrites_and_cleans_tmp() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    write_file_atomic(root.clone(), ".zense/focus.json".into(), "{}\n".into()).unwrap();
+    write_file_atomic(root.clone(), ".zense/focus.json".into(), "{\"v\":1}\n".into()).unwrap();
+    assert_eq!(
+      read_file(root, ".zense/focus.json".into()).unwrap(),
+      "{\"v\":1}\n"
+    );
+    // temp file must be gone after a successful rename
+    assert!(!dir.join(".zense/focus.json.tmp").exists());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn write_file_atomic_rejects_traversal() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    assert!(write_file_atomic(root, "../../etc/zense-test-atomic".into(), "x".into()).is_err());
     fs::remove_dir_all(&dir).ok();
   }
 

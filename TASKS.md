@@ -84,6 +84,20 @@
 - [x] Compare commits (tab `{kind:"compare"}` + `{kind:"commitDiff"}` reuse Monaco DiffView)
 - [ ] Compare branches (ยังไม่มี branch picker)
 
+## ⏱ Focus Timer (time tracking per task)
+
+- [x] Data model: snapshot `.zense/focus.json` (schema v:1, atomic write) + journal `.zense/focus.log/YYYY-MM.jsonl` รายเดือน — ใช้ร่วมกับ pi-zense (agent อ่านตอบ “งาน A ใช้เวลาเท่าไหร่” ได้)
+- [x] focusStore: create / start / pause / resume / done + persist ทุก mutation (journal append O(1) + snapshot rewrite แบบไม่บล็อก UI)
+- [x] Invariant: active timer ≤1 — start งานใหม่ auto-pause งานเดิม (reason `auto-switch`)
+- [x] Idle auto-pause (app-level: keyboard/mouse activity, threshold 5 นาที) — pause ย้อนที่ lastActivity ไม่นับเวลา idle + banner Resume/Finish
+- [x] Focus panel ใน sidebar (ActivityBar ⏱) + StatusBar แสดง elapsed ขณะ timer วิ่ง
+- [x] Survive restart (timer วิ่งต่อจาก timestamp) + reload เมื่อไฟล์ถูกแก้จากภายนอก (fs watcher) + corrupt snapshot rebuild จาก journal
+- [x] Rust: `append_file` + `write_file_atomic` commands (path-guarded) พร้อม tests
+- [ ] Idle threshold ปรับได้ใน Settings
+- [ ] auto-link branch ตอน start + เวลาต่อ commit
+- [ ] Report รายวัน/สัปดาห์ (อ่านจาก journal)
+- [ ] pi-zense จับเวลาแต่ละ phase ของ spec run อัตโนมัติ
+
 ## ⚙️ Settings
 
 - [x] Modal + sections: General / Appearance / Shortcuts (read-only reference)

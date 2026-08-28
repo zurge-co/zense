@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { GitBranch, CircleX, TriangleAlert, SquareTerminal } from "lucide-react";
+import { GitBranch, CircleX, TriangleAlert, SquareTerminal, Timer, Hourglass } from "lucide-react";
 import { BranchMenu } from "./BranchMenu";
 import { useUIStore, tabKey } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
+import { useFocusStore } from "../../store/focusStore";
+import { formatDuration, totalMs } from "../../lib/focus";
 import { detectLanguage } from "../../lib/lang";
 import { TAB_SIZE } from "../editor/CodeEditor";
 
@@ -31,6 +33,11 @@ export function StatusBar() {
   const branchLabel = branchInfo.detached ? "detached HEAD" : (branchInfo.branch ?? "main");
   const dirty = status.files.length > 0;
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const focusNow = useFocusStore((s) => s.now);
+  const focusActive = useFocusStore((s) => s.tasks.find((t) => t.status === "active"));
+  const focusIdle = useFocusStore((s) =>
+    s.idlePendingTaskId ? s.tasks.find((t) => t.id === s.idlePendingTaskId) : undefined,
+  );
 
   return (
     <div className="flex h-6 shrink-0 items-center justify-between border-t border-border bg-panel px-3 text-[11px] text-fg-muted">
@@ -43,6 +50,26 @@ export function StatusBar() {
           >
             <GitBranch size={11} />
             {branchLabel}{dirty ? "*" : ""}{branchInfo.ahead > 0 && ` ↑${branchInfo.ahead}`}{branchInfo.behind > 0 && ` ↓${branchInfo.behind}`}
+          </button>
+        )}
+        {focusActive && (
+          <button
+            title="Focus timer — open Focus panel"
+            onClick={() => useUIStore.getState().setActivity("focus")}
+            className="flex items-center gap-1 text-accent hover:text-fg"
+          >
+            <Timer size={11} />
+            {focusActive.title} · {formatDuration(totalMs(focusActive, focusNow))}
+          </button>
+        )}
+        {focusIdle && (
+          <button
+            title="Timer paused (idle) — open Focus panel to resume or finish"
+            onClick={() => useUIStore.getState().setActivity("focus")}
+            className="flex items-center gap-1 text-yellow hover:text-fg"
+          >
+            <Hourglass size={11} />
+            {focusIdle.title} · idle
           </button>
         )}
         <span className="flex items-center gap-1 hover:text-fg">
