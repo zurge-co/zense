@@ -318,6 +318,9 @@ export const shortcutGroups: { title: string; items: { keys: string; action: str
       { keys: "⌘B", action: "Toggle sidebar" },
       { keys: "⌘J", action: "Toggle terminal" },
       { keys: "⌘⇧C", action: "Toggle AI chat" },
+      { keys: "⌘+", action: "Zoom UI in" },
+      { keys: "⌘−", action: "Zoom UI out" },
+      { keys: "⌘0", action: "Reset UI zoom to 100%" },
     ],
   },
   {

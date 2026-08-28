@@ -4,7 +4,7 @@ import { useUIStore, type SettingsSection } from "../../store/uiStore";
 import { shortcutGroups } from "../../lib/mockData";
 import { useChatStore } from "../../store/chatStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { applyAutoSave, applyEditorFontSize, applyShowHiddenFiles } from "../../lib/settings";
+import { applyAutoSave, applyEditorFontSize, applyShowHiddenFiles, applyUiZoom } from "../../lib/settings";
 import type { LlmConfig, EnabledTools, AgentGuards } from "../../lib/llm";
 import { DEFAULT_ENABLED_TOOLS, DEFAULT_GUARDS, llmTestConnection } from "../../lib/llm";
 
@@ -120,9 +120,11 @@ function GeneralSection() {
 }
 
 const FONT_SIZES = [11, 12, 12.5, 13, 14, 15, 16, 18];
+const UI_ZOOMS = [70, 80, 90, 100, 110, 120, 130, 150, 175, 200];
 
 function AppearanceSection() {
   const editorFontSize = useWorkspaceStore((s) => s.editorFontSize);
+  const uiZoom = useWorkspaceStore((s) => s.uiZoom);
   return (
     <div>
       <Row label="Theme" hint="More themes coming soon">
@@ -140,6 +142,19 @@ function AppearanceSection() {
           {FONT_SIZES.map((s) => (
             <option key={s} value={s}>
               {s}
+            </option>
+          ))}
+        </select>
+      </Row>
+      <Row label="UI zoom" hint="Zoom the whole window (⌘+ / ⌘−, ⌘0 resets to 100%)">
+        <select
+          value={uiZoom}
+          onChange={(e) => void applyUiZoom(Number(e.target.value))}
+          className="rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none"
+        >
+          {UI_ZOOMS.map((z) => (
+            <option key={z} value={z}>
+              {z}%
             </option>
           ))}
         </select>

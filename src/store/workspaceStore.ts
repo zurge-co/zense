@@ -36,6 +36,8 @@ interface WorkspaceFsState {
   showHiddenFiles: boolean;
   /** Editor + diff-view font size in px (Settings > Appearance). */
   editorFontSize: number;
+  /** Whole-UI zoom in percent, 50–200 (Settings > Appearance, ⌘+/⌘−/⌘0). */
+  uiZoom: number;
   /** Currently focused tree node (file or folder) for keyboard shortcuts. */
   selectedTreeNode: { path: string; type: "file" | "folder" } | null;
   /** In-memory clipboard for copy/paste (path + type). */
@@ -96,6 +98,7 @@ interface WorkspaceFsState {
   setAutoSave: (v: boolean) => void;
   setShowHiddenFiles: (v: boolean) => void;
   setEditorFontSize: (v: number) => void;
+  setUiZoom: (v: number) => void;
   /** Subscribe to fs://changed watcher events for `root` (idempotent). */
   initWatcher: (root: string) => void;
 }
@@ -122,6 +125,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   autoSave: false,
   showHiddenFiles: true,
   editorFontSize: 12.5,
+  uiZoom: 100,
 
   loadWorkspace: async (root) => {
     if (!isTauri()) return; // browser dev keeps the mock workspace
@@ -250,6 +254,8 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   setShowHiddenFiles: (v) => set({ showHiddenFiles: v }),
 
   setEditorFontSize: (v) => set({ editorFontSize: v }),
+
+  setUiZoom: (v) => set({ uiZoom: v }),
 
   initWatcher: (root) => {
     if (!isTauri() || watcherRoot === root) return;

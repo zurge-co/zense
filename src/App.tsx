@@ -6,7 +6,7 @@ import { useUIStore, tabKey } from "./store/uiStore";
 import { useTerminalStore } from "./store/terminalStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
 import { isTauri, openFolderFlow } from "./lib/workspace";
-import { loadUiPrefs } from "./lib/settings";
+import { adjustUiZoom, applyUiZoom, loadUiPrefs, UI_ZOOM_STEP } from "./lib/settings";
 import { TitleBar } from "./components/layout/TitleBar";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
@@ -31,6 +31,7 @@ export default function App() {
   // Mounted at the root so the close guard works on the welcome screen too.
   const closeGuardDialog = useCloseRequestGuard();
   useUiPrefs();
+  useUiZoom();
 
   return (
     <>
@@ -137,6 +138,16 @@ function useUiPrefs() {
     if (!isTauri()) return;
     void loadUiPrefs();
   }, []);
+}
+
+/** Mirror the persisted UI zoom (Settings > Appearance) onto the whole
+ *  document. CSS zoom scales layout (panels, menus, editor chrome) — not
+ *  just text — and the terminal/editor ResizeObservers refit themselves. */
+function useUiZoom() {
+  const uiZoom = useWorkspaceStore((s) => s.uiZoom);
+  useEffect(() => {
+    document.documentElement.style.zoom = String(uiZoom / 100);
+  }, [uiZoom]);
 }
 
 /**
@@ -335,7 +346,17 @@ function useKeyboardShortcuts() {
 
       // ── Modifier-based shortcuts (⌘X / Ctrl+X) ────────────────────────
       if (mod) {
-        if (e.key === "s") {
+        if (e.key === "=" || e.key === "+") {
+          // ⌘/Ctrl+= (same physical key as +) → zoom the whole UI in
+          e.preventDefault();
+          adjustUiZoom(UI_ZOOM_STEP);
+        } else if (e.key === "-") {
+          e.preventDefault();
+          adjustUiZoom(-UI_ZOOM_STEP);
+        } else if (e.key === "0") {
+          e.preventDefault();
+          void applyUiZoom(100);
+        } else if (e.key === "s") {
           e.preventDefault();
           saveActiveTab();
         } else if (e.key === "n" && !e.shiftKey) {

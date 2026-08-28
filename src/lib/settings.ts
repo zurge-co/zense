@@ -19,6 +19,12 @@ const PREFS_FILE = "ui-prefs.json";
 const KEY_AUTO_SAVE = "autoSave";
 const KEY_SHOW_HIDDEN_FILES = "showHiddenFiles";
 const KEY_EDITOR_FONT_SIZE = "editorFontSize";
+const KEY_UI_ZOOM = "uiZoom";
+
+/** UI zoom bounds / keyboard step (percent). */
+export const UI_ZOOM_MIN = 50;
+export const UI_ZOOM_MAX = 200;
+export const UI_ZOOM_STEP = 10;
 
 /**
  * Load persisted UI prefs (currently: auto-save) into the stores.
@@ -35,6 +41,10 @@ export async function loadUiPrefs(): Promise<void> {
     useWorkspaceStore.getState().setShowHiddenFiles(showHiddenFiles ?? true);
     if (typeof editorFontSize === "number" && editorFontSize > 0) {
       useWorkspaceStore.getState().setEditorFontSize(editorFontSize);
+    }
+    const uiZoom = await store.get<number>(KEY_UI_ZOOM);
+    if (typeof uiZoom === "number" && uiZoom >= UI_ZOOM_MIN && uiZoom <= UI_ZOOM_MAX) {
+      useWorkspaceStore.getState().setUiZoom(uiZoom);
     }
 
     // Settings may load after a workspace is already open; bring the current
@@ -70,6 +80,26 @@ export async function applyEditorFontSize(v: number): Promise<void> {
   } catch (err) {
     console.error("applyEditorFontSize failed:", err);
   }
+}
+
+/** Set the whole-UI zoom (percent) and persist it. */
+export async function applyUiZoom(v: number): Promise<void> {
+  const clamped = Math.min(UI_ZOOM_MAX, Math.max(UI_ZOOM_MIN, Math.round(v)));
+  useWorkspaceStore.getState().setUiZoom(clamped);
+  if (!isTauri()) return;
+  try {
+    const store = await load(PREFS_FILE);
+    await store.set(KEY_UI_ZOOM, clamped);
+    await store.save();
+  } catch (err) {
+    console.error("applyUiZoom failed:", err);
+  }
+}
+
+/** Nudge the UI zoom by delta percent (used by ⌘+ / ⌘− / ⌘0 shortcuts). */
+export function adjustUiZoom(delta: number): void {
+  const cur = useWorkspaceStore.getState().uiZoom;
+  void applyUiZoom(cur + delta);
 }
 
 /** Set hidden-file visibility, persist it, and refresh the current tree/index. */
