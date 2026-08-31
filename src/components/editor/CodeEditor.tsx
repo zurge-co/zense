@@ -1,7 +1,10 @@
+import { useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
 import { defineTheme } from "./monacoSetup";
 import { setupKeybindings } from "./monacoKeybindings";
+import { writeClipboardText } from "../../lib/clipboard";
 import { setActiveEditor } from "../../lib/editorRef";
+import { formatReference, selectionLines } from "../../lib/reference";
 import { useUIStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 
@@ -13,12 +16,22 @@ export function CodeEditor({
   value,
   readOnly = false,
   onChange,
+  path,
 }: {
   language: string;
   value: string;
   readOnly?: boolean;
   onChange?: (value: string) => void;
+  /** Workspace-relative path of the open file (undefined for untitled buffers). */
+  path?: string;
 }) {
+  // The editor instance is shared across tab switches, so the Copy Reference
+  // action must resolve the current path at run time — never from the mount
+  // closure, which would go stale the first time a different file opens.
+  const pathRef = useRef(path);
+  useEffect(() => {
+    pathRef.current = path;
+  }, [path]);
   // Live from Settings > Appearance (workspaceStore is persisted) so the
   // editor re-renders with the new size the moment the user changes it.
   const fontSize = useWorkspaceStore((s) => s.editorFontSize);
@@ -31,6 +44,21 @@ export function CodeEditor({
       onMount={(editor, monaco) => {
         setActiveEditor(editor);
         setupKeybindings(editor, monaco);
+        // Context menu: "Copy Reference" copies `path:line` (or
+        // `path:start-end` for multi-line selections) for AI chat pasting.
+        editor.addAction({
+          id: "zense.copyReference",
+          label: "Copy Reference",
+          contextMenuGroupId: "zense",
+          contextMenuOrder: 0,
+          run: (ed) => {
+            const p = pathRef.current;
+            const sel = ed.getSelection();
+            if (!p || !sel) return;
+            const { start, end } = selectionLines(sel);
+            void writeClipboardText(formatReference(p, start, end));
+          },
+        });
         // Live cursor position for the StatusBar.
         const seed = editor.getPosition();
         if (seed) {

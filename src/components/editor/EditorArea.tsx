@@ -400,6 +400,7 @@ function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: b
           <CodeEditor
             language={tab.kind === "untitled" ? "plaintext" : detectLanguage(path)}
             value={content}
+            path={tab.kind === "file" ? path : undefined}
             onChange={(value) => markDirty(path, value)}
           />
         </div>
