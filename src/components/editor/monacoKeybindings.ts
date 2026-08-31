@@ -1,6 +1,7 @@
 import type * as monaco from "monaco-editor";
 import { KeyCode, KeyMod } from "monaco-editor";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
+import { openUntitledTab } from "../../lib/untitled";
 
 type IStandaloneCodeEditor = monaco.editor.IStandaloneCodeEditor;
 
@@ -119,6 +120,21 @@ export function setupKeybindings(
           text,
         })));
       }
+    },
+  });
+
+  // App shortcut: ⌘/Ctrl+T. Monaco doesn't bind this itself, but any
+  // unbound key first hits Monaco's textarea before the window-level
+  // handler in App.tsx runs (bubbling) — having it as a first-class
+  // action keeps the shortcut working when the editor is focused and
+  // reserves the slot against Monaco adding a default ("Go to Symbol")
+  // in future versions. Behavior matches App.tsx (new untitled tab).
+  editor.addAction({
+    id: "zense.newUntitledTab",
+    label: "New Untitled Tab",
+    keybindings: [KM.CtrlCmd | KC.KeyT],
+    run: () => {
+      openUntitledTab();
     },
   });
 

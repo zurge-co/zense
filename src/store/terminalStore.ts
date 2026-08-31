@@ -4,8 +4,9 @@ export type TermStatus = "idle" | "running" | "exited";
 
 /**
  * One terminal tab. `id` is stable for the tab's lifetime (the backend PTY
- * session id under it may change on restart); `title` is the human-facing
- * label ("Terminal N") and the number is never reused.
+ * session id under it may change on restart); `title` starts as "Terminal N"
+ * (the number is never reused) and is replaced by the FIRST typed command
+ * once the user runs one (see lib/terminalTitle.ts).
  */
 export interface TermSession {
   id: string;
@@ -43,6 +44,8 @@ interface TerminalState {
   removeSession: (id: string) => void;
   setActiveId: (id: string) => void;
   setStatus: (id: string, s: TermStatus) => void;
+  /** Rename a session tab (first typed command replaces "Terminal N"). */
+  setTitle: (id: string, title: string) => void;
   /** Replace everything with a single fresh session (workspace switch). */
   reset: () => void;
   requestFit: () => void;
@@ -74,6 +77,10 @@ export const useTerminalStore = create<TerminalState>((set) => ({
   setStatus: (id, status) =>
     set((s) => ({
       sessions: s.sessions.map((t) => (t.id === id ? { ...t, status } : t)),
+    })),
+  setTitle: (id, title) =>
+    set((s) => ({
+      sessions: s.sessions.map((t) => (t.id === id ? { ...t, title } : t)),
     })),
   reset: () => {
     const session = newSession();

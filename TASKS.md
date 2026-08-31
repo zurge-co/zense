@@ -69,6 +69,7 @@
 - [x] Tabs: เปิด/ปิด/สลับ + context menu (Close / Close Others / Close All + unsaved confirm)
 - [x] Breadcrumb
 - [x] Editable mode + save (⌘S)
+- [x] Untitled tab (Ctrl+T in editor mode): เปิด tab ใหม่พิมพ์ได้เลยโดยไม่ต้องตั้งชื่อ — buffer อยู่ใน memory (pseudo-path untitled:N), dirty-dot + close confirm ทำงานเหมือน file tab; ⌘S เปิด save-as dialog ตั้งชื่อแล้ว promote เป็น file tab จริง (Monaco ⌘T rebind ใน monacoKeybindings)
 - [x] เปิดไฟล์จริง + language detection จาก extension
 - [ ] Split editor (ปุ่มมีแล้ว, ยังไม่ทำงาน)
 - [ ] Diagnostics จริง (LSP หรือ tree-sitter)
@@ -115,7 +116,8 @@
 - [x] เปิด tab/session ใหม้: ปุ่่ม + บน tab bar หรื่้่อ ⌘N / Ctrl+N (context-sensitive — ใน terminal view เปิ่่ม new terminal session, นอกนั้่นเปิ่่ม New File)
 - [x] ปิ่่ม tab/session: ปุ่่ม X บนแต่ละ tab (`pty_kill` ราย session; `pty_kill_all` ตอน unmount / สลับ workspace)
 - [x] Shell ใน tab ที่ไม่ active รันตอในเบื้องหลัง (xterm instance ถููก mount ถอดส, inactive display:none)
-- [x] Restart shell ราย tab (rotate ปุ่่ม) — kill + respawn ใน tab เดิม, title "Terminal N" ไม่เปลื่่ยน
+- [x] Restart shell ราย tab (rotate ปุ่่ม) — kill + respawn ใน tab เดิม, title คงเดิม
+- [x] Tab title จาก command แรก (Ctrl+T / + เปิ่ด session init เป็น "Terminal N"): พิมพ์ command แรก + Enter → title เปลื่่ยนเป็น command นัน้ (truncate 24 ตัวอักษร, lib/terminalTitle.ts — input-side heuristic, backspace/Ctrl+C/escape-aware), command ถัดไปไม่ rename อิก
 - [ ] Persist open terminal sessions / restore หนับ restart app
 
 ## 💬 AI Chat (LLM)

@@ -28,7 +28,12 @@ export function StatusBar() {
   const cursorPos = useUIStore((s) => s.cursorPos);
   const { branchInfo, status } = useGitStore();
   const activeTab = openTabs.find((t) => tabKey(t) === activeTabKey);
-  const langId = activeTab?.kind === "file" ? detectLanguage(activeTab.path) : null;
+  const langId =
+    activeTab?.kind === "file"
+      ? detectLanguage(activeTab.path)
+      : activeTab?.kind === "untitled"
+        ? "plaintext"
+        : null;
   const langLabel = langId ? (LANGUAGE_LABELS[langId] ?? langId) : null;
   const branchLabel = branchInfo.detached ? "detached HEAD" : (branchInfo.branch ?? "main");
   const dirty = status.files.length > 0;

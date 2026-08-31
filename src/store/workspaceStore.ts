@@ -91,6 +91,13 @@ interface WorkspaceFsState {
 
   /** Discard the buffer and reload from disk (also clears conflict). */
   revertFile: (root: string, path: string) => Promise<void>;
+  /**
+   * Promote an untitled buffer after a successful save-as: move its
+   * content cradle to the real path and clear the pseudo-path's dirty flag.
+   */
+  promoteUntitled: (pseudo: string, real: string, content: string) => void;
+  /** Drop the in-memory buffer of a closed untitled tab (no disk write). */
+  dropBuffer: (path: string) => void;
   /** Conflict banner "Keep mine": keep the dirty buffer, clear the flag. */
   keepMine: (path: string) => void;
   /** Save every dirty file. Returns paths that failed to save. */
@@ -174,6 +181,12 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   },
 
   saveFile: async (root, path) => {
+    // Untitled pseudo-paths are in-memory only — they need the save-as
+    // flow (name required), never a silent direct write. Leaving the
+    // dirty flag intact makes saveAllDirty report them as "failed", so
+    // the window close guard keeps blocking until the user names them
+    // or closes without saving.
+    if (path.startsWith("untitled:")) return;
     const content = get().fileContents[path];
     if (content === undefined) return;
     // ADR-003: never silently overwrite a file the watcher flagged as
@@ -360,6 +373,32 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
     return moved;
   },
 
+  promoteUntitled: (pseudo, real, content) =>
+    set((s) => {
+      const fileContents = { ...s.fileContents };
+      const originalContents = { ...s.originalContents };
+      delete fileContents[pseudo];
+      delete originalContents[pseudo];
+      const dirtyPaths = new Set(s.dirtyPaths);
+      dirtyPaths.delete(pseudo);
+      return {
+        fileContents: { ...fileContents, [real]: content },
+        originalContents: { ...originalContents, [real]: content },
+        dirtyPaths,
+      };
+    }),
+
+  dropBuffer: (path) =>
+    set((s) => {
+      const fileContents = { ...s.fileContents };
+      const originalContents = { ...s.originalContents };
+      delete fileContents[path];
+      delete originalContents[path];
+      const dirtyPaths = new Set(s.dirtyPaths);
+      dirtyPaths.delete(path);
+      return { fileContents, originalContents, dirtyPaths };
+    }),
+
   setSelectedTreeNode: (node) => set({ selectedTreeNode: node }),
 
   copyNode: (path, type) => set({ clipboard: { path, type } }),
@@ -398,6 +437,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
 const autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function scheduleAutosave(path: string) {
+  if (path.startsWith("untitled:")) return; // untitled buffers never auto-save
   const st = useWorkspaceStore.getState();
   if (!st.autoSave) return;
   if (!useUIStore.getState().workspacePath) return;
