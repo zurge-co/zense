@@ -13,10 +13,12 @@ import {
   ClipboardPaste,
   Eye,
   Files,
+  Link,
   RefreshCw,
 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { type FileNode } from "../../lib/mockData";
+import { writeClipboardText } from "../../lib/clipboard";
 import { isPreviewablePath } from "../../lib/preview";
 import { isTauri } from "../../lib/workspace";
 import { useUIStore } from "../../store/uiStore";
@@ -464,6 +466,14 @@ function TreeNode({
         { id: "new-folder", label: "New Folder", icon: FolderPlus, onClick: () => startCreate(true) },
         { id: "copy", label: "Copy", icon: Copy, onClick: () => { copyNode(node.path, node.type); setSelectedTreeNode({ path: node.path, type: node.type }); } },
         {
+          id: "copy-reference",
+          label: "Copy Reference",
+          icon: Link,
+          onClick: () => {
+            void writeClipboardText(menu.node.path);
+          },
+        },
+        {
           id: "paste",
           label: "Paste",
           icon: ClipboardPaste,
@@ -527,6 +537,28 @@ function TreeNode({
           )}
           <span className="truncate">{node.name}</span>
         </button>
+        {inline && inline.mode === "rename" && inline.node?.path === node.path && (
+          <InlineInput
+            depth={depth}
+            isDir
+            initialValue={node.name}
+            placeholder="new name"
+            onCancel={() => setInline(null)}
+            onSubmit={async (name) => {
+              if (!workspacePath || !name.trim()) return;
+              const parent = node.path.includes("/") ? node.path.slice(0, node.path.lastIndexOf("/")) : "";
+              const fullPath = parent ? `${parent}/${name}` : name;
+              if (fullPath !== node.path) {
+                try {
+                  await renameEntry(workspacePath, node.path, fullPath);
+                } catch (err) {
+                  console.error("rename failed:", err);
+                }
+              }
+              setInline(null);
+            }}
+          />
+        )}
         {open && (
           <>
             {node.children?.map((child) => (
