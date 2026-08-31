@@ -4,6 +4,7 @@ import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { detectLanguage } from "../../lib/lang";
 import { isImagePath } from "../../lib/image";
+import { saveUntitledAs, untitledLabel } from "../../lib/untitled";
 import { CodeEditor } from "./CodeEditor";
 import { ImageViewer } from "./ImageViewer";
 import { PreviewView } from "./PreviewView";
@@ -29,14 +30,21 @@ export function EditorArea() {
 
   // ── Tab close actions (dirty-aware) ──────────────────────────────────────
 
+  /** Buffers that live (only) in the workspace store: real + untitled files. */
+  const isEditableTab = (t: EditorTab) => t.kind === "file" || t.kind === "untitled";
+  const discardBuffer = (t: EditorTab) => {
+    if (t.kind === "untitled") useWorkspaceStore.getState().dropBuffer(t.path);
+    else clearDirty(t.path);
+  };
+
   const closeSingle = (key: string) => {
     const tab = openTabs.find((t) => tabKey(t) === key);
-    if (tab?.kind === "file") {
+    if (tab && isEditableTab(tab)) {
       if (dirtyPaths.has(tab.path)) {
         setConfirm({ kind: "single", key, count: 1 });
         return;
       }
-      clearDirty(tab.path);
+      discardBuffer(tab);
     }
     closeTab(key);
   };
@@ -48,21 +56,21 @@ export function EditorArea() {
   }, [closeNonce]);
 
   const runCloseOthers = (key: string) => {
-    const others = openTabs.filter((t) => tabKey(t) !== key && t.kind === "file" && dirtyPaths.has(t.path));
+    const others = openTabs.filter((t) => tabKey(t) !== key && isEditableTab(t) && dirtyPaths.has(t.path));
     if (others.length > 0) {
       setConfirm({ kind: "others", key, count: others.length });
     } else {
-      openTabs.filter((t) => tabKey(t) !== key && t.kind === "file").forEach((t) => clearDirty(t.path));
+      openTabs.filter((t) => tabKey(t) !== key && isEditableTab(t)).forEach((t) => discardBuffer(t));
       closeOtherTabs(key);
     }
   };
 
   const runCloseAll = () => {
-    const dirty = openTabs.filter((t) => t.kind === "file" && dirtyPaths.has(t.path));
+    const dirty = openTabs.filter((t) => isEditableTab(t) && dirtyPaths.has(t.path));
     if (dirty.length > 0) {
       setConfirm({ kind: "all", count: dirty.length });
     } else {
-      openTabs.filter((t) => t.kind === "file").forEach((t) => clearDirty(t.path));
+      openTabs.filter((t) => isEditableTab(t)).forEach((t) => discardBuffer(t));
       closeAllTabs();
     }
   };
@@ -71,13 +79,13 @@ export function EditorArea() {
     if (!confirm) return;
     if (confirm.kind === "single" && confirm.key) {
       const tab = openTabs.find((t) => tabKey(t) === confirm.key);
-      if (tab?.kind === "file") clearDirty(tab.path);
+      if (tab && isEditableTab(tab)) discardBuffer(tab);
       closeTab(confirm.key);
     } else if (confirm.kind === "others" && confirm.key) {
-      openTabs.filter((t) => tabKey(t) !== confirm.key && t.kind === "file").forEach((t) => clearDirty(t.path));
+      openTabs.filter((t) => tabKey(t) !== confirm.key && isEditableTab(t)).forEach((t) => discardBuffer(t));
       closeOtherTabs(confirm.key);
     } else if (confirm.kind === "all") {
-      openTabs.filter((t) => t.kind === "file").forEach((t) => clearDirty(t.path));
+      openTabs.filter((t) => isEditableTab(t)).forEach((t) => discardBuffer(t));
       closeAllTabs();
     }
     setConfirm(null);
@@ -88,24 +96,31 @@ export function EditorArea() {
         { id: "close", label: "Close", icon: X, onClick: () => closeSingle(menu.key) },
         ...((): ContextMenuItem[] => {
           const tab = openTabs.find((t) => tabKey(t) === menu.key);
-          if (!tab || tab.kind !== "file" || !dirtyPaths.has(tab.path)) return [];
+          if (!tab || !isEditableTab(tab) || !dirtyPaths.has(tab.path)) return [];
           return [
             {
               id: "save",
-              label: "Save",
+              label: tab.kind === "untitled" ? "Save As…" : "Save",
               icon: File,
               onClick: () => {
-                if (workspacePath) void saveFile(workspacePath, tab.path);
+                if (!workspacePath) return;
+                if (tab.kind === "untitled") void saveUntitledAs(workspacePath, menu.key);
+                else void saveFile(workspacePath, tab.path);
               },
             },
-            {
-              id: "revert",
-              label: "Revert File",
-              icon: RotateCcw,
-              onClick: () => {
-                if (workspacePath) void useWorkspaceStore.getState().revertFile(workspacePath, tab.path);
-              },
-            },
+            // Revert only makes sense for a real file (reloads from disk).
+            ...(tab.kind === "file"
+              ? [
+                  {
+                    id: "revert",
+                    label: "Revert File",
+                    icon: RotateCcw,
+                    onClick: () => {
+                      if (workspacePath) void useWorkspaceStore.getState().revertFile(workspacePath, tab.path);
+                    },
+                  } satisfies ContextMenuItem,
+                ]
+              : []),
           ];
         })(),
         {
@@ -136,7 +151,9 @@ export function EditorArea() {
               ? tab.path.slice(0, 7)
               : tab.kind === "compare"
                 ? `${tab.fromSha?.slice(0, 7) ?? ""}..${tab.toSha?.slice(0, 7) ?? ""}`
-                : tab.path.split("/").pop()!;
+                : tab.kind === "untitled"
+                  ? untitledLabel(tab.path)
+                  : tab.path.split("/").pop()!;
           const active = key === activeTabKey;
           return (
             <div
@@ -171,13 +188,15 @@ export function EditorArea() {
               {tab.kind === "compare" && (
                 <span className="rounded bg-accent/15 px-1 text-[9.5px] font-medium text-accent">CMP</span>
               )}
-              {tab.kind === "file" && dirtyPaths.has(tab.path) ? (
+              {isEditableTab(tab) && dirtyPaths.has(tab.path) ? (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (workspacePath) void saveFile(workspacePath, tab.path);
+                    if (!workspacePath) return;
+                    if (tab.kind === "untitled") void saveUntitledAs(workspacePath, key);
+                    else void saveFile(workspacePath, tab.path);
                   }}
-                  title="Save file"
+                  title={tab.kind === "untitled" ? "Save as… (⌘S)" : "Save file"}
                   className={`rounded p-0.5 hover:bg-active ${
                     active ? "opacity-80 hover:opacity-100" : "opacity-0 group-hover:opacity-80"
                   }`}
@@ -278,13 +297,15 @@ function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: b
   const { fileContents, fileErrors, loadFile, markDirty, revertFile, keepMine } = useWorkspaceStore();
   const conflicts = useWorkspaceStore((s) => s.conflicts);
 
-  const path = tab.kind === "file" ? tab.path : null;
-  const isImage = path !== null && isImagePath(path);
+  // Untitled tabs share the file-editor path; their buffer is seeded in
+  // memory (lib/untitled) and never read from disk.
+  const path = tab.kind === "file" || tab.kind === "untitled" ? tab.path : null;
+  const isImage = tab.kind === "file" && path !== null && isImagePath(path);
   useEffect(() => {
     // Image files render via ImageViewer (binary fetch) — never through the
     // text-only loadFile/read_file path, which rejects non-UTF-8 bytes.
-    if (path && workspacePath && !isImage) void loadFile(workspacePath, path);
-  }, [path, workspacePath, loadFile, isImage]);
+    if (tab.kind === "file" && path && workspacePath && !isImage) void loadFile(workspacePath, path);
+  }, [tab.kind, path, workspacePath, loadFile, isImage]);
 
   const content = path ? fileContents[path] : undefined;
   const loadError = path ? fileErrors[path] : undefined;
@@ -332,7 +353,7 @@ function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: b
   if (path && content !== undefined) {
     return (
       <>
-        {conflict && (
+        {conflict && tab.kind === "file" && (
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-yellow/10 px-3 py-1.5 text-[11.5px] text-yellow">
             <span className="truncate">
               {conflict === "deleted"
@@ -372,10 +393,12 @@ function TabContent({ tab, showBreadcrumb }: { tab: EditorTab; showBreadcrumb: b
             </span>
           </div>
         )}
-        {showBreadcrumb && <PathBreadcrumb path={path} />}
+        {showBreadcrumb && (
+          <PathBreadcrumb path={tab.kind === "untitled" ? untitledLabel(tab.path) : path} />
+        )}
         <div className="min-h-0 flex-1">
           <CodeEditor
-            language={detectLanguage(path)}
+            language={tab.kind === "untitled" ? "plaintext" : detectLanguage(path)}
             value={content}
             onChange={(value) => markDirty(path, value)}
           />

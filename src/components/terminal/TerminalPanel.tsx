@@ -10,6 +10,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useUIStore } from "../../store/uiStore";
 import { useTerminalStore, type TermSession } from "../../store/terminalStore";
 import { isTauri } from "../../lib/workspace";
+import { feedLineBuffer, shortenTitle } from "../../lib/terminalTitle";
 
 const TERM_THEME = {
   background: "#0d0d0d",
@@ -40,6 +41,10 @@ interface TermCtx {
   pending: string;
   /** Scheduled rAF flush handle (null when nothing is queued). */
   raf: number | null;
+  /** True once the tab was renamed from the first typed command. */
+  named: boolean;
+  /** Plain-text input line being composed (first-command detection). */
+  lineBuf: string;
 }
 
 /** Flush the session's pending output buffer synchronously (one write).
@@ -185,10 +190,23 @@ export function TerminalPanel() {
       cwd: null,
       pending: "",
       raf: null,
+      named: false,
+      lineBuf: "",
     };
     ctxsRef.current.set(id, ctx);
     term.onData((data) => {
       if (ctx.backendId) void invoke("pty_write", { id: ctx.backendId, data }).catch(() => {});
+      // Rename the tab from "Terminal N" to the first command the user
+      // actually runs (non-empty Enter). Input-side heuristic, see
+      // lib/terminalTitle.ts. Once named, never rename again.
+      if (!ctx.named) {
+        const r = feedLineBuffer(ctx.lineBuf, data);
+        ctx.lineBuf = r.buf;
+        if (r.command) {
+          ctx.named = true;
+          useTerminalStore.getState().setTitle(id, shortenTitle(r.command));
+        }
+      }
     });
     // Shift+Enter: xterm.js collapses it to a plain CR (same as Enter), so
     // CLI agents (Claude Code & co.) that read the kitty keyboard protocol

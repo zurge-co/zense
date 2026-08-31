@@ -7,6 +7,7 @@ import { useTerminalStore } from "./store/terminalStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
 import { useFocusStore } from "./store/focusStore";
 import { isTauri, openFolderFlow } from "./lib/workspace";
+import { isUntitledPath, openUntitledTab, saveUntitledAs, untitledLabel } from "./lib/untitled";
 import { adjustUiZoom, applyUiZoom, loadUiPrefs, UI_ZOOM_STEP } from "./lib/settings";
 import { TitleBar } from "./components/layout/TitleBar";
 import { ActivityBar } from "./components/layout/ActivityBar";
@@ -183,14 +184,19 @@ function useCloseRequestGuard() {
 
   if (!pending) return null;
   const dirtyCount = useWorkspaceStore.getState().dirtyPaths.size;
+  // Untitled buffers can't be saved by Save All (they have no name yet) —
+  // name each one via ⌘S in its tab, or close without saving.
+  const failedNames = failedSaves.map((p) =>
+    isUntitledPath(p) ? `${untitledLabel(p)} (unnamed — ⌘S in its tab)` : p,
+  );
+  const message =
+    failedSaves.length > 0
+      ? `Failed to save: ${failedNames.join(", ")}. Fix the problem and retry, or close without saving.`
+      : `${dirtyCount} file${dirtyCount === 1 ? "" : "s"} have unsaved changes.`;
   return (
     <ConfirmDialog
       title="Unsaved Changes"
-      message={
-        failedSaves.length > 0
-          ? `Failed to save: ${failedSaves.join(", ")}. Fix the problem and retry, or close without saving.`
-          : `${dirtyCount} file${dirtyCount === 1 ? "" : "s"} have unsaved changes.`
-      }
+      message={message}
       confirmLabel="Save All & Close"
       secondaryLabel="Close Without Saving"
       danger
@@ -226,12 +232,18 @@ function useCloseRequestGuard() {
 /** Latest window-destroy routine (stop watcher + destroy) for the guard. */
 const destroyRef: { current: (() => Promise<void>) | null } = { current: null };
 
-/** Save the file in the active editor tab (shared by ⌘S and File > Save). */
+/** Save the file in the active editor tab (shared by ⌘S and File > Save).
+ *  Untitled tabs go through the save-as flow first (name the file). */
 function saveActiveTab() {
   const ui = useUIStore.getState();
   if (ui.screen !== "workspace" || !ui.workspacePath) return;
   const tab = ui.openTabs.find((t) => tabKey(t) === ui.activeTabKey);
-  if (!tab || tab.kind !== "file") return;
+  if (!tab) return;
+  if (tab.kind === "untitled") {
+    void saveUntitledAs(ui.workspacePath);
+    return;
+  }
+  if (tab.kind !== "file") return;
   void useWorkspaceStore.getState().saveFile(ui.workspacePath, tab.path);
 }
 
@@ -371,11 +383,18 @@ function useKeyboardShortcuts() {
             startNewFile();
           }
         } else if (e.key === "t" && !e.shiftKey) {
-          // Ctrl/⌘T → new terminal session tab (switches to the terminal
-          // view if needed, same as the context-sensitive ⌘N).
+          e.preventDefault();
+          // Ctrl/⌘T, context-sensitive — terminal view: new shell session
+          // tab; anywhere else: new untitled editor tab (name it later
+          // via ⌘S save-as). Monaco binds ⌘T to "Go to Symbol" when the
+          // editor is focused — monacoKeybindings.ts reroutes it here.
           if (useUIStore.getState().activity === "terminal") {
-            e.preventDefault();
             newTerminalSession();
+          } else if (
+            useUIStore.getState().screen === "workspace" &&
+            useUIStore.getState().workspacePath
+          ) {
+            openUntitledTab();
           }
         } else if (e.key === "b") {
           e.preventDefault();

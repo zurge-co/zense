@@ -15,9 +15,11 @@ export type DiffMode = "split" | "inline";
  * - `compare` — compare view between two commits (`path` = "from..to")
  * - `preview` — read-only rendered preview of a doc file (svg/md/html),
  *   opened via the file tree's right-click "Open Preview"
+ * - `untitled` — unsaved new file (Ctrl+T): pseudo-path "untitled:N",
+ *   in-memory buffer only, promoted to a `file` tab by the save-as flow
  */
 export interface EditorTab {
-  kind: "file" | "diff" | "commit" | "commitDiff" | "compare" | "preview";
+  kind: "file" | "diff" | "commit" | "commitDiff" | "compare" | "preview" | "untitled";
   path: string;
   fromSha?: string | null;
   toSha?: string;
@@ -86,6 +88,8 @@ interface UIState {
   openCompare: (fromSha: string, toSha: string) => void;
   openCommitFileDiff: (path: string, toSha: string, fromSha?: string | null) => void;
   openPreview: (path: string) => void;
+  /** Open/activate an untitled editor tab (Ctrl+T, see lib/untitled). */
+  openUntitled: (path: string) => void;
   setHistoryCompareBase: (sha: string | null) => void;
   closeTab: (key: string) => void;
   closeOtherTabs: (key: string) => void;
@@ -208,6 +212,14 @@ export const useUIStore = create<UIState>((set) => ({
     const key = tabKey(tab);
     set((s) => ({
       selectedFile: path,
+      activeTabKey: key,
+      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
+    }));
+  },
+  openUntitled: (path) => {
+    const tab: EditorTab = { kind: "untitled", path };
+    const key = tabKey(tab);
+    set((s) => ({
       activeTabKey: key,
       openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
     }));
