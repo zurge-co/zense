@@ -1,9 +1,10 @@
 //! File-system commands: workspace file index/tree (for the explorer and the
 //! composer @-mentions) and guarded file reads (editor content + snippets).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::overrides::{Override, OverrideBuilder};
 use ignore::WalkBuilder;
 use regex::{Regex, RegexBuilder};
@@ -29,6 +30,44 @@ pub struct FsNode {
   kind: &'static str, // "file" | "folder"
   #[serde(skip_serializing_if = "Option::is_none")]
   children: Option<Vec<FsNode>>,
+  /// True when the entry is excluded by a workspace .gitignore — the
+  /// explorer renders it dimmed (VS Code style) instead of hiding it.
+  #[serde(default)]
+  ignored: bool,
+}
+
+/// Workspace .gitignore matchers, one per directory that contains a
+/// `.gitignore`, so we can classify entries the git-respecting walk skips.
+/// Deepest (nearest) matcher wins; per-directory anchoring keeps patterns
+/// relative to the dir their `.gitignore` lives in, like git itself.
+struct IgnoreStack {
+  matchers: Vec<(PathBuf, Gitignore)>,
+}
+
+impl IgnoreStack {
+  fn add(&mut self, gitignore_path: &Path) {
+    let Some(dir) = gitignore_path.parent() else {
+      return;
+    };
+    let mut builder = GitignoreBuilder::new(dir);
+    builder.add(gitignore_path);
+    if let Ok(gi) = builder.build() {
+      self.matchers.push((dir.to_path_buf(), gi));
+    }
+  }
+
+  /// Deepest matcher with an opinion (ignore or !whitelist) decides.
+  fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
+    for (dir, gi) in self.matchers.iter().rev() {
+      if path.starts_with(dir) {
+        let m = gi.matched(path, is_dir);
+        if !m.is_none() {
+          return m.is_ignore();
+        }
+      }
+    }
+    false
+  }
 }
 
 /// Resolve `path` under `root`, rejecting escapes (incl. via symlinks).
@@ -140,25 +179,38 @@ pub fn list_files(root: String, include_hidden: bool) -> Result<Vec<String>, Str
 }
 
 /// Nested file tree for the explorer (folders first, then files, A→Z).
+///
+/// Unlike `list_files` (which stays purely git-respecting), the tree also
+/// surfaces two kinds of normally-skipped entries so the explorer can render
+/// them instead of making them invisible:
+///
+/// - **git-ignored direct children of visible directories** — shown with
+///   `ignored: true` (dimmed UI, VS Code style). We deliberately do NOT walk
+///   into ignored dirs (that would descend into node_modules/target on every
+///   refresh); ignored folders appear dimmed and without children.
+/// - **`.git` itself** — shown as a synthetic folder node without contents
+///   (still hidden when `include_hidden` is false, like every dot entry).
 #[tauri::command]
 pub fn read_file_tree(root: String, include_hidden: bool) -> Result<Vec<FsNode>, String> {
   #[derive(Default)]
   struct Builder {
     dirs: BTreeMap<String, Builder>,
-    files: BTreeSet<String>,
+    files: BTreeMap<String, bool>, // name → ignored
+    ignored: bool,
   }
 
-  fn insert(b: &mut Builder, segments: &[String], is_dir: bool) {
+  fn insert(b: &mut Builder, segments: &[String], is_dir: bool, ignored: bool) {
     match segments {
       [] => {}
       [name] => {
         if is_dir {
-          b.dirs.entry(name.clone()).or_default();
+          let dir = b.dirs.entry(name.clone()).or_default();
+          dir.ignored = ignored;
         } else {
-          b.files.insert(name.clone());
+          b.files.insert(name.clone(), ignored);
         }
       }
-      [name, rest @ ..] => insert(b.dirs.entry(name.clone()).or_default(), rest, is_dir),
+      [name, rest @ ..] => insert(b.dirs.entry(name.clone()).or_default(), rest, is_dir, ignored),
     }
   }
 
@@ -169,14 +221,16 @@ pub fn read_file_tree(root: String, include_hidden: bool) -> Result<Vec<FsNode>,
       } else {
         format!("{prefix}/{name}")
       };
+      let ignored = child.ignored;
       FsNode {
         name,
         children: Some(build(child, &path)),
         path,
         kind: "folder",
+        ignored,
       }
     });
-    let files = b.files.into_iter().map(|name| FsNode {
+    let files = b.files.into_iter().map(|(name, ignored)| FsNode {
       path: if prefix.is_empty() {
         name.clone()
       } else {
@@ -185,14 +239,83 @@ pub fn read_file_tree(root: String, include_hidden: bool) -> Result<Vec<FsNode>,
       name,
       kind: "file",
       children: None,
+      ignored,
     });
     dirs.chain(files).collect()
   }
 
+  let root_path = std::fs::canonicalize(PathBuf::from(&root)).map_err(|e| e.to_string())?;
+  let visible = walk_entries(&root, include_hidden)?;
+  let visible_set: HashSet<&str> = visible.iter().map(|(rel, _)| rel.as_str()).collect();
+
+  // (rel, is_dir, ignored)
+  let mut entries: Vec<(String, bool, bool)> = visible
+    .iter()
+    .map(|(rel, is_dir)| (rel.clone(), *is_dir, false))
+    .collect();
+
+  // Show `.git` as a plain (content-less) folder node.
+  if include_hidden
+    && root_path.join(".git").is_dir()
+    && entries.len() < MAX_ENTRIES
+  {
+    entries.push((".git".to_string(), true, false));
+  }
+
+  // Collect workspace .gitignore matchers (they are visible dotfiles, so the
+  // git-respecting walk surfaced them whenever the user can see dotfiles).
+  let mut stack = IgnoreStack { matchers: Vec::new() };
+  for (rel, is_dir) in &visible {
+    if !is_dir && rel.rsplit('/').next() == Some(".gitignore") {
+      stack.add(&root_path.join(rel));
+    }
+  }
+
+  // Direct children of visible dirs that the git-respecting walk skipped and
+  // that a matcher classifies as ignored → dimmed tree entries. Descendants
+  // of ignored dirs are never enumerated (visible dirs only).
+  let mut visible_dirs: Vec<&str> = visible
+    .iter()
+    .filter(|(_, is_dir)| *is_dir)
+    .map(|(rel, _)| rel.as_str())
+    .collect();
+  visible_dirs.push(""); // workspace root itself
+  'dirs: for dir_rel in visible_dirs {
+    let dir_abs = if dir_rel.is_empty() {
+      root_path.clone()
+    } else {
+      root_path.join(dir_rel)
+    };
+    let Ok(rd) = std::fs::read_dir(&dir_abs) else {
+      continue;
+    };
+    for item in rd.flatten() {
+      let name = item.file_name().to_string_lossy().replace('\\', "/");
+      let rel = if dir_rel.is_empty() {
+        name.clone()
+      } else {
+        format!("{dir_rel}/{name}")
+      };
+      if rel == ".git" || visible_set.contains(rel.as_str()) {
+        continue; // synthetic .git handled above; visible ones already added
+      }
+      if !include_hidden && has_dot_segment(&rel) {
+        continue;
+      }
+      let is_dir = item.file_type().is_ok_and(|t| t.is_dir());
+      if stack.is_ignored(&item.path(), is_dir) {
+        entries.push((rel, is_dir, true));
+        if entries.len() >= MAX_ENTRIES {
+          break 'dirs;
+        }
+      }
+    }
+  }
+
   let mut root_builder = Builder::default();
-  for (rel, is_dir) in walk_entries(&root, include_hidden)? {
+  for (rel, is_dir, ignored) in entries {
     let segments: Vec<String> = rel.split('/').map(String::from).collect();
-    insert(&mut root_builder, &segments, is_dir);
+    insert(&mut root_builder, &segments, is_dir, ignored);
   }
   Ok(build(root_builder, ""))
 }
@@ -1080,10 +1203,63 @@ mod tests {
 
     let files = list_files(root.clone(), true).unwrap();
     assert_eq!(files, vec![".gitignore", "src/keep.ts"]);
+    fs::remove_dir_all(&dir).ok();
+  }
 
-    let tree = read_file_tree(root, true).unwrap();
-    let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
-    assert_eq!(names, vec!["src", ".gitignore"]); // folders first
+  #[test]
+  fn read_file_tree_shows_ignored_entries_dimmed() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::write(dir.join(".gitignore"), "ignored/\n*.log\n!keep.log\n").unwrap();
+    fs::create_dir_all(dir.join("ignored")).unwrap();
+    fs::write(dir.join("ignored/skip.ts"), "x").unwrap();
+    fs::write(dir.join("debug.log"), "x").unwrap();
+    fs::write(dir.join("keep.log"), "x").unwrap(); // !-whitelisted → visible
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/keep.ts"), "x").unwrap();
+
+    let tree = read_file_tree(root.clone(), true).unwrap();
+    let by_name = |name: &str| tree.iter().find(|n| n.name == name).unwrap_or_else(|| panic!("missing {name}"));
+
+    // ignored dir + ignored file are present and flagged; children of the
+    // ignored dir are NOT enumerated (no descending into it).
+    assert!(by_name("ignored").ignored);
+    assert_eq!(by_name("ignored").children.as_ref().unwrap().len(), 0);
+    assert!(by_name("debug.log").ignored);
+
+    // Visible entries stay unflagged; the !-whitelist wins over *.log.
+    assert!(!by_name("src").ignored);
+    assert!(!by_name("keep.log").ignored);
+    assert!(!by_name(".gitignore").ignored);
+
+    // list_files is untouched by the tree change (still git-respecting).
+    let files = list_files(root, true).unwrap();
+    assert_eq!(files, vec![".gitignore", "keep.log", "src/keep.ts"]);
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn read_file_tree_dotgit_shown_without_contents_and_hidden_filter() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::create_dir_all(dir.join(".git/objects")).unwrap();
+    fs::write(dir.join(".git/HEAD"), "x").unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/keep.ts"), "x").unwrap();
+
+    // Shown as a synthetic folder node with no contents enumerated.
+    let tree = read_file_tree(root.clone(), true).unwrap();
+    let dotgit = tree.iter().find(|n| n.name == ".git").expect(".git must be shown");
+    assert_eq!(dotgit.kind, "folder");
+    assert!(!dotgit.ignored);
+    assert_eq!(dotgit.children.as_ref().unwrap().len(), 0);
+
+    // ...but still treated as a hidden dot entry when include_hidden=false.
+    let tree = read_file_tree(root.clone(), false).unwrap();
+    assert!(!tree.iter().any(|n| n.name == ".git"));
+
+    // list_files never leaks .git contents either way.
+    assert!(!list_files(root, true).unwrap().iter().any(|p| p.starts_with(".git")));
     fs::remove_dir_all(&dir).ok();
   }
 

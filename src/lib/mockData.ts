@@ -3,6 +3,8 @@ export interface FileNode {
   path: string;
   type: "file" | "folder";
   children?: FileNode[];
+  /** True when excluded by a workspace .gitignore — rendered dimmed. */
+  ignored?: boolean;
 }
 
 export const fileTree: FileNode[] = [

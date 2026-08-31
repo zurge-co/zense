@@ -411,7 +411,6 @@ function TreeNode({
   const [inline, setInline] = useState<InlineEdit | null>(null);
   const [confirmDel, setConfirmDel] = useState<{ path: string; type: "file" | "folder" } | null>(null);
 
-  const isClipboardNode = clipboard?.path === node.path;
   const isTreeSelected = selectedTreeNode?.path === node.path;
   const isSelected = selectedPaths.has(node.path);
   const isDropTarget = node.type === "folder" && dropTargetPath === node.path;
@@ -525,7 +524,7 @@ function TreeNode({
           style={pad}
           className={`flex w-full items-center gap-1.5 py-0.5 pr-2 text-[12.5px] hover:bg-hover hover:text-fg ${
             isDropTarget ? "bg-active text-fg ring-1 ring-inset ring-accent" : isSelected || isTreeSelected ? "bg-active text-fg" : "text-fg-muted"
-          } ${isClipboardNode ? "opacity-50" : ""}`}
+          } ${node.ignored ? "opacity-50" : ""}`}
         >
           <span className="text-fg-muted">
             {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -645,7 +644,7 @@ function TreeNode({
         style={pad}
         className={`group flex w-full items-center gap-1.5 py-0.5 pl-6 pr-2 text-[12.5px] ${
           selected ? "bg-active text-fg" : isSelected ? "bg-active text-fg" : isTreeSelected ? "bg-hover text-fg" : "text-fg-muted hover:bg-hover hover:text-fg"
-        } ${isClipboardNode ? "opacity-50" : ""}`}
+        } ${node.ignored ? "opacity-50" : ""}`}
       >
         <File size={14} className="shrink-0 text-fg-muted" />
         <span className="flex-1 truncate text-left">{node.name}</span>
