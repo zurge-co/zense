@@ -180,6 +180,14 @@ export async function gitUnstage(root: string, path: string): Promise<void> {
   return invoke<void>("git_unstage", { root, path });
 }
 
+/** Reset a file to HEAD: tracked → discard working+staged changes back to
+ *  the HEAD version; staged-new/untracked → remove from the index and
+ *  delete the file. Browser dev: no-op. */
+export async function gitDiscardFile(root: string, path: string): Promise<void> {
+  if (!isTauri()) return; // browser dev: no-op
+  return invoke<void>("git_discard_file", { root, path });
+}
+
 export async function gitCommit(root: string, message: string): Promise<string> {
   if (!isTauri()) return "0123456789abcdef0123456789abcdef01234567";
   return invoke<string>("git_commit", { root, message });

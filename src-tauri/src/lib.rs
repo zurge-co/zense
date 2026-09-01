@@ -174,6 +174,7 @@ pub fn run() {
       gitcmd::git_diff_file,
       gitcmd::git_stage,
       gitcmd::git_unstage,
+      gitcmd::git_discard_file,
       gitcmd::git_commit,
       gitcmd::git_log,
       gitcmd::git_show,

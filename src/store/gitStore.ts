@@ -6,6 +6,7 @@ import {
   gitLog,
   gitStage,
   gitUnstage,
+  gitDiscardFile,
   gitCommit,
   mockGitStatus,
   mockBranchInfo,
@@ -39,6 +40,9 @@ interface GitState {
   loadMoreCommits: () => Promise<void>;
   stageFile: (path: string) => Promise<void>;
   unstageFile: (path: string) => Promise<void>;
+  /** Reset a file to HEAD: discard working+staged changes; new files are
+   *  removed. The caller is responsible for confirming first. */
+  discardFile: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
   commit: (message: string) => Promise<string>;
 }
@@ -116,6 +120,17 @@ export const useGitStore = create<GitState>((set, get) => ({
     if (!currentRoot) return;
     try {
       await gitUnstage(currentRoot, path);
+      await get().refresh(currentRoot);
+    } catch (err) {
+      set({ error: String(err) });
+    }
+  },
+
+  discardFile: async (path) => {
+    const { currentRoot } = get();
+    if (!currentRoot) return;
+    try {
+      await gitDiscardFile(currentRoot, path);
       await get().refresh(currentRoot);
     } catch (err) {
       set({ error: String(err) });

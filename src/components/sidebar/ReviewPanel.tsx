@@ -1,17 +1,20 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Sparkles, Check, RefreshCw, FileDiff, Plus, Minus, Loader2 } from "lucide-react";
+import { GitBranch, Sparkles, Check, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw } from "lucide-react";
 import { generateCommitMessage } from "../../lib/commitMessage";
 import { useGitStore } from "../../store/gitStore";
 import { useUIStore } from "../../store/uiStore";
 import { statusColor } from "../../lib/statusColor";
+import { ConfirmDialog } from "../ConfirmDialog";
 
 export function ReviewPanel() {
   const { openDiff, workspacePath } = useUIStore();
-  const { status, branchInfo, diffSummary, loading, refresh, stageFile, unstageFile, stageAll, commit } = useGitStore();
+  const { status, branchInfo, diffSummary, loading, refresh, stageFile, unstageFile, stageAll, commit, discardFile } = useGitStore();
   const [message, setMessage] = useState("");
   const [commitError, setCommitError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [generating, setGenerating] = useState(false);
+  /** File pending a reset confirmation: path + whether it's new (delete). */
+  const [resetTarget, setResetTarget] = useState<{ path: string; isNew: boolean } | null>(null);
 
   useEffect(() => {
     if (workspacePath) void refresh(workspacePath);
@@ -134,6 +137,16 @@ export function ReviewPanel() {
                       {f.staged}
                     </span>
                     <button
+                      title="Reset — discard this file's changes back to HEAD"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setResetTarget({ path: f.path, isNew: f.staged === "A" });
+                      }}
+                      className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                    <button
                       title="Unstage"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -190,6 +203,16 @@ export function ReviewPanel() {
                 >
                   <Plus size={12} />
                 </button>
+                <button
+                  title="Reset — discard this file's changes back to HEAD"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setResetTarget({ path: f.path, isNew: !f.staged && f.unstaged === "A" });
+                  }}
+                  className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                >
+                  <RotateCcw size={12} />
+                </button>
               </div>
             );
           })}
@@ -198,6 +221,24 @@ export function ReviewPanel() {
             <div className="text-[12.5px] text-fg-muted">No changes</div>
           )}
         </>
+      )}
+
+      {resetTarget && (
+        <ConfirmDialog
+          title="Reset File"
+          message={
+            resetTarget.isNew
+              ? `"${resetTarget.path}" is a new file — resetting will delete it permanently.`
+              : `Discard all changes to "${resetTarget.path}" and restore it to the last commit (HEAD)? This cannot be undone.`
+          }
+          confirmLabel="Reset File"
+          danger
+          onConfirm={() => {
+            void discardFile(resetTarget.path);
+            setResetTarget(null);
+          }}
+          onCancel={() => setResetTarget(null)}
+        />
       )}
     </div>
   );

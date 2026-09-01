@@ -11,7 +11,7 @@ export const COMMIT_MESSAGE_SYSTEM_PROMPT = `You write git commit messages from 
 
 Rules:
 - Output ONLY the commit message — no quotes, no explanation, no markdown code fences.
-- Use Conventional Commits when the change fits: feat:, fix:, refactor:, docs:, test:, chore:, perf:
+- ALWAYS use Conventional Commits (semantic convention): feat:, fix:, refactor:, docs:, test:, chore:, perf: — followed by an optional scope in parens when obvious, e.g. "fix(editor): …".
 - Subject line: imperative mood, max 72 characters.
 - Add a short body (bullet points, "- …") only when the change spans multiple concerns.`;
 
