@@ -188,6 +188,37 @@ export async function gitDiscardFile(root: string, path: string): Promise<void> 
   return invoke<void>("git_discard_file", { root, path });
 }
 
+export interface DiscardLinesArgs {
+  /** 1-based inclusive bounds on the working-tree side (empty range:
+   *  end = start - 1, i.e. re-insert the staged lines before `start`). */
+  startLine: number;
+  endLine: number;
+  /** 1-based inclusive bounds on the staged side (empty range: remove the
+   *  working-tree lines without re-inserting anything). */
+  originalStartLine: number;
+  originalEndLine: number;
+  /** Exact texts the diff view rendered — stale-content guards. */
+  workContent: string;
+  baseContent: string;
+}
+
+/** Revert one change block of the working-tree diff back to the staged
+ *  (index) version. Backend refuses stale content instead of patching
+ *  wrong lines. Browser dev: no-op. */
+export async function gitDiscardLines(root: string, path: string, args: DiscardLinesArgs): Promise<void> {
+  if (!isTauri()) return; // browser dev: no-op
+  return invoke<void>("git_discard_lines", {
+    root,
+    path,
+    startLine: args.startLine,
+    endLine: args.endLine,
+    originalStartLine: args.originalStartLine,
+    originalEndLine: args.originalEndLine,
+    workContent: args.workContent,
+    baseContent: args.baseContent,
+  });
+}
+
 export async function gitCommit(root: string, message: string): Promise<string> {
   if (!isTauri()) return "0123456789abcdef0123456789abcdef01234567";
   return invoke<string>("git_commit", { root, message });

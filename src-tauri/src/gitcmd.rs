@@ -753,6 +753,89 @@ pub fn git_discard_file(root: String, path: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Command: git_discard_lines
+// ---------------------------------------------------------------------------
+
+/// Revert a selected region of the working-tree file back to the staged
+/// (index) version — the diff view's per-change "Revert change".
+///
+/// `start_line`/`end_line` are 1-based inclusive bounds on the working-tree
+/// side; `original_start_line`/`original_end_line` the same on the staged
+/// side. An empty range is encoded as `end == start - 1` (a pure deletion
+/// on that side: nothing to remove / nothing to re-insert). `work_content`
+/// and `base_content` are the exact texts the diff view rendered — if the
+/// file (or the index) changed since, the command refuses rather than
+/// patching stale line numbers.
+#[tauri::command]
+pub fn git_discard_lines(
+  root: String,
+  path: String,
+  start_line: usize,
+  end_line: usize,
+  original_start_line: usize,
+  original_end_line: usize,
+  work_content: String,
+  base_content: String,
+) -> Result<(), String> {
+  let repo = open_repo_or_err(&root)?;
+  validate_repo_path(&path)?;
+  let path_norm = path.replace('\\', "/");
+
+  // Guards: the diff view's texts must still match reality, otherwise the
+  // line ranges are stale and surgery would corrupt the wrong lines.
+  let workdir = repo
+    .workdir()
+    .ok_or("repository has no working directory")?;
+  let file_path = workdir.join(&path_norm);
+  let current_work = match fs::read(&file_path) {
+    Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+    Err(_) => return Err(format!("permission denied: {path_norm}")),
+  };
+  if current_work != work_content {
+    return Err(
+      "file changed since the diff was loaded — reload the diff and try again"
+        .to_string(),
+    );
+  }
+  let current_base = read_index_blob(&repo, &path_norm)?;
+  if current_base != base_content {
+    return Err(
+      "staged content changed since the diff was loaded — reload the diff and try again"
+        .to_string(),
+    );
+  }
+
+  let work_lines: Vec<&str> = work_content.split_inclusive('\n').collect();
+  let base_lines: Vec<&str> = base_content.split_inclusive('\n').collect();
+
+  // Validate ranges (1-based inclusive; empty range = end == start - 1).
+  if start_line == 0 || original_start_line == 0 {
+    return Err("invalid line range".to_string());
+  }
+  if end_line < start_line - 1 || end_line > work_lines.len() {
+    return Err("invalid working-tree line range".to_string());
+  }
+  if original_end_line < original_start_line - 1
+    || original_end_line > base_lines.len()
+  {
+    return Err("invalid original line range".to_string());
+  }
+
+  // Surgery: keep the lines before the region, splice in the staged lines
+  // for the region (nothing when the original side is empty), keep the rest.
+  let mut out = String::new();
+  out.push_str(&work_lines[..start_line - 1].concat());
+  if original_end_line >= original_start_line {
+    out.push_str(&base_lines[original_start_line - 1..original_end_line].concat());
+  }
+  out.push_str(&work_lines[end_line..].concat());
+
+  fs::write(&file_path, out).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Command 7: git_commit
 // ---------------------------------------------------------------------------
 
@@ -3072,6 +3155,185 @@ mod tests {
 
     let err = git_discard_file(root, "../escape.txt".into()).unwrap_err();
     assert!(err.contains("path") || err.contains(".."));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+  // -- git_discard_lines tests ------------------------------------------------
+
+  #[test]
+  fn test_git_discard_lines_modified_region() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "a\nb\nc\nd\n").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    let work = "a\nB\nc\nD\n".to_string(); // two separate changes
+    fs::write(dir.join("f.txt"), &work).unwrap();
+
+    // Revert only the first change (line 2) back to the staged version.
+    git_discard_lines(
+      root.clone(), "f.txt".into(),
+      2, 2,   // workdir side
+      2, 2,   // staged side
+      work, "a\nb\nc\nd\n".into(),
+    ).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), "a\nb\nc\nD\n");
+    // The untouched change (D) is still unstaged.
+    let status = git_status(root).unwrap();
+    assert!(status.files.iter().any(|f| f.path == "f.txt"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_lines_removes_insertion() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "a\nd\n").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    let work = "a\nb\nc\nd\n".to_string();
+    fs::write(dir.join("f.txt"), &work).unwrap();
+
+    // Empty original range (oe == os - 1): drop the inserted lines.
+    git_discard_lines(
+      root.clone(), "f.txt".into(),
+      2, 3,
+      2, 1,
+      work, "a\nd\n".into(),
+    ).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), "a\nd\n");
+    let status = git_status(root).unwrap();
+    assert!(status.files.iter().all(|f| f.path != "f.txt"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_lines_restores_deletion() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "a\nb\nc\n").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    let work = "a\nc\n".to_string();
+    fs::write(dir.join("f.txt"), &work).unwrap();
+
+    // Empty workdir range (end == start - 1): re-insert the staged lines.
+    git_discard_lines(
+      root.clone(), "f.txt".into(),
+      2, 1,
+      2, 2,
+      work, "a\nb\nc\n".into(),
+    ).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), "a\nb\nc\n");
+    let status = git_status(root).unwrap();
+    assert!(status.files.iter().all(|f| f.path != "f.txt"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_lines_restores_full_file_deletion() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "a\nb\n").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    fs::remove_file(dir.join("f.txt")).unwrap();
+
+    // Workdir content is empty; empty workdir range at line 1.
+    git_discard_lines(
+      root.clone(), "f.txt".into(),
+      1, 0,
+      1, 2,
+      String::new(), "a\nb\n".into(),
+    ).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), "a\nb\n");
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_lines_stale_work_content_rejected() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "a\nb\n").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    let err = git_discard_lines(
+      root.clone(), "f.txt".into(),
+      2, 2, 2, 2,
+      "a\nOLD\n".into(), "a\nb\n".into(),
+    ).unwrap_err();
+    assert!(err.contains("reload"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_lines_stale_base_content_rejected() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "a\nb\n").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    let err = git_discard_lines(
+      root.clone(), "f.txt".into(),
+      2, 2, 2, 2,
+      "a\nb\n".into(), "a\nSTALE\n".into(),
+    ).unwrap_err();
+    assert!(err.contains("reload"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_lines_trailing_newline_edge() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "a\nX\nb\n").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    // Workdir last line has no trailing newline.
+    let work = "a\nb".to_string();
+    fs::write(dir.join("f.txt"), &work).unwrap();
+
+    git_discard_lines(
+      root.clone(), "f.txt".into(),
+      2, 2, 2, 2,
+      work, "a\nX\nb\n".into(),
+    ).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), "a\nX\n");
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_lines_invalid_range_rejected() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "a\nb\n").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    // end_line beyond the file length.
+    let err = git_discard_lines(
+      root.clone(), "f.txt".into(),
+      1, 99, 1, 1,
+      "a\nb\n".into(), "a\nb\n".into(),
+    ).unwrap_err();
+    assert!(err.contains("range"));
 
     fs::remove_dir_all(&dir).ok();
   }
