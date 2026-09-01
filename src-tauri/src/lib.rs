@@ -139,6 +139,12 @@ fn build_menu(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  // reqwest is unified with the `rustls-no-provider` feature (pulled in by
+  // tauri-plugin-updater), which panics on Client build unless a crypto
+  // provider is installed first. Without this, every rig LLM request dies
+  // silently and the UI reports "The AI returned an empty message".
+  let _ = rustls::crypto::ring::default_provider().install_default();
+
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_store::Builder::new().build())

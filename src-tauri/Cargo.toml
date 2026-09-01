@@ -34,6 +34,9 @@ ignore = "0.4"
 regex = "1"
 git2 = { version = "0.19", default-features = false }
 rig = { version = "0.42", default-features = false, features = ["agent"] }
+# reqwest ends up with `rustls-no-provider` (via tauri-plugin-updater), so the
+# app must install a crypto provider itself — `ring` is already in the graph.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-util = "0.7"
 futures = "0.3.34"
 portable-pty = "0.9.0"
