@@ -29,6 +29,9 @@ export function setupKeybindings(
     id: "zense.clipboardCopy",
     label: "Copy",
     keybindings: [KM.CtrlCmd | KC.KeyC],
+    // Only when the editor text area is focused — without this, the binding
+    // also fires inside the Find/Replace widget inputs and hijacks copy.
+    keybindingContext: "editorTextFocus",
     run: async (ed) => {
       const model = ed.getModel();
       if (!model) return;
@@ -56,6 +59,7 @@ export function setupKeybindings(
     id: "zense.clipboardCut",
     label: "Cut",
     keybindings: [KM.CtrlCmd | KC.KeyX],
+    keybindingContext: "editorTextFocus",
     run: async (ed) => {
       const model = ed.getModel();
       if (!model) return;
@@ -96,6 +100,9 @@ export function setupKeybindings(
     id: "zense.clipboardPaste",
     label: "Paste",
     keybindings: [KM.CtrlCmd | KC.KeyV],
+    // editorTextFocus: let Cmd/Ctrl+V fall through to the native input when
+    // the Find/Replace widget is focused, so paste lands in the search box.
+    keybindingContext: "editorTextFocus",
     run: async (ed) => {
       const model = ed.getModel();
       if (!model) return;
