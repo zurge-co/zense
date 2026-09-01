@@ -43,12 +43,14 @@ export function openUntitledTab(): void {
  * ⌘S on an untitled tab: save-as flow — ask for a file name (Tauri save
  * dialog rooted at the workspace, window.prompt fallback in browser dev),
  * write the buffer, promote the tab to a normal file tab in place and
- * refresh the file tree. Returns true when the save completed.
+ * refresh the file tree. Returns the promoted workspace-relative path on
+ * success (the untitled tab is replaced in place by a `file:<rel>` tab),
+ * or null when the user cancelled / the save was refused.
  */
-export async function saveUntitledAs(root: string, key?: string): Promise<boolean> {
+export async function saveUntitledAs(root: string, key?: string): Promise<string | null> {
   const ui = useUIStore.getState();
   const tab = ui.openTabs.find((t) => tabKey(t) === (key ?? ui.activeTabKey));
-  if (!tab || tab.kind !== "untitled") return false;
+  if (!tab || tab.kind !== "untitled") return null;
   const ws = useWorkspaceStore.getState();
   const content = ws.fileContents[tab.path] ?? "";
 
@@ -57,13 +59,13 @@ export async function saveUntitledAs(root: string, key?: string): Promise<boolea
   if (isTauri()) {
     // The native save dialog shows the OS overwrite confirmation itself.
     abs = await save({ defaultPath: `${root}/${untitledLabel(tab.path)}` });
-    if (!abs) return false; // user cancelled
+    if (!abs) return null; // user cancelled
   } else {
     const name = window.prompt(
       "Save as (workspace-relative path)",
       untitledLabel(tab.path),
     );
-    if (!name) return false;
+    if (!name) return null;
     abs = `${root}/${name}`;
   }
 
@@ -74,7 +76,7 @@ export async function saveUntitledAs(root: string, key?: string): Promise<boolea
   const rel = absN.startsWith(rootN + "/") ? absN.slice(rootN.length + 1) : null;
   if (!rel || isUntitledPath(rel)) {
     console.error(`save-as: "${abs}" is outside the workspace`);
-    return false;
+    return null;
   }
 
   // ── Guards: don't clobber a dirty buffer or an existing file silently ─
@@ -82,10 +84,10 @@ export async function saveUntitledAs(root: string, key?: string): Promise<boolea
     // The target file is open with unsaved changes — let the user resolve
     // that tab first instead of clobbering its buffer here.
     console.error(`save-as: "${rel}" has unsaved changes in an open tab`);
-    return false;
+    return null;
   }
   if (ws.fileIndex.includes(rel) && !isTauri() && !window.confirm(`${rel} already exists. Overwrite?`)) {
-    return false;
+    return null;
   }
   // In Tauri the save dialog already shows the OS overwrite confirmation.
 
@@ -111,5 +113,5 @@ export async function saveUntitledAs(root: string, key?: string): Promise<boolea
     };
   });
   await ws.refreshTree(root);
-  return true;
+  return rel;
 }

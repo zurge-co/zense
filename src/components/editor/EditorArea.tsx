@@ -75,6 +75,43 @@ export function EditorArea() {
     }
   };
 
+  /** "Save & Close" from the confirm dialog: save first, close only what
+   *  actually saved (a blocked save — conflict dialog, cancelled save-as —
+   *  keeps its tab open so changes are never silently lost). */
+  const confirmSave = async () => {
+    if (!confirm || !workspacePath) return;
+    const ws = useWorkspaceStore.getState();
+    if (confirm.kind === "single" && confirm.key) {
+      const tab = openTabs.find((t) => tabKey(t) === confirm.key);
+      if (tab && tab.kind === "untitled") {
+        // Save-as promotes the tab in place to `file:<rel>` — close by the
+        // returned new key; null means the user cancelled the save dialog.
+        const newKey = await saveUntitledAs(workspacePath, confirm.key);
+        if (newKey) closeTab(newKey);
+      } else if (tab) {
+        await ws.saveFile(workspacePath, tab.path);
+        if (!ws.dirtyPaths.has(tab.path)) closeTab(confirm.key);
+      } else {
+        closeTab(confirm.key);
+      }
+    } else if (confirm.kind === "others" && confirm.key) {
+      const failed = new Set(await ws.saveAllDirty(workspacePath));
+      openTabs
+        .filter((t) => tabKey(t) !== confirm.key && (!isEditableTab(t) || !failed.has(t.path)))
+        .forEach((t) => closeTab(tabKey(t)));
+    } else if (confirm.kind === "all") {
+      const failed = new Set(await ws.saveAllDirty(workspacePath));
+      if (failed.size === 0) {
+        closeAllTabs();
+      } else {
+        openTabs
+          .filter((t) => !isEditableTab(t) || !failed.has(t.path))
+          .forEach((t) => closeTab(tabKey(t)));
+      }
+    }
+    setConfirm(null);
+  };
+
   const confirmAccept = () => {
     if (!confirm) return;
     if (confirm.kind === "single" && confirm.key) {
@@ -278,12 +315,13 @@ export function EditorArea() {
           }
           message={
             confirm.count === 1
-              ? "1 unsaved file will be closed. Changes will be lost."
-              : `${confirm.count} unsaved files will be closed. Changes will be lost.`
+              ? "1 unsaved file. Save it before closing, or discard the changes?"
+              : `${confirm.count} unsaved files. Save them before closing, or discard the changes?`
           }
-          confirmLabel="Close Without Saving"
-          danger
-          onConfirm={confirmAccept}
+          confirmLabel={confirm.kind === "single" ? "Save & Close" : "Save All & Close"}
+          secondaryLabel="Close Without Saving"
+          onConfirm={() => void confirmSave()}
+          onSecondary={confirmAccept}
           onCancel={() => setConfirm(null)}
         />
       )}

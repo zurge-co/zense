@@ -697,6 +697,62 @@ pub fn git_unstage(root: String, path: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Command: git_discard_file
+// ---------------------------------------------------------------------------
+
+/// Discard every change to `path` and restore it to HEAD (the Review
+/// panel's "Reset file"). Tracked in HEAD → overwrite the working-tree
+/// copy and index entry with the HEAD version (like `git checkout HEAD
+/// -- path`). Not in HEAD (staged-new or untracked) → drop the index
+/// entry, if any, and delete the working-tree file.
+#[tauri::command]
+pub fn git_discard_file(root: String, path: String) -> Result<(), String> {
+  let repo = open_repo_or_err(&root)?;
+  validate_repo_path(&path)?;
+  let rel = Path::new(&path);
+
+  let in_head = if has_head(&repo) {
+    repo
+      .head()
+      .and_then(|h| h.peel_to_commit())
+      .and_then(|c| c.tree())
+      .map(|t| t.get_path(rel).is_ok())
+      .unwrap_or(false)
+  } else {
+    false
+  };
+
+  if in_head {
+    let head_obj = repo
+      .head()
+      .and_then(|h| h.peel_to_commit())
+      .map_err(|e| e.to_string())?
+      .into_object();
+    let mut builder = git2::build::CheckoutBuilder::new();
+    builder.force().update_index(true).path(rel);
+    repo
+      .checkout_tree(&head_obj, Some(&mut builder))
+      .map_err(|e| e.to_string())?;
+    return Ok(());
+  }
+
+  // Not in HEAD: drop the index entry (ignore "not found") and delete
+  // the working-tree file when it exists.
+  let mut index = repo.index().map_err(|e| e.to_string())?;
+  let _ = index.remove_path(rel);
+  index.write().map_err(|e| e.to_string())?;
+  drop(index);
+  let workdir = repo
+    .workdir()
+    .ok_or("repository has no working directory")?;
+  let abs = workdir.join(rel);
+  if abs.exists() {
+    fs::remove_file(&abs).map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Command 7: git_commit
 // ---------------------------------------------------------------------------
 
@@ -2916,5 +2972,107 @@ mod tests {
     fs::remove_dir_all(bare.parent().unwrap()).ok();
     fs::remove_dir_all(a.parent().unwrap()).ok();
     fs::remove_dir_all(b.parent().unwrap()).ok();
+  }
+  // -- git_discard_file tests -----------------------------------------------
+
+  #[test]
+  fn test_git_discard_tracked_modified() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "original\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    fs::write(dir.join("a.txt"), "changed\n").unwrap();
+
+    git_discard_file(root.clone(), "a.txt".into()).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "original\n");
+    // Clean after discard — no staged or unstaged entry remains.
+    let status = git_status(root).unwrap();
+    assert!(status.files.iter().all(|f| f.path != "a.txt"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_staged_new_file() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("base.txt"), "base\n").unwrap();
+    stage_file(&repo, "base.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    // New file, staged but never committed.
+    fs::write(dir.join("new.txt"), "brand new\n").unwrap();
+    stage_file(&repo, "new.txt").unwrap();
+
+    git_discard_file(root.clone(), "new.txt".into()).unwrap();
+    assert!(!dir.join("new.txt").exists());
+    let status = git_status(root).unwrap();
+    assert!(status.files.iter().all(|f| f.path != "new.txt"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_untracked_file() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("base.txt"), "base\n").unwrap();
+    stage_file(&repo, "base.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    // Untracked: exists on disk, never staged, never committed.
+    fs::write(dir.join("stray.txt"), "stray\n").unwrap();
+
+    git_discard_file(root.clone(), "stray.txt".into()).unwrap();
+    assert!(!dir.join("stray.txt").exists());
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_restores_deleted_file() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "original\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    fs::remove_file(dir.join("a.txt")).unwrap();
+
+    git_discard_file(root.clone(), "a.txt".into()).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "original\n");
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_empty_repo_staged_new() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    // Empty repo: no HEAD at all, file only staged.
+    fs::write(dir.join("only.txt"), "only\n").unwrap();
+    stage_file(&repo, "only.txt").unwrap();
+
+    git_discard_file(root.clone(), "only.txt".into()).unwrap();
+    assert!(!dir.join("only.txt").exists());
+    let status = git_status(root).unwrap();
+    assert!(status.files.is_empty());
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_discard_rejects_traversal() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    git2::Repository::init(&dir).unwrap();
+
+    let err = git_discard_file(root, "../escape.txt".into()).unwrap_err();
+    assert!(err.contains("path") || err.contains(".."));
+
+    fs::remove_dir_all(&dir).ok();
   }
 }

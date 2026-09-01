@@ -7,14 +7,16 @@ import {
   Columns2,
   Rows2,
   Sparkles,
+  RotateCcw,
 } from "lucide-react";
-import { useUIStore, type EditorTab } from "../../store/uiStore";
+import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { gitDiffFile, gitDiffCommitFile } from "../../lib/git";
+import { gitDiffFile, gitDiffCommitFile, gitDiscardFile } from "../../lib/git";
 import { detectLanguage } from "../../lib/lang";
 import { defineTheme } from "./monacoSetup";
 import { PathBreadcrumb } from "./PathBreadcrumb";
+import { ConfirmDialog } from "../ConfirmDialog";
 
 export function DiffView({ tab }: { tab: EditorTab }) {
   const editorFontSize = useWorkspaceStore((s) => s.editorFontSize);
@@ -31,6 +33,10 @@ export function DiffView({ tab }: { tab: EditorTab }) {
   const staged = entry?.unstaged ? false : true;
   const language = detectLanguage(path);
 
+  const [changeIdx, setChangeIdx] = useState(0);
+  const [confirmReset, setConfirmReset] = useState(false);
+  /** Bumped after a reset so the diff reloads from disk. */
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [content, setContent] = useState<{
     original: string;
     modified: string;
@@ -74,7 +80,7 @@ export function DiffView({ tab }: { tab: EditorTab }) {
     return () => {
       cancelled = true;
     };
-  }, [workspacePath, path, staged, commitMode, fromSha, toSha]);
+  }, [workspacePath, path, staged, commitMode, fromSha, toSha, reloadNonce]);
 
   const statsEntry = commitMode
     ? undefined
@@ -88,7 +94,6 @@ export function DiffView({ tab }: { tab: EditorTab }) {
   const [changes, setChanges] = useState<readonly monaco.editor.ILineChange[]>(
     []
   );
-  const [changeIdx, setChangeIdx] = useState(0);
 
   const jump = (dir: 1 | -1) => {
     if (changes.length === 0) return;
@@ -166,13 +171,23 @@ export function DiffView({ tab }: { tab: EditorTab }) {
         </button>
 
         {!commitMode && (
-          <button
-            title="Summarize this diff with AI"
-            className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20"
-          >
-            <Sparkles size={12} />
-            AI Summary
-          </button>
+          <>
+            <button
+              title="Reset file — discard all changes and restore it to HEAD"
+              onClick={() => setConfirmReset(true)}
+              className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-muted hover:bg-hover hover:text-fg"
+            >
+              <RotateCcw size={13} />
+              Reset File
+            </button>
+            <button
+              title="Summarize this diff with AI"
+              className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20"
+            >
+              <Sparkles size={12} />
+              AI Summary
+            </button>
+          </>
         )}
       </div>
 
@@ -223,6 +238,36 @@ export function DiffView({ tab }: { tab: EditorTab }) {
           />
         )}
       </div>
+
+      {confirmReset && (
+        <ConfirmDialog
+          title="Reset File"
+          message={`Discard all changes to "${path}" and restore it to the last commit (HEAD)? This cannot be undone.`}
+          confirmLabel="Reset File"
+          danger
+          onConfirm={async () => {
+            setConfirmReset(false);
+            if (!workspacePath) return;
+            try {
+              await gitDiscardFile(workspacePath, path);
+              await useGitStore.getState().refresh(workspacePath);
+              // The file is gone (untracked/new, now deleted) — the diff
+              // tab has nothing left to show; close it.
+              const stillThere = useGitStore
+                .getState()
+                .status.files.some((f) => f.path === path);
+              if (!stillThere) {
+                useUIStore.getState().closeTab(tabKey(tab));
+              } else {
+                setReloadNonce((n) => n + 1);
+              }
+            } catch (err) {
+              setLoadError(String(err));
+            }
+          }}
+          onCancel={() => setConfirmReset(false)}
+        />
+      )}
     </div>
   );
 }
