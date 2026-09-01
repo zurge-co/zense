@@ -24,6 +24,10 @@ You have access to the following tools to verify your answers:
 - **read_file**: Read the full contents of a file (relative path from workspace root)
 - **read_file_range**: Read specific lines of a file (1-based, inclusive)
 - **list_files**: List all files in the workspace (respects .gitignore)
+- **git_status**: Which files are staged / modified / untracked (read-only)
+- **git_diff**: Unified diff — staged=true for the next commit, staged=false for unstaged edits (read-only)
+- **git_log**: Recent commits with message, author and file stats (read-only)
+- **git_show**: One commit in detail; accepts short SHAs from git_log (read-only)
 
 ## Principles
 1. **Verify before answering.** When asked about code, always read the relevant files first using tools. Never guess or hallucinate file contents.

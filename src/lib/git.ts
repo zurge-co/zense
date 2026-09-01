@@ -284,3 +284,16 @@ export async function gitPull(root: string): Promise<GitOpResult> {
   if (!isTauri()) return { ok: true, message: "Already up to date. (preview)" };
   return invoke<GitOpResult>("git_pull", { root });
 }
+
+export async function gitPush(root: string): Promise<GitOpResult> {
+  if (!isTauri()) return { ok: true, message: "Pushed your commits to the remote. (preview)" };
+  return invoke<GitOpResult>("git_push", { root });
+}
+
+/** Unified patch of the staged index vs HEAD — the AI commit-message
+ *  generator's input. Capped server-side; empty string when nothing staged. */
+export async function gitStagedDiff(root: string): Promise<string> {
+  if (!isTauri())
+    return 'diff --git a/src/app.ts b/src/app.ts\nindex 1111111..2222222 100644\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,2 +1,3 @@\n export const x = 1;\n+console.log("preview staged diff");\n export const y = 2;\n';
+  return invoke<string>("git_staged_diff", { root });
+}

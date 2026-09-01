@@ -6,6 +6,9 @@ export interface EnabledTools {
   readFile: boolean;
   readFileRange: boolean;
   listFiles: boolean;
+  /** Read-only git awareness: git_status / git_diff / git_log / git_show.
+   *  Mutations (stage/commit/push) stay manual by design. */
+  gitTools: boolean;
 }
 
 export interface AgentGuards {
@@ -26,6 +29,7 @@ export const DEFAULT_ENABLED_TOOLS: EnabledTools = {
   readFile: true,
   readFileRange: true,
   listFiles: true,
+  gitTools: true,
 };
 
 export const DEFAULT_GUARDS: AgentGuards = {
@@ -93,6 +97,7 @@ function toBackendConfig(config: LlmConfig) {
       readFile: config.enabledTools.readFile,
       readFileRange: config.enabledTools.readFileRange,
       listFiles: config.enabledTools.listFiles,
+      gitTools: config.enabledTools.gitTools,
     },
     guards: {
       maxTurns: config.guards.maxTurns,

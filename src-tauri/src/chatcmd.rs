@@ -13,7 +13,42 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 
 use crate::llm::{self, LlmConfig, StreamEvent};
-use crate::tools::{ListFilesTool, ReadFileRangeTool, ReadFileTool};
+use crate::tools::{
+  GitDiffTool, GitLogTool, GitShowTool, GitStatusTool, ListFilesTool, ReadFileRangeTool,
+  ReadFileTool,
+};
+
+/// Typestate-safe conditional tool chaining. rig's agent builder changes
+/// type at every `.tool()` call, so flags can't drive plain `if` rebindings.
+/// This macro expands to nested `if/else` arms — one per flag — and every
+/// arm ends in `.build()`, which unifies all branches to `Agent`.
+macro_rules! apply_tools {
+  ($b:expr;) => { $b.build() };
+  ($b:expr; $flag:expr => $tool:expr, $($rest:tt)*) => {{
+    if $flag {
+      let b = $b.tool($tool);
+      apply_tools!(b; $($rest)*)
+    } else {
+      apply_tools!($b; $($rest)*)
+    }
+  }};
+}
+
+/// The full optional-tool list for a freshly configured agent builder.
+/// Order matters for the generated API surface but not behavior.
+macro_rules! with_optional_tools {
+  ($builder:expr, $et:expr, $root:expr, $max_out:expr) => {
+    apply_tools!($builder;
+      $et.read_file => ReadFileTool { root: $root.into(), max_output: $max_out },
+      $et.read_file_range => ReadFileRangeTool { root: $root.into(), max_output: $max_out },
+      $et.list_files => ListFilesTool { root: $root.into() },
+      $et.git_tools => GitStatusTool { root: $root.into(), max_output: $max_out },
+      $et.git_tools => GitDiffTool { root: $root.into(), max_output: $max_out },
+      $et.git_tools => GitLogTool { root: $root.into(), max_output: $max_out },
+      $et.git_tools => GitShowTool { root: $root.into(), max_output: $max_out },
+    )
+  };
+}
 
 // ---------------------------------------------------------------------------
 // IPC message types
@@ -56,57 +91,12 @@ fn build_agent(
         .build()
         .map_err(|e| e.to_string())?
         .completions_api();
-
-      // Chain tools conditionally. The first .tool() transitions the builder
-      // typestate from NoToolConfig → WithBuilderTools; subsequent calls are
-        // fine on WithBuilderTools. If no tools are enabled, build bare.
-      if et.read_file {
-        let b = client
-          .agent(&cfg.model)
-          .preamble(system_prompt)
-          .max_tokens(max_tokens)
-          .default_max_turns(max_turns)
-          .tool(ReadFileTool { root: root.into(), max_output: max_out });
-        let b = if et.read_file_range {
-          b.tool(ReadFileRangeTool { root: root.into(), max_output: max_out })
-        } else {
-          b
-        };
-        let b = if et.list_files {
-          b.tool(ListFilesTool { root: root.into() })
-        } else {
-          b
-        };
-        b.build()
-      } else if et.read_file_range {
-        let b = client
-          .agent(&cfg.model)
-          .preamble(system_prompt)
-          .max_tokens(max_tokens)
-          .default_max_turns(max_turns)
-          .tool(ReadFileRangeTool { root: root.into(), max_output: max_out });
-        let b = if et.list_files {
-          b.tool(ListFilesTool { root: root.into() })
-        } else {
-          b
-        };
-        b.build()
-      } else if et.list_files {
-        client
-          .agent(&cfg.model)
-          .preamble(system_prompt)
-          .max_tokens(max_tokens)
-          .default_max_turns(max_turns)
-          .tool(ListFilesTool { root: root.into() })
-          .build()
-      } else {
-        client
-          .agent(&cfg.model)
-          .preamble(system_prompt)
-          .max_tokens(max_tokens)
-          .default_max_turns(max_turns)
-          .build()
-      }
+      let builder = client
+        .agent(&cfg.model)
+        .preamble(system_prompt)
+        .max_tokens(max_tokens)
+        .default_max_turns(max_turns);
+      with_optional_tools!(builder, et, root, max_out)
     }
     llm::LlmApiFormat::AnthropicCompatible => {
       let client = anthropic::Client::builder()
@@ -114,54 +104,12 @@ fn build_agent(
         .base_url(cfg.base_url.clone())
         .build()
         .map_err(|e| e.to_string())?;
-
-      if et.read_file {
-        let b = client
-          .agent(&cfg.model)
-          .preamble(system_prompt)
-          .max_tokens(max_tokens)
-          .default_max_turns(max_turns)
-          .tool(ReadFileTool { root: root.into(), max_output: max_out });
-        let b = if et.read_file_range {
-          b.tool(ReadFileRangeTool { root: root.into(), max_output: max_out })
-        } else {
-          b
-        };
-        let b = if et.list_files {
-          b.tool(ListFilesTool { root: root.into() })
-        } else {
-          b
-        };
-        b.build()
-      } else if et.read_file_range {
-        let b = client
-          .agent(&cfg.model)
-          .preamble(system_prompt)
-          .max_tokens(max_tokens)
-          .default_max_turns(max_turns)
-          .tool(ReadFileRangeTool { root: root.into(), max_output: max_out });
-        let b = if et.list_files {
-          b.tool(ListFilesTool { root: root.into() })
-        } else {
-          b
-        };
-        b.build()
-      } else if et.list_files {
-        client
-          .agent(&cfg.model)
-          .preamble(system_prompt)
-          .max_tokens(max_tokens)
-          .default_max_turns(max_turns)
-          .tool(ListFilesTool { root: root.into() })
-          .build()
-      } else {
-        client
-          .agent(&cfg.model)
-          .preamble(system_prompt)
-          .max_tokens(max_tokens)
-          .default_max_turns(max_turns)
-          .build()
-      }
+      let builder = client
+        .agent(&cfg.model)
+        .preamble(system_prompt)
+        .max_tokens(max_tokens)
+        .default_max_turns(max_turns);
+      with_optional_tools!(builder, et, root, max_out)
     }
   };
 

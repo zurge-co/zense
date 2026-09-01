@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Download, GitBranch, Loader2, Plus, RefreshCw, X } from "lucide-react";
+import { Check, Download, GitBranch, Loader2, Plus, RefreshCw, Upload, X } from "lucide-react";
 
 import { useGitStore } from "../../store/gitStore";
 import { useUIStore } from "../../store/uiStore";
@@ -10,6 +10,7 @@ import {
   gitFetch,
   gitListBranches,
   gitPull,
+  gitPush,
   type GitBranchEntry,
 } from "../../lib/git";
 
@@ -86,6 +87,13 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
   const doPull = () =>
     void run("pull", async () => {
       const r = await gitPull(root!);
+      refreshGit();
+      return r;
+    });
+
+  const doPush = () =>
+    void run("push", async () => {
+      const r = await gitPush(root!);
       refreshGit();
       return r;
     });
@@ -167,6 +175,13 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
           title="Pull"
           hint="Download the newest code into your files"
           onClick={doPull}
+        />
+        <MenuRow
+          icon={busy === "push" ? Loader2 : Upload}
+          spinning={busy === "push"}
+          title="Push"
+          hint="Upload your commits to the server"
+          onClick={doPush}
         />
 
         {/* ── Local branches ── */}

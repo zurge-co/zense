@@ -341,6 +341,9 @@ function LlmSection() {
       <Row label="list_files" hint="List workspace files (respects .gitignore, cap 200)">
         <Toggle on={enabledTools.listFiles} onClick={() => toggleTool("listFiles")} />
       </Row>
+      <Row label="git_tools" hint="Read-only git awareness: status, diff, history — stage/commit stay manual">
+        <Toggle on={enabledTools.gitTools} onClick={() => toggleTool("gitTools")} />
+      </Row>
 
       {/* --- Guards --- */}
       <div className="mb-1 mt-4 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">

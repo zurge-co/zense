@@ -23,6 +23,15 @@ pub struct EnabledTools {
   pub read_file: bool,
   pub read_file_range: bool,
   pub list_files: bool,
+  /// Read-only git awareness (git_status / git_diff / git_log / git_show).
+  /// Default ON; `#[serde(default)]` keeps configs saved before this
+  /// field existed loading fine.
+  #[serde(default = "bool_true")]
+  pub git_tools: bool,
+}
+
+fn bool_true() -> bool {
+  true
 }
 
 impl Default for EnabledTools {
@@ -31,6 +40,7 @@ impl Default for EnabledTools {
       read_file: true,
       read_file_range: true,
       list_files: true,
+      git_tools: true,
     }
   }
 }
@@ -221,7 +231,22 @@ mod tests {
     let cfg: LlmConfig = serde_json::from_str(json).unwrap();
     assert!(cfg.enabled_tools.read_file);
     assert!(cfg.enabled_tools.list_files);
+    assert!(cfg.enabled_tools.git_tools);
     assert_eq!(cfg.guards.max_turns, 20);
     assert_eq!(cfg.guards.max_tool_output, 50_000);
+  }
+
+  #[test]
+  fn test_serde_git_tools_defaults_for_pre_git_config() {
+    // enabled_tools existed but predates git_tools — must default to true.
+    let json = r#"{
+      "apiFormat": "openaiCompatible",
+      "baseUrl": "https://api.openai.com",
+      "model": "gpt-4o",
+      "enabledTools": { "readFile": true, "readFileRange": true, "listFiles": false }
+    }"#;
+    let cfg: LlmConfig = serde_json::from_str(json).unwrap();
+    assert!(cfg.enabled_tools.git_tools);
+    assert!(!cfg.enabled_tools.list_files);
   }
 }

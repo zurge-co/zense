@@ -1,7 +1,7 @@
 // @ts-nocheck
 /**
  * Tests for BranchMenu.tsx — the junior-friendly git menu in the StatusBar
- * (fetch / pull / switch branch / new branch).
+ * (fetch / pull / push / switch branch / new branch).
  *
  * Follows the structural-verification pattern from TitleBar.test.tsx: read
  * source via Bun.file(), verify structure and wiring without rendering
@@ -15,6 +15,7 @@ import {
   gitFetch,
   gitListBranches,
   gitPull,
+  gitPush,
 } from "../../lib/git";
 
 async function readSrc(relFromThisDir: string): Promise<string> {
@@ -45,6 +46,7 @@ describe("BranchMenu.tsx — git menu for beginners", () => {
     expect(src).toContain("gitFetch");
     expect(src).toContain("gitListBranches");
     expect(src).toContain("gitPull");
+    expect(src).toContain("gitPush");
     expect(src).toContain("from \"../../lib/git\"");
   });
 
@@ -56,6 +58,11 @@ describe("BranchMenu.tsx — git menu for beginners", () => {
   test("has Pull entry with a plain-language hint", () => {
     expect(src).toContain('title="Pull"');
     expect(src).toContain("Download the newest code");
+  });
+
+  test("has Push entry with a plain-language hint", () => {
+    expect(src).toContain('title="Push"');
+    expect(src).toContain("Upload your commits");
   });
 
   test("has a switch-branch list fed by gitListBranches", () => {
@@ -154,6 +161,9 @@ describe("lib/git.ts — menu wrappers (mock mode)", () => {
     const pullRes = await gitPull("/mock/root");
     expect(pullRes.ok).toBe(true);
     expect(pullRes.message.length).toBeGreaterThan(0);
+    const pushRes = await gitPush("/mock/root");
+    expect(pushRes.ok).toBe(true);
+    expect(pushRes.message.length).toBeGreaterThan(0);
   });
 
   test("gitCheckoutBranch / gitCreateBranch resolve in browser dev", async () => {
@@ -174,7 +184,7 @@ describe("gitcmd.rs — backend contract for the menu", () => {
     src = await Bun.file(`${import.meta.dir}/../../../src-tauri/src/gitcmd.rs`).text();
   });
 
-  test("exposes list/checkout/create/fetch/pull commands", () => {
+  test("exposes list/checkout/create/fetch/pull/push commands", () => {
     for (const cmd of [
       "git_list_branches",
       "git_checkout_branch",
@@ -182,6 +192,7 @@ describe("gitcmd.rs — backend contract for the menu", () => {
       "git_create_branch",
       "git_fetch",
       "git_pull",
+      "git_push",
     ]) {
       expect(src).toContain(`pub fn ${cmd}`);
     }
@@ -190,6 +201,13 @@ describe("gitcmd.rs — backend contract for the menu", () => {
   test("pull is fast-forward-only with a divergence explanation", () => {
     expect(src).toContain('"--ff-only"');
     expect(src).toContain("not possible to fast-forward");
+  });
+
+  test("push links upstream automatically and never force-pushes", () => {
+    expect(src).toContain('"push", "--set-upstream", "origin", "HEAD"');
+    expect(src).not.toContain('"--force"');
+    // A rejected remote gets a "Pull first" hint, not git jargon.
+    expect(src).toContain("Pull first");
   });
 
   test("checkout refuses to clobber uncommitted changes (safe checkout)", () => {

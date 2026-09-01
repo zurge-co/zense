@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Sparkles, Check, RefreshCw, FileDiff, Plus, Minus } from "lucide-react";
+import { GitBranch, Sparkles, Check, RefreshCw, FileDiff, Plus, Minus, Loader2 } from "lucide-react";
+import { generateCommitMessage } from "../../lib/commitMessage";
 import { useGitStore } from "../../store/gitStore";
 import { useUIStore } from "../../store/uiStore";
 import { statusColor } from "../../lib/statusColor";
@@ -10,6 +11,7 @@ export function ReviewPanel() {
   const [message, setMessage] = useState("");
   const [commitError, setCommitError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     if (workspacePath) void refresh(workspacePath);
@@ -79,11 +81,27 @@ export function ReviewPanel() {
               {committing ? "Committing…" : "Commit"}
             </button>
             <button
-              disabled
-              title="Available after LLM setup (Phase 3)"
+              disabled={committing || generating || stagedFiles.length === 0}
+              title={
+                stagedFiles.length === 0
+                  ? "Stage changes first, then AI can write the message"
+                  : "Write a commit message from the staged changes with AI"
+              }
+              onClick={async () => {
+                if (!workspacePath || generating) return;
+                setGenerating(true);
+                setCommitError(null);
+                try {
+                  setMessage(await generateCommitMessage(workspacePath));
+                } catch (err) {
+                  setCommitError(String(err));
+                } finally {
+                  setGenerating(false);
+                }
+              }}
               className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-[12px] text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Sparkles size={12} />
+              {generating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
               AI
             </button>
           </div>

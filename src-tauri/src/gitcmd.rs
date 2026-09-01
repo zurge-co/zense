@@ -923,14 +923,22 @@ pub fn git_log(root: String, offset: usize, limit: usize) -> Result<Vec<GitLogEn
 /// against the first parent (empty tree for root commits). Merge commits
 /// return an empty file list — combined diffs are not produced in v1; the UI
 /// shows the merge badge instead.
+/// `sha` goes through full revparse: full SHA, short SHA, tags and refs like
+/// "HEAD~2" all resolve — the AI git_show tool relies on this (git_log hands
+/// it short SHAs).
 #[tauri::command]
 pub fn git_show(root: String, sha: String) -> Result<GitShowCommit, String> {
   let repo = open_repo_or_err(&root)?;
 
-  let oid = git2::Oid::from_str(&sha).map_err(|_| "invalid commit sha".to_string())?;
-  let commit = repo
-    .find_commit(oid)
-    .map_err(|_| "commit not found".to_string())?;
+  if sha.trim().is_empty() {
+    return Err("invalid commit sha".to_string());
+  }
+  let (commit, oid) = repo
+    .revparse_single(sha.trim())
+    .map_err(|_| "commit not found".to_string())?
+    .peel_to_commit()
+    .map(|c| (c.clone(), c.id()))
+    .map_err(|_| "not a commit".to_string())?;
 
   let full_sha = oid.to_string();
   let short_sha = short_sha_of(&full_sha);
@@ -1426,6 +1434,119 @@ pub fn git_pull(root: String) -> Result<GitOpResult, String> {
   }
 }
 
+/// `git push`: upload local commits. When the branch has no upstream yet,
+/// retry once with `--set-upstream origin HEAD` so juniors never type it —
+/// the branch gets linked for all future pull/push calls automatically.
+/// Never force-pushes; a rejected remote gets a plain-language explanation.
+#[tauri::command]
+pub fn git_push(root: String) -> Result<GitOpResult, String> {
+  let repo = open_repo_or_err(&root)?;
+  ensure_has_remote(&repo)?;
+  if !has_head(&repo) {
+    return Err("this repository has no commits yet — commit something first, then push".to_string());
+  }
+
+  let (mut ok, mut text) = run_git_cli(&root, &["push"])?;
+
+  // No upstream linked yet → link to origin/HEAD once and push again.
+  if !ok {
+    let l = text.to_lowercase();
+    if l.contains("no upstream branch") || l.contains("has no upstream") {
+      let retry = run_git_cli(&root, &["push", "--set-upstream", "origin", "HEAD"])?;
+      ok = retry.0;
+      text = retry.1;
+    }
+  }
+
+  if ok {
+    let message = if text.to_lowercase().contains("everything up-to-date") {
+      "Everything is already pushed — the remote has all your commits.".to_string()
+    } else {
+      format!("Pushed your commits to the remote.\n{text}")
+    };
+    Ok(GitOpResult { ok: true, message })
+  } else {
+    let l = text.to_lowercase();
+    let message = if l.contains("non-fast-forward") || l.contains("fetch first") || l.contains("rejected") {
+      "The remote has commits you don't have yet — Pull first, then Push again.".to_string()
+    } else {
+      friendly_net_error(&text)
+    };
+    Ok(GitOpResult { ok: false, message })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Commands 17–18: unified patches for the AI (staged + unstaged)
+// ---------------------------------------------------------------------------
+
+/// Hard cap on a patch returned to the frontend — these patches feed LLM
+/// prompts, so they must stay bounded.
+const DIFF_PATCH_MAX_BYTES: usize = 200 * 1024;
+
+/// Render a git2 Diff as a unified-patch string. Re-adds the origin char
+/// ('+', '-', ' ') that git2 strips from `content()` so the output reads like
+/// real `git diff`. Capped at 200 KiB with a truncation line.
+pub fn diff_to_patch_string(diff: &git2::Diff) -> Result<String, String> {
+  let mut buf: Vec<u8> = Vec::new();
+  diff
+    .print(git2::DiffFormat::Patch, |_, _, line| {
+      if buf.len() < DIFF_PATCH_MAX_BYTES {
+        let origin = line.origin();
+        if matches!(origin, '+' | '-' | ' ') {
+          buf.push(origin as u8);
+        }
+        buf.extend_from_slice(line.content());
+      }
+      true
+    })
+    .map_err(|e| e.to_string())?;
+
+  if buf.len() >= DIFF_PATCH_MAX_BYTES {
+    buf.extend_from_slice(b"\n[diff truncated]\n");
+  }
+  Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Unified patch of the staged index vs HEAD (empty tree for the initial
+/// commit) — the input for the Review panel's AI commit-message generator.
+/// Binary files contribute their regular "Binary files … differ" marker, not
+/// content.
+#[tauri::command]
+pub fn git_staged_diff(root: String) -> Result<String, String> {
+  let repo = open_repo_or_err(&root)?;
+  let index = repo.index().map_err(|e| e.to_string())?;
+
+  let head_tree = if has_head(&repo) {
+    Some(
+      repo
+        .head()
+        .and_then(|h| h.peel_to_tree())
+        .map_err(|e| e.to_string())?,
+    )
+  } else {
+    None
+  };
+
+  let diff = repo
+    .diff_tree_to_index(head_tree.as_ref(), Some(&index), None)
+    .map_err(|e| e.to_string())?;
+  diff_to_patch_string(&diff)
+}
+
+/// Unified patch of the working tree vs the index — the *unstaged* changes.
+/// Untracked files are skipped on purpose: their content is readable via
+/// read_file already, and binary junk in a prompt helps nobody.
+#[tauri::command]
+pub fn git_unstaged_diff(root: String) -> Result<String, String> {
+  let repo = open_repo_or_err(&root)?;
+  let index = repo.index().map_err(|e| e.to_string())?;
+  let diff = repo
+    .diff_index_to_workdir(Some(&index), None)
+    .map_err(|e| e.to_string())?;
+  diff_to_patch_string(&diff)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1613,6 +1734,98 @@ mod tests {
       "expected rename or add+delete, got: {:?}",
       result.files
     );
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  // -- git_staged_diff tests ------------------------------------------------
+
+  #[test]
+  fn test_git_staged_diff_returns_patch_for_staged_changes() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "line1\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    // Modify + stage.
+    fs::write(dir.join("file.txt"), "line1\nline2\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+
+    let patch = git_staged_diff(root).unwrap();
+    assert!(patch.contains("diff --git a/file.txt b/file.txt"), "got: {patch}");
+    assert!(patch.contains("+line2"), "got: {patch}");
+    assert!(!patch.contains("line2\nline2"), "no duplicated worktree diff");
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_staged_diff_empty_when_nothing_staged() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "hello\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    // Unstaged-only modification must not leak into the staged patch.
+    fs::write(dir.join("file.txt"), "hello\nworld\n").unwrap();
+    assert_eq!(git_staged_diff(root).unwrap(), "");
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_staged_diff_initial_commit() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("new.txt"), "brand new\n").unwrap();
+    stage_file(&repo, "new.txt").unwrap();
+
+    let patch = git_staged_diff(root).unwrap();
+    assert!(patch.contains("new file mode"), "got: {patch}");
+    assert!(patch.contains("+brand new"), "got: {patch}");
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_unstaged_diff_returns_workdir_patch_only() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "one\n").unwrap();
+    fs::write(dir.join("b.txt"), "bee\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    stage_file(&repo, "b.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    // b.txt gets an unstaged edit, a.txt a staged edit. (Token names avoid
+    // cross-substrings: "staged" ⊂ "unstaged" would make `contains` lie.)
+    fs::write(dir.join("a.txt"), "one\nidx-edit\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    fs::write(dir.join("b.txt"), "bee\nwt-edit\n").unwrap();
+
+    let patch = git_unstaged_diff(root).unwrap();
+    assert!(patch.contains("+wt-edit"), "got: {patch}");
+    assert!(!patch.contains("idx-edit"), "staged edit leaked: {patch}");
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_unstaged_diff_empty_when_clean() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "one\n").unwrap();
+    stage_file(&repo, "a.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    assert_eq!(git_unstaged_diff(root).unwrap(), "");
 
     fs::remove_dir_all(&dir).ok();
   }

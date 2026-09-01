@@ -443,6 +443,20 @@ describe("ReviewPanel.tsx — task 1.3 structural verification", () => {
     expect(src).toContain("Sparkles");
   });
 
+  test("AI button is wired to the commit-message generator", () => {
+    expect(src).toContain('from "../../lib/commitMessage"');
+    expect(src).toContain("generateCommitMessage(workspacePath)");
+    expect(src).toContain("setMessage(await generateCommitMessage");
+  });
+
+  test("AI button is enabled only with staged changes and shows a spinner", () => {
+    expect(src).toContain("generating");
+    expect(src).toContain("Loader2");
+    expect(src).toContain("stagedFiles.length === 0");
+    // No longer a Phase-3 placeholder — the button actually does something.
+    expect(src).not.toContain("Available after LLM setup");
+  });
+
   test("has Refresh button", () => {
     expect(src).toContain("RefreshCw");
     expect(src).toContain('title="Refresh"');
