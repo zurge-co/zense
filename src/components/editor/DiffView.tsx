@@ -12,7 +12,7 @@ import {
 import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { gitDiffFile, gitDiffCommitFile, gitDiscardFile } from "../../lib/git";
+import { gitDiffFile, gitDiffCommitFile, gitDiscardFile, gitDiscardLines } from "../../lib/git";
 import { detectLanguage } from "../../lib/lang";
 import { defineTheme } from "./monacoSetup";
 import { PathBreadcrumb } from "./PathBreadcrumb";
@@ -104,6 +104,31 @@ export function DiffView({ tab }: { tab: EditorTab }) {
     diffRef.current?.getModifiedEditor().revealLineInCenter(line);
   };
 
+  const revertCurrentChange = async () => {
+    const change = changes[changeIdx];
+    if (!content || !change || !workspacePath) return;
+    // Monaco encodes an empty range (pure insert/delete) with end = 0;
+    // normalize to 1-based inclusive bounds with end = start - 1 for empty.
+    const toRange = (start: number, end: number): { start: number; end: number } =>
+      end === 0 || end < start ? { start: start + 1, end: start } : { start, end };
+    const work = toRange(change.modifiedStartLineNumber, change.modifiedEndLineNumber);
+    const orig = toRange(change.originalStartLineNumber, change.originalEndLineNumber);
+    try {
+      await gitDiscardLines(workspacePath, path, {
+        startLine: work.start,
+        endLine: work.end,
+        originalStartLine: orig.start,
+        originalEndLine: orig.end,
+        workContent: content.modified,
+        baseContent: content.original,
+      });
+      await useGitStore.getState().refresh(workspacePath);
+      setReloadNonce((n) => n + 1);
+    } catch (err) {
+      setLoadError(String(err));
+    }
+  };
+
   const placeholderClass =
     "flex h-full items-center justify-center text-fg-muted text-[12.5px]";
 
@@ -158,6 +183,18 @@ export function DiffView({ tab }: { tab: EditorTab }) {
             <ChevronDown size={13} />
           </button>
         </div>
+
+        {!commitMode && !staged && (
+          <button
+            title="Revert this change — restore these lines from the staged/HEAD version"
+            onClick={() => void revertCurrentChange()}
+            disabled={changes.length === 0}
+            className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <RotateCcw size={13} />
+            Revert change
+          </button>
+        )}
 
         <div className="flex-1" />
 
