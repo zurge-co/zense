@@ -112,7 +112,6 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
       'label: "Review"',
       'label: "History"',
       'label: "Editor"',
-      'label: "Focus Timer"',
       'label: "Search (⌘⇧F)"',
       'label: "Terminal (⌘`)"',
     ]);

@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { X, MessageSquare, Send, Square, Wrench, Eraser } from "lucide-react";
-import { useUIStore } from "../../store/uiStore";
+import { X, MessageSquare, Send, Square, Wrench, Eraser, Timer } from "lucide-react";
+import { useUIStore, type RightTab } from "../../store/uiStore";
 import { useChatStore } from "../../store/chatStore";
+import { FocusPanel } from "../focus/FocusPanel";
+
+const tabs: { id: RightTab; label: string; icon: typeof MessageSquare }[] = [
+  { id: "chat", label: "Chat", icon: MessageSquare },
+  { id: "focus", label: "Focus", icon: Timer },
+];
 
 export function ChatPanel() {
-  const { toggleChat, openSettings } = useUIStore();
+  const { toggleChat, openSettings, rightTab, setRightTab } = useUIStore();
   const {
     messages,
     streaming,
@@ -42,13 +48,29 @@ export function ChatPanel() {
   return (
     <div className="flex w-80 shrink-0 flex-col border-l border-border bg-panel">
       {/* Header */}
-      <div className="flex h-8 shrink-0 items-center justify-between border-b border-border px-3">
-        <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
-          <MessageSquare size={12} className="text-accent" />
-          Chat
-        </span>
+      <div className="flex h-8 shrink-0 items-center justify-between border-b border-border pl-1 pr-3">
+        <div className="flex h-full items-center">
+          {tabs.map(({ id, label, icon: Icon }) => {
+            const active = rightTab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setRightTab(id)}
+                className={`relative flex h-full items-center gap-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
+                  active ? "text-fg" : "text-fg-muted hover:text-fg"
+                }`}
+              >
+                <Icon size={12} className={active ? "text-accent" : undefined} />
+                {label}
+                {active && (
+                  <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent" />
+                )}
+              </button>
+            );
+          })}
+        </div>
         <div className="flex items-center gap-0.5">
-          {messages.length > 0 && (
+          {rightTab === "chat" && messages.length > 0 && (
             <button
               onClick={clear}
               title="Clear conversation"
@@ -63,7 +85,11 @@ export function ChatPanel() {
         </div>
       </div>
 
-      {!configured ? (
+      {rightTab === "focus" ? (
+        <div className="flex-1 overflow-y-auto">
+          <FocusPanel />
+        </div>
+      ) : !configured ? (
         /* Empty state — LLM not configured */
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-fg-muted">
           <MessageSquare size={22} strokeWidth={1.2} />

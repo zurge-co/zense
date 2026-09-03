@@ -1,6 +1,8 @@
 import { create } from "zustand";
 
-export type Activity = "review" | "history" | "editor" | "focus" | "search" | "terminal";
+export type Activity = "review" | "history" | "editor" | "search" | "terminal";
+/** Tab inside the right-hand panel (Focus lives here, not the ActivityBar). */
+export type RightTab = "chat" | "focus";
 export type Screen = "welcome" | "workspace";
 export type SettingsSection = "general" | "appearance" | "llm" | "shortcuts";
 export type DiffMode = "split" | "inline";
@@ -52,6 +54,8 @@ interface UIState {
   activity: Activity;
   sidebarVisible: boolean;
   chatVisible: boolean;
+  /** Selected tab of the right-hand panel. */
+  rightTab: RightTab;
 
   openTabs: EditorTab[];
   activeTabKey: string | null;
@@ -77,6 +81,8 @@ interface UIState {
   openSearch: () => void;
   toggleSidebar: () => void;
   toggleChat: () => void;
+  /** Select a right-panel tab (opens the panel if hidden). */
+  setRightTab: (t: RightTab) => void;
   /** Open terminal panel and focus its input (⌘`). */
   toggleTerminal: () => void;
   /** Commit sha selected as the base for "Compare with Selected". */
@@ -118,6 +124,7 @@ export const useUIStore = create<UIState>((set) => ({
   activity: "review",
   sidebarVisible: true,
   chatVisible: true,
+  rightTab: "chat" as RightTab,
 
   openTabs: [],
   activeTabKey: null,
@@ -157,6 +164,7 @@ export const useUIStore = create<UIState>((set) => ({
     })),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   toggleChat: () => set((s) => ({ chatVisible: !s.chatVisible })),
+  setRightTab: (rightTab) => set({ rightTab, chatVisible: true }),
   toggleTerminal: () =>
     set((_s) => ({
       activity: "terminal" as Activity,

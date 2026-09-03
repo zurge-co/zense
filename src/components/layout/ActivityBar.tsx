@@ -1,11 +1,10 @@
-import { Files, GitBranch, History, Search, Settings, Terminal, Timer } from "lucide-react";
+import { Files, GitBranch, History, Search, Settings, Terminal } from "lucide-react";
 import { useUIStore, type Activity } from "../../store/uiStore";
 
 const items: { id: Activity; icon: typeof Files; label: string }[] = [
   { id: "review", icon: GitBranch, label: "Review" },
   { id: "history", icon: History, label: "History" },
   { id: "editor", icon: Files, label: "Editor" },
-  { id: "focus", icon: Timer, label: "Focus Timer" },
   { id: "search", icon: Search, label: "Search (⌘⇧F)" },
   { id: "terminal", icon: Terminal, label: "Terminal (⌘`)" },
 ];

@@ -3,13 +3,11 @@ import { FileTree } from "./FileTree";
 import { ReviewPanel } from "./ReviewPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { SearchPanel } from "./SearchPanel";
-import { FocusPanel } from "../focus/FocusPanel";
 
 const titles: Record<string, string> = {
   review: "Review",
   history: "History",
   editor: "Editor",
-  focus: "Focus",
   search: "Search",
 };
 
@@ -30,7 +28,6 @@ export function SideBar() {
         {activity === "review" && <ReviewPanel />}
         {activity === "history" && <HistoryPanel />}
         {activity === "search" && <SearchPanel />}
-        {activity === "focus" && <FocusPanel />}
       </div>
     </div>
   );
