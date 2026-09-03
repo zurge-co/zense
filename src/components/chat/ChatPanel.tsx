@@ -2,7 +2,22 @@ import { useEffect, useRef, useState } from "react";
 import { X, MessageSquare, Send, Square, Wrench, Eraser, Timer } from "lucide-react";
 import { useUIStore, type RightTab } from "../../store/uiStore";
 import { useChatStore } from "../../store/chatStore";
+import { renderMarkdown } from "../../lib/markdown";
 import { FocusPanel } from "../focus/FocusPanel";
+
+/** Render assistant Markdown as HTML. Safe: renderMarkdown HTML-escapes the
+ *  source up front and allowlists link/image URL schemes, so no raw HTML or
+ *  javascript: URLs from the LLM can reach the DOM. */
+function MarkdownView({ source, streaming }: { source: string; streaming?: boolean }) {
+  return (
+    <div
+      className="md-content"
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: renderMarkdown(source) }}
+      data-streaming={streaming || undefined}
+    />
+  );
+}
 
 const tabs: { id: RightTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "chat", label: "Chat", icon: MessageSquare },
@@ -120,7 +135,11 @@ export function ChatPanel() {
                     : "bg-base text-fg"
                 }`}
               >
-                {msg.content}
+                {msg.role === "user" ? (
+                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                ) : (
+                  <MarkdownView source={msg.content} />
+                )}
               </div>
             ))}
             {/* Tool call indicators */}
@@ -143,7 +162,7 @@ export function ChatPanel() {
             {/* Streaming text */}
             {streaming && streamingText && (
               <div className="mb-2 rounded bg-base px-2.5 py-1.5 text-[12.5px] leading-relaxed text-fg">
-                {streamingText}
+                <MarkdownView source={streamingText} streaming />
               </div>
             )}
           </div>
