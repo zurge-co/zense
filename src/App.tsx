@@ -10,6 +10,7 @@ import { isTauri, openFolderFlow } from "./lib/workspace";
 import { isUntitledPath, openUntitledTab, saveUntitledAs, untitledLabel } from "./lib/untitled";
 import { adjustUiZoom, applyUiZoom, loadUiPrefs, UI_ZOOM_STEP } from "./lib/settings";
 import { TitleBar } from "./components/layout/TitleBar";
+import { ConflictBanner } from "./components/layout/ConflictBanner";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { SideBar } from "./components/sidebar/SideBar";
@@ -109,6 +110,9 @@ function WorkspaceLayout() {
   return (
     <div className="flex h-full flex-col">
       <TitleBar />
+      {/* Chunk 2: Conflict Mode banner — visible on every workspace view
+          while a merge/rebase/cherry-pick is parked mid-flight. */}
+      <ConflictBanner />
       <div className="flex min-h-0 flex-1">
         <ActivityBar />
         {sidebarVisible && <SideBar />}

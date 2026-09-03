@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Sparkles, Check, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw } from "lucide-react";
+import { GitBranch, Sparkles, Check, CheckCircle2, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw, AlertTriangle } from "lucide-react";
 import { generateCommitMessage } from "../../lib/commitMessage";
 import { useGitStore } from "../../store/gitStore";
 import { useUIStore } from "../../store/uiStore";
@@ -7,8 +7,8 @@ import { statusColor } from "../../lib/statusColor";
 import { ConfirmDialog } from "../ConfirmDialog";
 
 export function ReviewPanel() {
-  const { openDiff, workspacePath } = useUIStore();
-  const { status, branchInfo, diffSummary, loading, refresh, stageFile, unstageFile, stageAll, commit, discardFile } = useGitStore();
+  const { openDiff, openFile, workspacePath } = useUIStore();
+  const { status, branchInfo, diffSummary, loading, refresh, stageFile, unstageFile, stageAll, commit, discardFile, mergeInfo, conflicts, resolvedPaths } = useGitStore();
   const [message, setMessage] = useState("");
   const [commitError, setCommitError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
@@ -55,6 +55,66 @@ export function ReviewPanel() {
         <div className="text-[12.5px] text-fg-muted">Not a git repository</div>
       ) : (
         <>
+          {/* ── Chunk 2: conflict overview while Conflict Mode is on ── */}
+          {mergeInfo.inProgress && (
+            <section className="rounded border border-danger/40 bg-danger/5 p-2">
+              <div className="mb-1 flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-danger">
+                <AlertTriangle size={12} />
+                Conflicts · {resolvedPaths.length}/{conflicts.length + resolvedPaths.length} resolved
+              </div>
+              <div className="mb-1.5 text-[10.5px] leading-snug text-fg-muted">
+                Open each file, keep the version you want, then Stage it — a
+                staged file counts as resolved.
+              </div>
+              {conflicts.map((c) => (
+                <div
+                  key={`conflict-${c.path}`}
+                  onClick={() => openFile(c.path)}
+                  title={
+                    c.conflictType === "modify-delete"
+                      ? "One side edited this file, the other deleted it"
+                      : `Both sides edited ${c.path}`
+                  }
+                  className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg hover:bg-hover"
+                >
+                  <AlertTriangle size={12} className="shrink-0 text-danger" />
+                  <span className="flex-1 truncate text-left">{c.path}</span>
+                  {c.conflictType === "modify-delete" && (
+                    <span className="shrink-0 rounded border border-danger/30 px-1 text-[9px] uppercase tracking-wide text-danger">
+                      edited + deleted
+                    </span>
+                  )}
+                  <button
+                    title="Stage as resolved"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void stageFile(c.path);
+                    }}
+                    className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                  >
+                    <Plus size={12} />
+                  </button>
+                </div>
+              ))}
+              {resolvedPaths.map((p) => (
+                <div
+                  key={`resolved-${p}`}
+                  onClick={() => openFile(p)}
+                  className="flex w-full cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg-muted hover:bg-hover"
+                >
+                  <CheckCircle2 size={12} className="shrink-0 text-green" />
+                  <span className="flex-1 truncate text-left line-through opacity-70">{p}</span>
+                </div>
+              ))}
+              {conflicts.length === 0 && resolvedPaths.length > 0 && (
+                <div className="mt-1 text-[11px] text-accent">
+                  Every conflict is resolved — finish the merge from the
+                  integrated terminal (`git commit`).
+                </div>
+              )}
+            </section>
+          )}
+
           <textarea
             rows={3}
             placeholder="Commit message…"
@@ -65,7 +125,12 @@ export function ReviewPanel() {
 
           <div className="flex gap-1.5">
             <button
-              disabled={committing || !message.trim()}
+              disabled={committing || !message.trim() || mergeInfo.inProgress}
+              title={
+                mergeInfo.inProgress
+                  ? "Conflict Mode is on — resolve the conflicts first (Commit is locked for safety)"
+                  : undefined
+              }
               onClick={async () => {
                 setCommitting(true);
                 setCommitError(null);

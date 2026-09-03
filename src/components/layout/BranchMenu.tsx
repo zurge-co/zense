@@ -9,6 +9,7 @@ import {
   gitCreateBranch,
   gitFetch,
   gitListBranches,
+  gitMergeInProgress,
   gitPull,
   gitPush,
   type GitBranchEntry,
@@ -35,9 +36,34 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const root = useUIStore((s) => s.workspacePath);
+  /** Chunk 2: risky actions lock while Conflict Mode is on. */
+  const inConflict = useGitStore((s) => s.mergeInfo.inProgress);
   /** Re-read git state after any action that moved refs/files. */
   const refreshGit = () => {
     if (root) void useGitStore.getState().refresh(root);
+  };
+
+  /**
+   * Chunk 2 pull/checkout guard: an action may secretly park the repo in a
+   * conflict state. Re-check afterwards and, if it did, route the user to
+   * Conflict Mode instead of leaving them in an unnoticed half-done merge.
+   */
+  const conflictGuard = async (): Promise<Feedback | null> => {
+    if (!root) return null;
+    try {
+      const info = await gitMergeInProgress(root);
+      if (info.inProgress) {
+        refreshGit();
+        return {
+          ok: false,
+          message:
+            "That action ran into conflicts — Conflict Mode is on. Resolve the files in the Review panel, or press Abort in the banner to undo.",
+        };
+      }
+    } catch {
+      // The guard must never break the action's real feedback.
+    }
+    return null;
   };
 
   useEffect(() => {
@@ -88,7 +114,9 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
     void run("pull", async () => {
       const r = await gitPull(root!);
       refreshGit();
-      return r;
+      // A pull that conflicted wins over its own message — the conflict
+      // state matters more than "pull failed".
+      return (await conflictGuard()) ?? r;
     });
 
   const doPush = () =>
@@ -99,7 +127,7 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
     });
 
   const doCheckout = (b: GitBranchEntry) => {
-    if (busy || !root) return;
+    if (busy || !root || inConflict) return;
     setBusy(`switch:${b.name}`);
     setFeedback(null);
     // Remote entries get the CLI dwim behavior: existing local → switch,
@@ -107,8 +135,15 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
     const op = b.isRemote ? gitCheckoutRemoteBranch(root, b.name) : gitCheckoutBranch(root, b.name);
     op.then(
       () => {
-        refreshGit();
-        onClose();
+        void conflictGuard().then((guardFeedback) => {
+          if (guardFeedback) {
+            setBusy(null);
+            setFeedback(guardFeedback);
+          } else {
+            refreshGit();
+            onClose();
+          }
+        });
       },
       (err) => {
         setBusy(null);
@@ -119,7 +154,7 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
 
   const doCreate = () => {
     const name = newName.trim();
-    if (!name || busy || !root) return;
+    if (!name || busy || !root || inConflict) return;
     setBusy("create");
     setFeedback(null);
     gitCreateBranch(root, name).then(
@@ -188,6 +223,12 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
         <div className="border-t border-border px-3 pb-1 pt-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-fg-muted">
           Switch branch
         </div>
+        {inConflict && (
+          <div className="mx-3 mb-1 rounded border border-danger/30 bg-danger/5 px-2 py-1 text-[10.5px] leading-snug text-danger">
+            Conflict Mode is on — finish or abort the merge before switching
+            or creating branches.
+          </div>
+        )}
         <div className="max-h-40 overflow-y-auto">
           {branches.length === 0 && (
             <div className="px-3 py-1.5 text-[12px] text-fg-muted">No branches yet</div>
@@ -195,7 +236,7 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
           {branches.map((b) => (
             <button
               key={b.name}
-              disabled={b.isHead || busy !== null}
+              disabled={b.isHead || busy !== null || inConflict}
               onClick={() => doCheckout(b)}
               title={
                 b.isRemote
@@ -244,8 +285,13 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
           <MenuRow
             icon={busy === "create" ? Loader2 : Plus}
             spinning={busy === "create"}
+            disabled={inConflict}
             title="New branch"
-            hint="Start a separate line of work from here"
+            hint={
+              inConflict
+                ? "Locked while Conflict Mode is on — finish or abort the merge first"
+                : "Start a separate line of work from here"
+            }
             onClick={() => {
               setFeedback(null);
               setCreating(true);
@@ -260,19 +306,21 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
 function MenuRow({
   icon: Icon,
   spinning,
+  disabled,
   title,
   hint,
   onClick,
 }: {
   icon: typeof RefreshCw;
   spinning?: boolean;
+  disabled?: boolean;
   title: string;
   hint: string;
   onClick: () => void;
 }) {
   return (
     <button
-      disabled={spinning}
+      disabled={spinning || disabled}
       onClick={onClick}
       className="flex w-full items-start gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-hover disabled:opacity-60"
     >

@@ -8,15 +8,40 @@ import {
   gitUnstage,
   gitDiscardFile,
   gitCommit,
+  gitMergeInProgress,
+  gitConflicts,
+  gitMergeAbort,
   mockGitStatus,
   mockBranchInfo,
   mockDiffSummary,
   mockGitLog,
+  mockMergeInProgress,
   type GitStatus,
   type GitBranchInfo,
   type GitDiffSummary,
   type GitLogEntry,
+  type GitMergeInProgress,
+  type GitConflictEntry,
 } from "../lib/git";
+
+/**
+ * Chunk 2 derive step: a conflicted path that vanished from the index
+ * conflict list while the operation is still in flight counts as resolved
+ * (the user staged their fix). A clean repo resets the bookkeeping.
+ * Pure and exported for tests.
+ */
+export function deriveResolvedPaths(
+  prev: { conflicts: GitConflictEntry[]; resolvedPaths: string[] },
+  nextInfo: GitMergeInProgress,
+  nextConflicts: GitConflictEntry[]
+): string[] {
+  if (!nextInfo.inProgress) return [];
+  const nextPaths = new Set(nextConflicts.map((c) => c.path));
+  const newlyResolved = prev.conflicts
+    .map((c) => c.path)
+    .filter((p) => !nextPaths.has(p));
+  return [...new Set([...prev.resolvedPaths, ...newlyResolved])];
+}
 
 /**
  * Git state: status, branch info, diff summary and commit log. Starts with
@@ -33,6 +58,17 @@ interface GitState {
   logLoading: boolean;
   error: string | null;
   currentRoot: string | null;
+
+  // ── Chunk 2: Conflict Resolution Mode ──────────────────────────────────
+  /** Merge/rebase/cherry-pick/revert currently parked mid-flight. */
+  mergeInfo: GitMergeInProgress;
+  /** Files still conflicted in the index. */
+  conflicts: GitConflictEntry[];
+  /** Paths that left the conflict list during this operation (resolved). */
+  resolvedPaths: string[];
+  /** `git merge --abort`. Throws the backend's message verbatim (callers
+   *  render it) — e.g. the terminal hint for non-merge operations. */
+  abortMerge: () => Promise<void>;
 
   /** Full refresh after open/stage/unstage/commit/file save. */
   refresh: (root: string) => Promise<void>;
@@ -60,24 +96,40 @@ export const useGitStore = create<GitState>((set, get) => ({
   logLoading: false,
   error: null,
   currentRoot: null,
+  mergeInfo: mockMergeInProgress,
+  conflicts: [],
+  resolvedPaths: [],
+
+  abortMerge: async () => {
+    const { currentRoot } = get();
+    if (!currentRoot) throw new Error("No workspace open");
+    await gitMergeAbort(currentRoot);
+    await get().refresh(currentRoot);
+  },
 
   refresh: async (root) => {
     const nonce = ++refreshNonce;
     set({ loading: true, currentRoot: root });
     try {
-      const [status, branchInfo, diffSummary, page] = await Promise.all([
+      const [status, branchInfo, diffSummary, page, mergeInfo, conflicts] = await Promise.all([
         gitStatus(root),
         gitBranchInfo(root),
         gitDiffSummary(root),
         gitLog(root, 0, 50),
+        gitMergeInProgress(root),
+        gitConflicts(root),
       ]);
       if (nonce !== refreshNonce) return; // a newer refresh superseded this one
+      const resolvedPaths = deriveResolvedPaths(get(), mergeInfo, conflicts);
       set({
         status,
         branchInfo,
         diffSummary,
         commits: page,
         logHasMore: page.length === 50,
+        mergeInfo,
+        conflicts,
+        resolvedPaths,
         error: null,
       });
     } catch (err) {

@@ -329,6 +329,76 @@ export async function gitPush(root: string): Promise<GitOpResult> {
   return invoke<GitOpResult>("git_push", { root });
 }
 
+// ── Conflict Resolution Mode (Git Experience Chunk 2) ─────────────────────
+
+/** Snapshot of an in-progress merge/rebase/cherry-pick/revert, or
+ *  `inProgress: false` for a repo in a normal state. */
+export interface GitMergeInProgress {
+  inProgress: boolean;
+  /** "merge" | "rebase" | "cherry-pick" | "revert". */
+  operation?: string;
+  /** Branch being merged/rebased, when git recorded one. */
+  sourceBranch?: string;
+  /** First line of the incoming commit — human context. */
+  sourceSummary?: string;
+}
+
+/** One conflicted file from the index (base/ours/theirs blob ids). */
+export interface GitConflictEntry {
+  path: string;
+  base?: string;
+  ours?: string;
+  theirs?: string;
+  /** "content": both sides edited. "modify-delete": one side deleted. */
+  conflictType: "content" | "modify-delete";
+}
+
+export const mockMergeInProgress: GitMergeInProgress = { inProgress: false };
+
+export async function gitMergeInProgress(root: string): Promise<GitMergeInProgress> {
+  if (!isTauri()) return mockMergeInProgress;
+  return invoke<GitMergeInProgress>("git_merge_in_progress", { root });
+}
+
+/** Every conflicted file in the index — drives the conflict overview panel. */
+export async function gitConflicts(root: string): Promise<GitConflictEntry[]> {
+  if (!isTauri()) return []; // browser dev: no conflicts
+  return invoke<GitConflictEntry[]>("git_conflicts", { root });
+}
+
+/** The base/ours/theirs version of one conflicted file (3-way merge UI).
+ *  browser dev: mock content. */
+export async function gitReadConflictFile(
+  root: string,
+  path: string,
+  stage: "base" | "ours" | "theirs"
+): Promise<string> {
+  if (!isTauri()) return `// mock ${stage} version of ${path}\n`;
+  return invoke<string>("git_read_conflict_file", { root, path, stage });
+}
+
+/** Write the human-approved merge result and mark the path resolved.
+ *  browser dev: no-op. */
+export async function gitResolveFile(root: string, path: string, content: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("git_resolve_file", { root, path, content });
+}
+
+/** Create the real merge commit once every conflict is resolved. The backend
+ *  refuses while the index still has conflicts. Returns the merge commit oid. */
+export async function gitMergeContinue(root: string, message: string): Promise<string> {
+  if (!isTauri()) return "abcdef0123456789abcdef0123456789abcdef01";
+  return invoke<string>("git_merge_continue", { root, message });
+}
+
+/** `git merge --abort`: throw away the half-done merge and restore the
+ *  workdir. For rebase/cherry-pick/revert the backend answers with a
+ *  terminal-hint error — surface that message verbatim. Browser dev: no-op. */
+export async function gitMergeAbort(root: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("git_merge_abort", { root });
+}
+
 /** Unified patch of the staged index vs HEAD — the AI commit-message
  *  generator's input. Capped server-side; empty string when nothing staged. */
 export async function gitStagedDiff(root: string): Promise<string> {

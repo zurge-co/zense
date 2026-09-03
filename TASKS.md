@@ -168,12 +168,12 @@
 - [x] `git_merge_abort(root)` — `merge --abort` equivalent (รองรับเฉพาะ Merge state; rebase/cherry-pick abort แจ้งให้ใช้ terminal ไปก่อน)
 - [x] Unit tests ทุก command (temp repo fixture ตาม pattern เดิม — 82 gitcmd tests ผ่านหมด)
 
-### Chunk 2 — Conflict Resolution Mode UI (P0)
-- [ ] Detect conflict state → เปิด Conflict Mode อัตโนมัติ (banner ทุกหน้า + lock actions ที่เสี่ยงชน state)
-- [ ] Conflict overview panel: รายชื่อไฟล์, progress "แก้แล้ว x/y", คลิกข้ามไฟล์ได้, mark ✅ ต่อไฟล์ที่ resolved
-- [ ] Header อธิบายภาษาคน: กำลัง merge/rebase/cherry-pick อะไรเข้าอะไร
-- [ ] ปุ่ม Abort (ใหญ่ + confirm) — safety net
-- [ ] Guard Pull/Merge ที่มี conflict แสดง dialog เข้า Conflict Mode (ดักจาก `git_pull` error / merge command)
+### Chunk 2 — Conflict Resolution Mode UI (P0) ✅
+- [x] Detect conflict state → เปิด Conflict Mode อัตโนมัติ (banner ทุกหน้า + lock actions ที่เสี่ยงชน state) — `ConflictBanner.tsx` mount ใต้ TitleBar; `gitStore.refresh` ดึง `git_merge_in_progress` + `git_conflicts` ทุกครั้ง; lock branch switch/create + ปุ่ม Commit ระหว่าง Conflict Mode
+- [x] Conflict overview panel: รายชื่อไฟล์, progress "แก้แล้ว x/y", คลิกข้ามไฟล์ได้ (เปิดใน editor), mark ✅ ต่อไฟล์ที่ resolved — section บนสุดของ `ReviewPanel`; ไฟล์ที่หลุดจาก index conflict list = resolved (stage = mark resolved), resolve โดยแก้ไฟล์แล้วกด Stage
+- [x] Header อธิบายภาษาคน: กำลัง merge/rebase/cherry-pick อะไรเข้าอะไร — `headline()` ใน ConflictBanner ใช้ operation + sourceBranch/sourceSummary
+- [x] ปุ่ม Abort (ใหญ่ + confirm) — safety net — `git_merge_abort` ผ่าน ConfirmDialog danger; rebase/cherry-pick/revert แสดง terminal-hint error จาก backend verbatim
+- [x] Guard Pull/Merge ที่มี conflict แสดง dialog เข้า Conflict Mode (ดักจาก `git_pull` error / merge command) — `conflictGuard()` ใน BranchMenu re-check `git_merge_in_progress` หลัง pull/checkout; ทดสอบใน `tests/conflict-mode.test.ts`
 
 ### Chunk 3 — Inline accept UI บน Monaco (P0)
 - [ ] Conflict block view แบบ VS Code: highlight สองฝั่ง + ปุ่ม Accept Current / Accept Incoming / Accept Both / Compare (CodeLens หรือ ViewZone)
