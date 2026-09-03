@@ -1686,6 +1686,322 @@ pub fn git_unstaged_diff(root: String) -> Result<String, String> {
   diff_to_patch_string(&diff)
 }
 
+// ---------------------------------------------------------------------------
+// Conflict resolution primitives (Git Experience — Chunk 1)
+// ---------------------------------------------------------------------------
+// Pure-Rust (git2) backend for the future Conflict Resolution Mode UI: probe
+// the repo state, list conflicts, read the three merge stages, resolve a
+// file, finish a merge, or abort it. No git CLI anywhere in this section.
+
+/// Snapshot of an in-progress merge/rebase/cherry-pick/revert, or
+/// `inProgress: false` for a repo in a normal (clean) state.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GitMergeInProgress {
+  in_progress: bool,
+  /// "merge" | "rebase" | "cherry-pick" | "revert".
+  operation: Option<String>,
+  /// Branch being merged in, when git recorded one (.git/MERGE_MSG).
+  source_branch: Option<String>,
+  /// First line of the incoming commit — human context for the UI.
+  source_summary: Option<String>,
+}
+
+/// One conflicted file as recorded in the index (stage 1=base, 2=ours,
+/// 3=theirs). The OIDs let the UI fetch versions without re-probing.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GitConflictEntry {
+  path: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  base: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  ours: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  theirs: Option<String>,
+  /// "content": both sides edited the file. "modify-delete": one side
+  /// deleted it while the other edited it. (binary / rename-rename taxonomy
+  /// needs a full tree compare and is left to a later chunk.)
+  conflict_type: &'static str,
+}
+
+/// Branch name from the original merge message — git survives ``Merge branch
+/// 'feature'`` in MERGE_MSG; the branch name itself is written nowhere else.
+/// Note: MERGE_MSG is a porcelain artifact — a merge started through libgit2
+/// writes only MERGE_HEAD.
+fn merge_msg_branch(repo: &Repository) -> Option<String> {
+  let text = fs::read_to_string(repo.path().join("MERGE_MSG")).ok()?;
+  let line = text.lines().next()?.trim();
+  let rest = line.strip_prefix("Merge branch '")?;
+  rest.split('\'').next().filter(|s| !s.is_empty()).map(|s| s.to_string())
+}
+
+/// Name of the branch being merged in. First tries MERGE_MSG (written by the
+/// git CLI), then falls back to finding the local branch whose tip is
+/// MERGE_HEAD — that covers merges started through libgit2 too.
+fn merge_source_branch(repo: &Repository) -> Option<String> {
+  if let Some(b) = merge_msg_branch(repo) {
+    return Some(b);
+  }
+  let their = merge_head_oids(repo).ok()?.first().copied()?;
+  let branches = repo.branches(Some(git2::BranchType::Local)).ok()?;
+  for entry in branches {
+    let (branch, _) = entry.ok()?;
+    if branch.get().target() != Some(their) {
+      continue;
+    }
+    if let Ok(Some(name)) = branch.name() {
+      return Some(name.to_string());
+    }
+  }
+  None
+}
+
+/// During a rebase, the branch being rewritten lives in
+/// rebase-merge/head-name (or rebase-apply/head-name) as "refs/heads/x".
+fn rebase_head_branch(repo: &Repository) -> Option<String> {
+  for dir in ["rebase-merge", "rebase-apply"] {
+    if let Ok(text) = fs::read_to_string(repo.path().join(dir).join("head-name")) {
+      let trimmed = text.trim();
+      return Some(trimmed.strip_prefix("refs/heads/").unwrap_or(trimmed).to_string());
+    }
+  }
+  None
+}
+
+/// Every OID in .git/MERGE_HEAD (one for a normal merge, many for octopus).
+fn merge_head_oids(repo: &Repository) -> Result<Vec<git2::Oid>, String> {
+  let text = fs::read_to_string(repo.path().join("MERGE_HEAD"))
+    .map_err(|_| "no merge in progress — nothing to continue".to_string())?;
+  text
+    .lines()
+    .filter(|l| !l.trim().is_empty())
+    .map(|l| git2::Oid::from_str(l.trim()).map_err(|e| e.to_string()))
+    .collect()
+}
+
+/// Read a blob from the object store as UTF-8 text; binary blobs are refused.
+fn read_blob_text(repo: &Repository, oid: git2::Oid, label: &str) -> Result<String, String> {
+  let blob = repo.find_blob(oid).map_err(|e| e.to_string())?;
+  if is_binary_content(blob.content()) {
+    return Err(format!("the {label} of this file is a binary blob — it can't be edited as text"));
+  }
+  Ok(String::from_utf8_lossy(blob.content()).into_owned())
+}
+
+/// What long-running git operation (if any) the repo is parked in right now.
+#[tauri::command]
+pub fn git_merge_in_progress(root: String) -> Result<GitMergeInProgress, String> {
+  let repo = open_repo_or_err(&root)?;
+  let (operation, pseudo_head) = match repo.state() {
+    git2::RepositoryState::Merge => (Some("merge"), Some("MERGE_HEAD")),
+    git2::RepositoryState::CherryPick | git2::RepositoryState::CherryPickSequence => {
+      (Some("cherry-pick"), Some("CHERRY_PICK_HEAD"))
+    }
+    git2::RepositoryState::Revert | git2::RepositoryState::RevertSequence => {
+      (Some("revert"), Some("REVERT_HEAD"))
+    }
+    git2::RepositoryState::Rebase
+    | git2::RepositoryState::RebaseMerge
+    | git2::RepositoryState::RebaseInteractive => (Some("rebase"), None),
+    _ => (None, None),
+  };
+
+  let mut info = GitMergeInProgress {
+    in_progress: operation.is_some(),
+    operation: operation.map(|s| s.to_string()),
+    source_branch: None,
+    source_summary: None,
+  };
+
+  match operation {
+    Some("merge") => info.source_branch = merge_source_branch(&repo),
+    Some("rebase") => info.source_branch = rebase_head_branch(&repo),
+    _ => {}
+  }
+  if let Some(name) = pseudo_head {
+    if let Ok(oid) = repo.refname_to_id(name) {
+      if let Ok(commit) = repo.find_commit(oid) {
+        info.source_summary = commit.summary().map(|s| s.to_string());
+      }
+    }
+  }
+  Ok(info)
+}
+
+/// Every conflicted file in the index, with the OIDs of its base/ours/theirs
+/// stage entries — this drives the conflict overview panel.
+#[tauri::command]
+pub fn git_conflicts(root: String) -> Result<Vec<GitConflictEntry>, String> {
+  let repo = open_repo_or_err(&root)?;
+  let index = repo.index().map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for conflict in index.conflicts().map_err(|e| e.to_string())? {
+    let c = conflict.map_err(|e| e.to_string())?;
+    let path = c
+      .our
+      .as_ref()
+      .or(c.their.as_ref())
+      .or(c.ancestor.as_ref())
+      .map(|e| String::from_utf8_lossy(&e.path).replace('\\', "/"))
+      .unwrap_or_default();
+    let conflict_type = if c.our.is_some() && c.their.is_some() {
+      "content"
+    } else {
+      "modify-delete"
+    };
+    out.push(GitConflictEntry {
+      path,
+      base: c.ancestor.map(|e| e.id.to_string()),
+      ours: c.our.map(|e| e.id.to_string()),
+      theirs: c.their.map(|e| e.id.to_string()),
+      conflict_type,
+    });
+  }
+  Ok(out)
+}
+
+/// The base/ours/theirs version of one conflicted file, straight from the
+/// index stages — the raw material for a 3-way merge UI.
+#[tauri::command]
+pub fn git_read_conflict_file(root: String, path: String, stage: String) -> Result<String, String> {
+  validate_repo_path(&path)?;
+  if !matches!(stage.as_str(), "base" | "ours" | "theirs") {
+    return Err("stage must be 'base', 'ours' or 'theirs'".to_string());
+  }
+  let repo = open_repo_or_err(&root)?;
+  let index = repo.index().map_err(|e| e.to_string())?;
+  let normalized = path.replace('\\', "/");
+
+  for conflict in index.conflicts().map_err(|e| e.to_string())? {
+    let c = conflict.map_err(|e| e.to_string())?;
+    let cpath = c
+      .our
+      .as_ref()
+      .or(c.their.as_ref())
+      .or(c.ancestor.as_ref())
+      .map(|e| String::from_utf8_lossy(&e.path).replace('\\', "/"))
+      .unwrap_or_default();
+    if cpath != normalized {
+      continue;
+    }
+    let entry = match stage.as_str() {
+      "base" => c.ancestor,
+      "ours" => c.our,
+      _ => c.their,
+    };
+    return match entry {
+      Some(e) => read_blob_text(&repo, e.id, &format!("'{stage}' version")),
+      None => Err(if stage == "base" {
+        "this file has no 'base' version — one side added it as a new file".to_string()
+      } else {
+        format!("this file has no '{stage}' version — that side deleted the file")
+      }),
+    };
+  }
+  Err(format!("'{path}' is not a conflicted file — nothing to read"))
+}
+
+/// Write the human-approved merge result and mark the path resolved in the
+/// index (all conflict stages removed, one stage-0 entry added back).
+#[tauri::command]
+pub fn git_resolve_file(root: String, path: String, content: String) -> Result<(), String> {
+  validate_repo_path(&path)?;
+  let repo = open_repo_or_err(&root)?;
+  let full = Path::new(&root).join(&path);
+  if let Some(parent) = full.parent() {
+    fs::create_dir_all(parent).map_err(|e| format!("could not create folder for '{path}': {e}"))?;
+  }
+  fs::write(&full, &content).map_err(|e| format!("could not write '{path}': {e}"))?;
+
+  let mut index = repo.index().map_err(|e| e.to_string())?;
+  // remove_path clears every conflict stage (keeping REUC resolve-undo data)
+  // before add_path re-stages the resolved file as a clean stage-0 entry.
+  index.remove_path(Path::new(&path)).map_err(|e| e.to_string())?;
+  index.add_path(Path::new(&path)).map_err(|e| e.to_string())?;
+  index.write().map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Finish a merge once every conflict is resolved: create the real merge
+/// commit (HEAD + MERGE_HEAD parents) and clear the merge state. Refuses to
+/// run while the index still has conflicts.
+#[tauri::command]
+pub fn git_merge_continue(root: String, message: String) -> Result<String, String> {
+  let repo = open_repo_or_err(&root)?;
+  if repo.state() != git2::RepositoryState::Merge {
+    return Err("no merge in progress — nothing to continue".to_string());
+  }
+  let mut index = repo.index().map_err(|e| e.to_string())?;
+  if index.has_conflicts() {
+    return Err("there are still unresolved conflicts — resolve every conflicted file first".to_string());
+  }
+
+  let their_ids = merge_head_oids(&repo)?;
+  let their_commits: Vec<git2::Commit> = their_ids
+    .iter()
+    .map(|id| repo.find_commit(*id).map_err(|e| e.to_string()))
+    .collect::<Result<_, _>>()?;
+  let head_commit = repo
+    .head()
+    .and_then(|h| h.peel_to_commit())
+    .map_err(|e| e.to_string())?;
+
+  let final_message = if message.trim().is_empty() {
+    match (merge_source_branch(&repo), their_ids.first()) {
+      (Some(branch), _) => format!("Merge branch '{branch}'"),
+      (None, Some(id)) => format!("Merge commit '{}'", short_sha_of(&id.to_string())),
+      (None, None) => "Merge commit".to_string(),
+    }
+  } else {
+    message.trim().to_string()
+  };
+
+  let mut parent_refs: Vec<&git2::Commit> = vec![&head_commit];
+  for c in &their_commits {
+    parent_refs.push(c);
+  }
+
+  let sig = repo.signature().map_err(|e| e.to_string())?;
+  let tree_id = index.write_tree().map_err(|e| e.to_string())?;
+  let tree = repo.find_tree(tree_id).map_err(|e| e.to_string())?;
+  let oid = repo
+    .commit(Some("HEAD"), &sig, &sig, &final_message, &tree, &parent_refs)
+    .map_err(|e| e.to_string())?;
+  repo.cleanup_state().map_err(|e| e.to_string())?;
+  Ok(oid.to_string())
+}
+
+/// `git merge --abort`: throw away the half-done merge and put the workdir
+/// back exactly where HEAD stands. Only merges are handled here — rebase /
+/// cherry-pick aborts get a terminal hint until their chunk lands.
+#[tauri::command]
+pub fn git_merge_abort(root: String) -> Result<(), String> {
+  let repo = open_repo_or_err(&root)?;
+  match repo.state() {
+    git2::RepositoryState::Merge => {}
+    git2::RepositoryState::Clean => {
+      return Err("no merge in progress — nothing to abort".to_string());
+    }
+    state => {
+      return Err(format!(
+        "a {state:?} is in progress — finish or abort it in the integrated terminal \
+         (e.g. `git rebase --abort` / `git cherry-pick --abort`)",
+      ));
+    }
+  }
+
+  let head = repo
+    .head()
+    .and_then(|h| h.peel(git2::ObjectType::Commit))
+    .map_err(|e| e.to_string())?;
+  repo
+    .reset(&head, git2::ResetType::Hard, None)
+    .map_err(|e| e.to_string())?;
+  repo.cleanup_state().map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -3334,6 +3650,229 @@ mod tests {
       "a\nb\n".into(), "a\nb\n".into(),
     ).unwrap_err();
     assert!(err.contains("range"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  // -- Conflict primitives (Git Experience Chunk 1) ------------------------
+
+  /// A repo parked mid-merge with one content conflict: `conflict.txt` is
+  /// "original\n" in base, "main side\n" on the current branch and
+  /// "other side\n" on branch "other".
+  fn make_conflict_repo() -> (PathBuf, String) {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    // Isolate identity from the developer's global gitconfig.
+    let mut cfg = repo.config().unwrap();
+    cfg.set_str("user.name", "Zense Test").unwrap();
+    cfg.set_str("user.email", "test@zense.local").unwrap();
+
+    fs::write(dir.join("conflict.txt"), "original\n").unwrap();
+    stage_file(&repo, "conflict.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    let main_name = repo.head().unwrap().shorthand().unwrap().to_string();
+
+    let main_commit = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.branch("other", &main_commit, false).unwrap();
+
+    checkout_local_branch(&repo, "other").unwrap();
+    fs::write(dir.join("conflict.txt"), "other side\n").unwrap();
+    stage_file(&repo, "conflict.txt").unwrap();
+    let other_oid = commit_head(&repo, "other side").unwrap();
+
+    checkout_local_branch(&repo, &main_name).unwrap();
+    fs::write(dir.join("conflict.txt"), "main side\n").unwrap();
+    stage_file(&repo, "conflict.txt").unwrap();
+    commit_head(&repo, "main side").unwrap();
+
+    let ann = repo.find_annotated_commit(other_oid).unwrap();
+    repo.merge(&[&ann], None, None).unwrap();
+    assert_eq!(repo.state(), git2::RepositoryState::Merge);
+    (dir, root)
+  }
+
+  #[test]
+  fn test_git_merge_in_progress_clean_repo() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "hi").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    let info = git_merge_in_progress(root).unwrap();
+    assert!(!info.in_progress);
+    assert!(info.operation.is_none());
+    assert!(info.source_branch.is_none());
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_merge_in_progress_reports_merge() {
+    let (dir, root) = make_conflict_repo();
+
+    let info = git_merge_in_progress(root).unwrap();
+    assert!(info.in_progress);
+    assert_eq!(info.operation.as_deref(), Some("merge"));
+    assert_eq!(info.source_branch.as_deref(), Some("other"));
+    assert_eq!(info.source_summary.as_deref(), Some("other side"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_merge_in_progress_not_a_repo() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+
+    let err = git_merge_in_progress(root).unwrap_err();
+    assert!(err.contains("not a git repository"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_conflicts_lists_conflict_entry() {
+    let (dir, root) = make_conflict_repo();
+
+    let entries = git_conflicts(root).unwrap();
+    assert_eq!(entries.len(), 1);
+    let e = &entries[0];
+    assert_eq!(e.path, "conflict.txt");
+    assert_eq!(e.conflict_type, "content");
+    assert!(e.base.is_some());
+    assert!(e.ours.is_some());
+    assert!(e.theirs.is_some());
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_conflicts_empty_when_clean() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "hi").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    assert!(git_conflicts(root).unwrap().is_empty());
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_read_conflict_file_reads_all_stages() {
+    let (dir, root) = make_conflict_repo();
+
+    let base = git_read_conflict_file(root.clone(), "conflict.txt".into(), "base".into()).unwrap();
+    let ours = git_read_conflict_file(root.clone(), "conflict.txt".into(), "ours".into()).unwrap();
+    let theirs = git_read_conflict_file(root.clone(), "conflict.txt".into(), "theirs".into()).unwrap();
+    assert_eq!(base, "original\n");
+    assert_eq!(ours, "main side\n");
+    assert_eq!(theirs, "other side\n");
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_read_conflict_file_bad_stage_path_and_conflict() {
+    let (dir, root) = make_conflict_repo();
+
+    let err = git_read_conflict_file(root.clone(), "conflict.txt".into(), "wat".into()).unwrap_err();
+    assert!(err.contains("stage"));
+    let err = git_read_conflict_file(root.clone(), "../outside".into(), "ours".into()).unwrap_err();
+    assert!(err.contains("escapes"));
+    let err = git_read_conflict_file(root, "missing.txt".into(), "ours".into()).unwrap_err();
+    assert!(err.contains("not a conflicted file"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_resolve_file_marks_resolved() {
+    let (dir, root) = make_conflict_repo();
+
+    git_resolve_file(root.clone(), "conflict.txt".into(), "resolved\n".into()).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("conflict.txt")).unwrap(), "resolved\n");
+    assert!(git_conflicts(root.clone()).unwrap().is_empty());
+
+    let err = git_resolve_file(root, "../x".into(), "nope".into()).unwrap_err();
+    assert!(err.contains("escapes"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_merge_continue_blocked_by_conflicts() {
+    let (dir, root) = make_conflict_repo();
+
+    let err = git_merge_continue(root, "try anyway".into()).unwrap_err();
+    assert!(err.contains("conflict"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_merge_continue_creates_merge_commit() {
+    let (dir, root) = make_conflict_repo();
+
+    git_resolve_file(root.clone(), "conflict.txt".into(), "resolved\n".into()).unwrap();
+    let oid = git_merge_continue(root.clone(), "merge other into main".into()).unwrap();
+
+    let repo = git2::Repository::open(&root).unwrap();
+    assert_eq!(repo.state(), git2::RepositoryState::Clean);
+    let commit = repo.find_commit(oid.parse::<git2::Oid>().unwrap()).unwrap();
+    assert_eq!(commit.parent_count(), 2);
+    assert_eq!(commit.summary().unwrap(), "merge other into main");
+
+    let info = git_merge_in_progress(root).unwrap();
+    assert!(!info.in_progress);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_merge_continue_default_message_uses_branch() {
+    let (dir, root) = make_conflict_repo();
+
+    git_resolve_file(root.clone(), "conflict.txt".into(), "resolved\n".into()).unwrap();
+    let oid = git_merge_continue(root.clone(), "   ".into()).unwrap();
+
+    let repo = git2::Repository::open(&root).unwrap();
+    let commit = repo.find_commit(oid.parse::<git2::Oid>().unwrap()).unwrap();
+    assert_eq!(commit.summary().unwrap(), "Merge branch 'other'");
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_merge_abort_restores_workdir() {
+    let (dir, root) = make_conflict_repo();
+
+    git_merge_abort(root.clone()).unwrap();
+
+    let info = git_merge_in_progress(root.clone()).unwrap();
+    assert!(!info.in_progress);
+    assert_eq!(fs::read_to_string(dir.join("conflict.txt")).unwrap(), "main side\n");
+    assert!(git_conflicts(root).unwrap().is_empty());
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_merge_abort_without_merge_errors() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "hi").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+
+    let err = git_merge_abort(root).unwrap_err();
+    assert!(err.contains("nothing to abort"));
 
     fs::remove_dir_all(&dir).ok();
   }
