@@ -74,7 +74,7 @@
 - [ ] Split editor (ปุ่มมีแล้ว, ยังไม่ทำงาน)
 - [ ] Diagnostics จริง (LSP หรือ tree-sitter)
 - [ ] คลิก symbol ใน outline → jump ไปบรรทัดจริง
-
+- [ ] กด cmd+delete เพื่อไม่ต้อง prompt confirm
 ## ↔️ Diff View
 
 - [x] Monaco DiffEditor: side-by-side (default) / inline toggle
@@ -152,6 +152,85 @@
 - [ ] จำขนาดหน้าจอล่าสุดก่อนจะปิด (persist window size/position ผ่าน plugin-store หรือ tauri-plugin-window-state)
 - [ ] CLI entry: `zense .`, `zense --profile backend` (ตาม README)
 - [ ] CI: build + typecheck + lint
+
+## 🌳 Git Experience (backlog — ทำทีละ chunk)
+
+> เป้าหมาย: คนใช้ CLI ไม่เป็นทำงานครบ loop ใน app ได้ (commit, sync, merge, fix conflict, undo)
+> แต่ละ chunk ออกแบบให้ทำจบใน 1 ชิ้นงาน — ไม่ผูกกัน เรียงทำตาม priority
+> Backend: git2 (pure Rust) ก่อนเสมอ, fallback git CLI เฉพาะ network/auth ops (ตาม pattern `git_fetch`/`git_pull` เดิม)
+
+### Chunk 1 — Refactor: git conflict primitives (backend พื้นฐาน) ✅ (eval PASS, commit c480371)
+- [x] `git_merge_in_progress(root)` — ตรวจ `repo.state()` (Merge/Rebase/CherryPick/Revert) + อ่าน `MERGE_HEAD` / branch ที่กำลังรวม (หมายเหตุ: libgit2 ไม่เขียน `MERGE_MSG` → fallback หา local branch ที่ชี้ `MERGE_HEAD`)
+- [x] `git_conflicts(root)` — list ไฟล์ที่ conflict จาก `index.conflicts()` (base/ours/theirs OIDs + path + conflict type — ตอนนี้ derivable แค่ `content` / `modify-delete`; `binary` / `rename-rename` ต้อง tree compare เพิ่ม → follow-up task)
+- [x] `git_read_conflict_file(root, path, stage)` — อ่านเนื้อหา base/ours/theirs แยกกัน สำหรับ merge UI
+- [x] `git_resolve_file(root, path, content)` — เขียนผลลัพธ์ลง workdir + add เข้า index (mark resolved)
+- [x] `git_merge_continue(root, message)` — สร้าง merge commit เมื่อ resolve ครบ (guard: index ยังมี conflict ห้าม commit)
+- [x] `git_merge_abort(root)` — `merge --abort` equivalent (รองรับเฉพาะ Merge state; rebase/cherry-pick abort แจ้งให้ใช้ terminal ไปก่อน)
+- [x] Unit tests ทุก command (temp repo fixture ตาม pattern เดิม — 82 gitcmd tests ผ่านหมด)
+
+### Chunk 2 — Conflict Resolution Mode UI (P0)
+- [ ] Detect conflict state → เปิด Conflict Mode อัตโนมัติ (banner ทุกหน้า + lock actions ที่เสี่ยงชน state)
+- [ ] Conflict overview panel: รายชื่อไฟล์, progress "แก้แล้ว x/y", คลิกข้ามไฟล์ได้, mark ✅ ต่อไฟล์ที่ resolved
+- [ ] Header อธิบายภาษาคน: กำลัง merge/rebase/cherry-pick อะไรเข้าอะไร
+- [ ] ปุ่ม Abort (ใหญ่ + confirm) — safety net
+- [ ] Guard Pull/Merge ที่มี conflict แสดง dialog เข้า Conflict Mode (ดักจาก `git_pull` error / merge command)
+
+### Chunk 3 — Inline accept UI บน Monaco (P0)
+- [ ] Conflict block view แบบ VS Code: highlight สองฝั่ง + ปุ่ม Accept Current / Accept Incoming / Accept Both / Compare (CodeLens หรือ ViewZone)
+- [ ] Next/prev conflict navigator (ลูกศร + counter "2/5")
+- [ ] Quick actions ระดับไฟล์: เอาของเราทั้งไฟล์ / ของเขาทั้งไฟล์
+- [ ] Save → `git_resolve_file` → refresh overview progress
+
+### Chunk 4 — Safety checks ก่อน Continue (P0)
+- [ ] Scan conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) คงค้างทั้ง repo ก่อน continue — block + พา jump ไปจุดที่เจอ
+- [ ] แสดง diff ของ resolution ก่อน commit รอบสุดท้าย (review step)
+- [ ] แนะรัน build/test ใน integrated terminal ก่อน continue (optional, 1-click run)
+
+### Chunk 5 — Sync button + publish (P1, ใช้ทุกวัน)
+- [ ] ปุ่ม Sync บน StatusBar: fetch → pull → push ทีเดียว + แสดง ahead/behind ก่อนกด
+- [ ] Publish branch: branch ที่ยังไม่มี upstream → push + set-upstream อัตโนมัติ
+- [ ] Pull options dialog เมื่อ diverged: merge / rebase พร้อมคำอธิบายภาษาคน
+- [ ] Error handling ภาษาคน (auth fail, non-fast-forward, no network)
+- [ ] Merge branch ผ่าน GUI (เลือก branch → merge เข้า current; conflict → เข้า Chunk 2 flow)
+
+### Chunk 6 — Stash manager (P1)
+- [ ] `git_stash_list` / `git_stash_save` (message) / `git_stash_apply` / `git_stash_pop` / `git_stash_drop` (git2)
+- [ ] Stash panel: list + ดู diff ของ stash + apply/pop/drop ผ่าน context menu
+- [ ] Stash pop ที่ conflict → เข้า Conflict Mode (Chunk 2)
+- [ ] "Stash & switch branch" flow สำหรับคนมีงานค้างแล้วอยากสลับ branch
+
+### Chunk 7 — Undo & amend (P1)
+- [ ] `git_reflog(root, limit)` — อ่าน reflog ของ HEAD
+- [ ] Undo panel/proposal: "ย้อนกลับ 1 ขั้น" → reset ไป reflog entry ก่อนหน้า (soft/mixed พร้อมคำอธิบาย)
+- [ ] Amend last commit (UI บน commit box: checkbox "Amend") + amend message-only (ไม่แตะ staged changes)
+
+### Chunk 8 — Commit graph (P1, visual จุดขาย)
+- [ ] `git_log_graph(root, limit)` — commits + parent relations + refs (branch/tag/HEAD) สำหรับ render
+- [ ] Graph column ใน History panel: lane สี + merge curves (pure SVG/canvas, no lib หนัก)
+- [ ] Click commit → เปิด commit detail ที่มีอยู่แล้ว; right-click → checkout / create-branch-from / cherry-pick (เชื่อม Chunk ที่เหลือ)
+
+### Chunk 9 — Blame & file history (P2, เชื่อม vision "understanding code")
+- [ ] `git_blame(root, path)` — per-line commit/author/time (git2 `blame_file`)
+- [ ] Blame gutter ใน Monaco editor (hover = commit summary; คลิก → เปิด commit)
+- [ ] `git_file_history(root, path)` — log เฉพาะไฟล์ + rename detection (`--follow` equivalent)
+- [ ] Context menu ใน Explorer: "View File History"
+
+### Chunk 10 — AI conflict assist (P2, moat ของ zense)
+- [ ] ปุ่ม "อธิบาย conflict นี้" บนแต่ละก้อน — ส่ง diff สองฝั่ง + blame context เข้า LLM agent เดิม (per-conflict)
+- [ ] Blame ทั้งสองฝั่งบน conflict view (ใครแก้, commit ไหน, เมื่อไหร่)
+- [ ] AI "ช่วย resolve" → proposal diff ให้ human Accept/Edit/Reject เท่านั้น (ห้าม auto-apply) + confidence indicator
+- [ ] AI post-resolve check: เตือน import/compile risks จาก codebase context
+
+### Chunk 11 — Cherry-pick / revert / tags (P2)
+- [ ] Cherry-pick commit จาก History context menu (conflict → Chunk 2 flow)
+- [ ] Revert commit (สร้าง revert commit อัตโนมัติ + message สำเร็จรูป)
+- [ ] Tag manager: list/create/delete/push tags + show tags บน graph (Chunk 8)
+- [ ] Compare branches: branch picker + reuse compare view (`git_diff_commits` มีแล้ว)
+
+### Chunk 12 — GitHub integration (P3)
+- [ ] Clone repo ผ่าน GUI (welcome screen quick action)
+- [ ] Create PR จาก current branch (เปิด gh CLI / API)
+- [ ] แสดง PR/checks status บน branch (optional)
 
 ---
 
