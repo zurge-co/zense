@@ -10,9 +10,10 @@
  *   3. Uploads {latest.json, *.app.tar.gz, *.app.tar.gz.sig, *.dmg, install.sh}
  *      to the R2 bucket via wrangler
  *
- * Required environment:
- *   ZENSE_DOWNLOAD_URL              public origin of the worker, e.g.
- *                                   https://zense-dl.<subdomain>.workers.dev
+ * Environment (all optional — sensible defaults are derived from repo config):
+ *   ZENSE_DOWNLOAD_URL              public origin of the download worker
+ *                                   (default: origin of plugins.updater.endpoints[0]
+ *                                    in src-tauri/tauri.conf.json)
  *   TAURI_SIGNING_PRIVATE_KEY_PATH  path to minisign private key
  *                                   (default: ~/.tauri/zense.key)
  *
@@ -37,8 +38,19 @@ const conf = JSON.parse(readFileSync(join(ROOT, "src-tauri/tauri.conf.json"), "u
 const version = conf.version;
 if (!version || version === "0.0.0") fail(`Set a real version in src-tauri/tauri.conf.json first (got "${version}")`);
 
-const BASE_URL = process.env.ZENSE_DOWNLOAD_URL;
-if (!BASE_URL) fail("ZENSE_DOWNLOAD_URL is not set (e.g. https://zense-dl.<subdomain>.workers.dev)");
+// Default the download origin from the updater endpoint in tauri.conf.json
+// (single source of truth — the app already downloads from that URL), so the
+// script runs with zero env setup. Env var still wins if set.
+const BASE_URL =
+  process.env.ZENSE_DOWNLOAD_URL ??
+  (() => {
+    const endpoint = conf.plugins?.updater?.endpoints?.[0];
+    if (!endpoint) {
+      fail("No ZENSE_DOWNLOAD_URL env and no plugins.updater.endpoints[0] in tauri.conf.json");
+    }
+    return new URL(endpoint).origin;
+  })();
+console.log(`→ Download origin: ${BASE_URL}`);
 const BUCKET = process.env.R2_BUCKET ?? "zense-releases";
 const KEY_PATH =
   process.env.TAURI_SIGNING_PRIVATE_KEY_PATH ?? join(homedir(), ".tauri/zense.key");

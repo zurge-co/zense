@@ -23,8 +23,9 @@
  *   --no-publish     stop after push; skip the R2 publish step
  *   -h, --help       show this help
  *
- * Env (same as publish-update.mjs):
- *   ZENSE_DOWNLOAD_URL, TAURI_SIGNING_PRIVATE_KEY_PATH, R2_BUCKET, NOTES
+ * Env (all optional — defaults come from repo config; see publish-update.mjs):
+ *   ZENSE_DOWNLOAD_URL   overrides the updater-endpoint origin in tauri.conf.json
+ *   TAURI_SIGNING_PRIVATE_KEY_PATH, R2_BUCKET, NOTES
  *
  * If the publish step fails, the version commit/tag/push are already done
  * and safe — retry with:  bun run publish
@@ -146,9 +147,15 @@ if (cargoVersion !== current) {
   fail(`Cargo.toml version is ${cargoVersion}, expected ${current} — fix the drift manually first`);
 }
 
-// Early env check so we fail before rewriting files, not 20 min into a build.
-if (!NO_PUBLISH && !process.env.ZENSE_DOWNLOAD_URL) {
-  fail("ZENSE_DOWNLOAD_URL is not set (needed by publish-update.mjs) — set it, or pass --no-publish");
+// Early config check so we fail before rewriting files, not 20 min into a build:
+// publish-update.mjs derives its download origin from the updater endpoint,
+// so it must exist (or be overridable via env).
+if (
+  !NO_PUBLISH &&
+  !process.env.ZENSE_DOWNLOAD_URL &&
+  !tauriConf.plugins?.updater?.endpoints?.[0]
+) {
+  fail("No ZENSE_DOWNLOAD_URL env and no plugins.updater.endpoints[0] in tauri.conf.json");
 }
 
 // ── Plan ─────────────────────────────────────────────────────────────────
@@ -159,6 +166,7 @@ Plan:
   commit    chore: bump version to ${nextVersion}
   tag       ${tagName} (annotated)
   push      origin ${branch} + ${tagName}
+  download  ${(() => { const u = process.env.ZENSE_DOWNLOAD_URL ?? tauriConf.plugins?.updater?.endpoints?.[0]; return u ? new URL(u).origin : "(not set — publish would fail)"; })()}
   publish   ${NO_PUBLISH ? "skipped (--no-publish)" : `scripts/publish-update.mjs${SKIP_BUILD ? " --skip-build" : ""}`}
 `);
 
