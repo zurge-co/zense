@@ -7,8 +7,16 @@ mod system_prompt;
 mod tools;
 mod watcher;
 
+use std::sync::Mutex;
+
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{App, Emitter, Manager, WebviewWindowBuilder};
+
+/// Label of the most recently focused webview window. With multiple
+/// project windows open, menu actions (⌘S, ⌘B, …) must reach only the
+/// focused window — not every window — so we track focus here and route
+/// scoped emits through it. Defaults to the config window ("main").
+struct FocusedWindow(Mutex<String>);
 
 /// Build the full native application menu (macOS menu bar; in-window menu on
 /// Windows/Linux), mirroring what users expect from standard desktop apps.
@@ -208,6 +216,7 @@ pub fn run() {
     ])
     .manage(ptycmd::PtyManager::default())
     .manage(watcher::WatchManager::default())
+    .manage(FocusedWindow(Mutex::new("main".to_string())))
     .setup(|app| {
       let menu = build_menu(app)?;
       app.set_menu(menu)?;
@@ -224,19 +233,34 @@ pub fn run() {
     // Unsaved-changes guard: never let the OS close a window directly;
     // the frontend decides (prompt → save/discard → window.destroy()).
     .on_window_event(|window, event| {
-      if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-        api.prevent_close();
-        window.emit("app://close-requested", ()).ok();
+      match event {
+        tauri::WindowEvent::CloseRequested { api, .. } => {
+          api.prevent_close();
+          window.emit("app://close-requested", ()).ok();
+        }
+        // Keep the menu-action router pointed at the window the user is
+        // actually working in (multi-project windows).
+        tauri::WindowEvent::Focused(true) => {
+          *window.state::<FocusedWindow>().0.lock().unwrap() =
+            window.label().to_string();
+        }
+        _ => {}
       }
     })
     .on_menu_event(|app, event| {
       match event.id().as_ref() {
         "new_window" => {
-          let count = app.webview_windows().len();
-          let label = format!("window-{}", count + 1);
-          if app.get_webview_window(&label).is_some() {
-            return;
-          }
+          // First unused label — counting existing windows breaks once a
+          // middle window is closed (window-2 + window-3 open, close 2,
+          // len is 2 → "window-3" collides and nothing happens).
+          let mut n = 2;
+          let label = loop {
+            let candidate = format!("window-{n}");
+            if app.get_webview_window(&candidate).is_none() {
+              break candidate;
+            }
+            n += 1;
+          };
           let built = WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::default())
             .title("Zense")
             .inner_size(1440.0, 900.0)
@@ -253,9 +277,17 @@ pub fn run() {
           }
           built.ok();
         }
-        // Everything else is an app action the web UI owns — forward it.
+        // Everything else is an app action the web UI owns — forward it
+        // to the focused window only (app.emit would broadcast to every
+        // project window, e.g. ⌘S saving files in all of them).
         other => {
-          let _ = app.emit("menu-action", other);
+          let target = app.state::<FocusedWindow>().0.lock().unwrap().clone();
+          let win = app
+            .get_webview_window(&target)
+            .or_else(|| app.get_webview_window("main"));
+          if let Some(w) = win {
+            let _ = w.emit("menu-action", other);
+          }
         }
       }
     })

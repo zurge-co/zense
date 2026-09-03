@@ -35,6 +35,7 @@ export default function App() {
   const closeGuardDialog = useCloseRequestGuard();
   useUiPrefs();
   useUiZoom();
+  useWindowTitle();
 
   return (
     <>
@@ -522,6 +523,21 @@ function isInputFocused(): boolean {
   const el = document.activeElement;
   if (!el) return false;
   return !!el.closest('input, textarea, [contenteditable], .monaco-editor');
+}
+
+/**
+ * Reflect the per-window workspace in the native window title so Mission
+ * Control, the Dock, and the OS Window menu can tell multi-project
+ * windows apart (File > New Window opens one window per project).
+ */
+function useWindowTitle() {
+  const workspaceName = useUIStore((s) => s.workspaceName);
+  useEffect(() => {
+    if (!isTauri()) return;
+    void getCurrentWindow()
+      .setTitle(workspaceName ? `zense — ${workspaceName}` : "Zense")
+      .catch(() => {});
+  }, [workspaceName]);
 }
 
 /**
