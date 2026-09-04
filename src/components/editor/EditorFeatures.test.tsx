@@ -113,6 +113,18 @@ describe("unsaved close guard", () => {
     expect(ea).toContain('kind: "single"');
     expect(ea).toContain("Close Without Saving");
   });
+
+  test("tab-bar close button always routes through closeSingle (no direct save)", async () => {
+    const ea = await srcRead("components/editor/EditorArea.tsx");
+    // The tab-bar button must show the same Save/Discard confirm as the
+    // context-menu Close — never the untitled save-as dialog straight away.
+    const tabBar = ea.slice(ea.indexOf("{/* Tab bar */}"));
+    expect(tabBar).toContain("closeSingle(key)");
+    expect(tabBar).not.toContain("saveUntitledAs(workspacePath, key)");
+    expect(tabBar).not.toContain("void saveFile(workspacePath, tab.path)");
+    // Dirty tabs still show the ● indicator, revealed as ✕ on hover.
+    expect(tabBar).toContain("group-hover:hidden");
+  });
 });
 
 // ── Auto-save ───────────────────────────────────────────────────────────────

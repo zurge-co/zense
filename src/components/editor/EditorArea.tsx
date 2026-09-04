@@ -225,34 +225,34 @@ export function EditorArea() {
               {tab.kind === "compare" && (
                 <span className="rounded bg-accent/15 px-1 text-[9.5px] font-medium text-accent">CMP</span>
               )}
-              {isEditableTab(tab) && dirtyPaths.has(tab.path) ? (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!workspacePath) return;
-                    if (tab.kind === "untitled") void saveUntitledAs(workspacePath, key);
-                    else void saveFile(workspacePath, tab.path);
-                  }}
-                  title={tab.kind === "untitled" ? "Save as… (⌘S)" : "Save file"}
-                  className={`rounded p-0.5 hover:bg-active ${
-                    active ? "opacity-80 hover:opacity-100" : "opacity-0 group-hover:opacity-80"
-                  }`}
-                >
-                  <span className="text-[10px] leading-none text-accent">●</span>
-                </button>
-              ) : (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeSingle(key);
-                  }}
-                  className={`rounded p-0.5 hover:bg-active ${
-                    active ? "opacity-60 hover:opacity-100" : "opacity-0 group-hover:opacity-60"
-                  }`}
-                >
-                  <X size={12} />
-                </button>
-              )}
+              {(() => {
+                const dirty = isEditableTab(tab) && dirtyPaths.has(tab.path);
+                return (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Always go through closeSingle: dirty tabs get the same
+                      // Save & Close / Close Without Saving confirm as the
+                      // context-menu Close — never a raw save-as dialog.
+                      closeSingle(key);
+                    }}
+                    title={dirty ? "Close (unsaved changes)" : "Close"}
+                    className={`rounded p-0.5 hover:bg-active ${
+                      active ? "opacity-80 hover:opacity-100" : "opacity-0 group-hover:opacity-80"
+                    }`}
+                  >
+                    {dirty ? (
+                      <>
+                        {/* ● dirty indicator; becomes ✕ on hover (VS Code style) */}
+                        <span className="block text-[10px] leading-none text-accent group-hover:hidden">●</span>
+                        <X size={12} className="hidden group-hover:block" />
+                      </>
+                    ) : (
+                      <X size={12} />
+                    )}
+                  </button>
+                );
+              })()}
             </div>
           );
         })}
