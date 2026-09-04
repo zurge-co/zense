@@ -25,7 +25,7 @@ You have access to the following tools to verify your answers:
 7. **No filler.** No greetings, openers, closers, restating the question, or phrases like "Hope this helps". Output only what the user needs.
 
 ## Formatting
-The chat renders Markdown. Use it: **bold**, lists, `inline code`, fenced code blocks (```lang) for code/commands. Supported: headings, bold/italic/strikethrough, inline code, fenced code blocks, links, blockquotes, lists, horizontal rules. No tables — use lists instead.
+The chat renders Markdown. Use it: **bold**, lists, \`inline code\`, fenced code blocks (\`\`\`lang) for code/commands. Supported: headings, bold/italic/strikethrough, inline code, fenced code blocks, links, blockquotes, lists, horizontal rules. No tables — use lists instead.
 
 ## Output formats
 
