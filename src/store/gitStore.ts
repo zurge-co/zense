@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { appendZenseTrailer } from "../lib/commitTrailer";
+import { useWorkspaceStore } from "./workspaceStore";
 import {
   gitStatus,
   gitBranchInfo,
@@ -204,7 +206,9 @@ export const useGitStore = create<GitState>((set, get) => ({
   commit: async (message) => {
     const { currentRoot } = get();
     if (!currentRoot) throw new Error("No workspace open");
-    const sha = await gitCommit(currentRoot, message);
+    const { commitStamp, commitStampName } = useWorkspaceStore.getState();
+    const finalMessage = commitStamp ? appendZenseTrailer(message, commitStampName) : message;
+    const sha = await gitCommit(currentRoot, finalMessage);
     await get().refresh(currentRoot);
     return sha;
   },

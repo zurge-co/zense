@@ -4,7 +4,7 @@ import { useUIStore, type SettingsSection } from "../../store/uiStore";
 import { shortcutGroups } from "../../lib/mockData";
 import { useChatStore } from "../../store/chatStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { applyAutoSave, applyEditorFontSize, applyShowHiddenFiles, applyUiZoom } from "../../lib/settings";
+import { applyAutoSave, applyCommitStamp, applyCommitStampName, applyEditorFontSize, applyShowHiddenFiles, applyUiZoom } from "../../lib/settings";
 import type { LlmConfig, EnabledTools, AgentGuards } from "../../lib/llm";
 import { DEFAULT_ENABLED_TOOLS, DEFAULT_GUARDS, llmTestConnection } from "../../lib/llm";
 
@@ -98,6 +98,9 @@ function Toggle({ on, onClick }: { on: boolean; onClick?: () => void }) {
 function GeneralSection() {
   const autoSave = useWorkspaceStore((s) => s.autoSave);
   const showHiddenFiles = useWorkspaceStore((s) => s.showHiddenFiles);
+  const commitStamp = useWorkspaceStore((s) => s.commitStamp);
+  const commitStampName = useWorkspaceStore((s) => s.commitStampName);
+  const [stampName, setStampName] = useState(commitStampName);
   return (
     <div>
       <Row label="Auto-save files" hint="Save dirty files 1s after typing stops">
@@ -115,6 +118,20 @@ function GeneralSection() {
       <Row label="Telemetry" hint="Off by default — Zense is privacy first">
         <Toggle on={false} />
       </Row>
+      <Row label="Zense review stamp" hint="Append a Zense-Reviewed trailer with timestamp to every commit">
+        <Toggle on={commitStamp} onClick={() => void applyCommitStamp(!commitStamp)} />
+      </Row>
+      {commitStamp && (
+        <Row label="Reviewer name" hint="Shown in the stamp, e.g. Zense-Reviewed: Alice at 4 Sep 2026, 15:30">
+          <input
+            value={stampName}
+            onChange={(e) => setStampName(e.target.value)}
+            onBlur={() => void applyCommitStampName(stampName)}
+            placeholder="Optional"
+            className="w-56 rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none placeholder:text-fg-muted/40"
+          />
+        </Row>
+      )}
     </div>
   );
 }

@@ -38,6 +38,10 @@ interface WorkspaceFsState {
   editorFontSize: number;
   /** Whole-UI zoom in percent, 50–200 (Settings > Appearance, ⌘+/⌘−/⌘0). */
   uiZoom: number;
+  /** Append a Zense-Reviewed trailer when committing (Settings > General). */
+  commitStamp: boolean;
+  /** Reviewer name embedded in the stamp; empty = timestamp only. */
+  commitStampName: string;
   /** Currently focused tree node (file or folder) for keyboard shortcuts. */
   selectedTreeNode: { path: string; type: "file" | "folder" } | null;
   /** In-memory clipboard for copy/paste (path + type). */
@@ -106,6 +110,8 @@ interface WorkspaceFsState {
   setShowHiddenFiles: (v: boolean) => void;
   setEditorFontSize: (v: number) => void;
   setUiZoom: (v: number) => void;
+  setCommitStamp: (v: boolean) => void;
+  setCommitStampName: (v: string) => void;
   /** Subscribe to fs://changed watcher events for `root` (idempotent). */
   initWatcher: (root: string) => void;
 }
@@ -133,6 +139,8 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   showHiddenFiles: true,
   editorFontSize: 12.5,
   uiZoom: 100,
+  commitStamp: true,
+  commitStampName: "",
 
   loadWorkspace: async (root) => {
     if (!isTauri()) return; // browser dev keeps the mock workspace
@@ -269,6 +277,10 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   setEditorFontSize: (v) => set({ editorFontSize: v }),
 
   setUiZoom: (v) => set({ uiZoom: v }),
+
+  setCommitStamp: (v) => set({ commitStamp: v }),
+
+  setCommitStampName: (v) => set({ commitStampName: v }),
 
   initWatcher: (root) => {
     if (!isTauri() || watcherRoot === root) return;

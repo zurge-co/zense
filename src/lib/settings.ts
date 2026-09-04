@@ -20,6 +20,8 @@ const KEY_AUTO_SAVE = "autoSave";
 const KEY_SHOW_HIDDEN_FILES = "showHiddenFiles";
 const KEY_EDITOR_FONT_SIZE = "editorFontSize";
 const KEY_UI_ZOOM = "uiZoom";
+const KEY_COMMIT_STAMP = "commitStamp";
+const KEY_COMMIT_STAMP_NAME = "commitStampName";
 
 /** UI zoom bounds / keyboard step (percent). */
 export const UI_ZOOM_MIN = 50;
@@ -45,6 +47,14 @@ export async function loadUiPrefs(): Promise<void> {
     const uiZoom = await store.get<number>(KEY_UI_ZOOM);
     if (typeof uiZoom === "number" && uiZoom >= UI_ZOOM_MIN && uiZoom <= UI_ZOOM_MAX) {
       useWorkspaceStore.getState().setUiZoom(uiZoom);
+    }
+    const commitStamp = await store.get<boolean>(KEY_COMMIT_STAMP);
+    if (typeof commitStamp === "boolean") {
+      useWorkspaceStore.getState().setCommitStamp(commitStamp);
+    }
+    const commitStampName = await store.get<string>(KEY_COMMIT_STAMP_NAME);
+    if (typeof commitStampName === "string") {
+      useWorkspaceStore.getState().setCommitStampName(commitStampName);
     }
 
     // Settings may load after a workspace is already open; bring the current
@@ -93,6 +103,32 @@ export async function applyUiZoom(v: number): Promise<void> {
     await store.save();
   } catch (err) {
     console.error("applyUiZoom failed:", err);
+  }
+}
+
+/** Set the Zense review stamp toggle and persist it (Settings > General). */
+export async function applyCommitStamp(v: boolean): Promise<void> {
+  useWorkspaceStore.getState().setCommitStamp(v);
+  if (!isTauri()) return;
+  try {
+    const store = await load(PREFS_FILE);
+    await store.set(KEY_COMMIT_STAMP, v);
+    await store.save();
+  } catch (err) {
+    console.error("applyCommitStamp failed:", err);
+  }
+}
+
+/** Set the reviewer name embedded in the Zense review stamp (Settings > General). */
+export async function applyCommitStampName(v: string): Promise<void> {
+  useWorkspaceStore.getState().setCommitStampName(v.trim());
+  if (!isTauri()) return;
+  try {
+    const store = await load(PREFS_FILE);
+    await store.set(KEY_COMMIT_STAMP_NAME, useWorkspaceStore.getState().commitStampName);
+    await store.save();
+  } catch (err) {
+    console.error("applyCommitStampName failed:", err);
   }
 }
 
