@@ -1,8 +1,8 @@
 import { create } from "zustand";
 
 export type Activity = "review" | "history" | "editor" | "search" | "terminal";
-/** Tab inside the right-hand panel (Focus lives here, not the ActivityBar). */
-export type RightTab = "chat" | "focus";
+/** Tab inside the right-hand panel (Focus and AI Review live here, not the ActivityBar). */
+export type RightTab = "chat" | "focus" | "aiReview";
 export type Screen = "welcome" | "workspace";
 export type SettingsSection = "general" | "appearance" | "llm" | "shortcuts";
 export type DiffMode = "split" | "inline";

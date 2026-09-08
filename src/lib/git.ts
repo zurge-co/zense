@@ -406,3 +406,12 @@ export async function gitStagedDiff(root: string): Promise<string> {
     return 'diff --git a/src/app.ts b/src/app.ts\nindex 1111111..2222222 100644\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,2 +1,3 @@\n export const x = 1;\n+console.log("preview staged diff");\n export const y = 2;\n';
   return invoke<string>("git_staged_diff", { root });
 }
+
+/** Unified patch of the working tree vs the index — the *unstaged* changes.
+ *  Sibling of gitStagedDiff; the AI Review actions use both. Browser dev:
+ *  mock patch. */
+export async function gitUnstagedDiff(root: string): Promise<string> {
+  if (!isTauri())
+    return 'diff --git a/src/app.ts b/src/app.ts\nindex 1111111..2222222 100644\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,2 +1,3 @@\n export const x = 1;\n+console.log("preview unstaged diff");\n export const y = 2;\n';
+  return invoke<string>("git_unstaged_diff", { root });
+}

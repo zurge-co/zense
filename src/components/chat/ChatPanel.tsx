@@ -1,61 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { X, MessageSquare, Send, Square, Wrench, Eraser, Timer, Loader2 } from "lucide-react";
+import { X, MessageSquare, Send, Square, Wrench, Eraser, Timer, Loader2, Sparkles } from "lucide-react";
 import { useUIStore, type RightTab } from "../../store/uiStore";
 import { useChatStore } from "../../store/chatStore";
-import { renderMarkdown } from "../../lib/markdown";
 import { FocusPanel } from "../focus/FocusPanel";
-
-/** Render assistant Markdown as HTML. Safe: renderMarkdown HTML-escapes the
- *  source up front and allowlists link/image URL schemes, so no raw HTML or
- *  javascript: URLs from the LLM can reach the DOM. */
-function MarkdownView({ source, streaming }: { source: string; streaming?: boolean }) {
-  return (
-    <div
-      className="md-content"
-      // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: renderMarkdown(source) }}
-      data-streaming={streaming || undefined}
-    />
-  );
-}
+import { AiReviewPanel } from "../aiReview/AiReviewPanel";
+import { MarkdownView, ThinkingIndicator } from "./ChatMessages";
 
 const tabs: { id: RightTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "chat", label: "Chat", icon: MessageSquare },
+  { id: "aiReview", label: "AI Review", icon: Sparkles },
   { id: "focus", label: "Focus", icon: Timer },
 ];
-
-/** Animated indicator shown while the LLM run is in flight but hasn't
- *  produced visible text yet — reassures the user the app isn't hung.
- *  Bouncing dots (Tailwind animate-bounce with staggered delays) plus an
- *  elapsed-seconds counter that ticks once per second. */
-function ThinkingIndicator() {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const started = Date.now();
-    const id = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - started) / 1000));
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  return (
-    <div className="mb-2 flex items-center gap-2 rounded bg-base px-2.5 py-2 text-[11.5px] text-fg-muted">
-      <span className="flex items-end gap-0.5" aria-hidden>
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="h-1 w-1 animate-bounce rounded-full bg-accent"
-            style={{ animationDelay: `${i * 150}ms` }}
-          />
-        ))}
-      </span>
-      <span>
-        Thinking… <span className="tabular-nums text-fg-muted/70">{elapsed}s</span>
-      </span>
-    </div>
-  );
-}
 
 export function ChatPanel() {
   const { toggleChat, openSettings, rightTab, setRightTab } = useUIStore();
@@ -141,6 +96,8 @@ export function ChatPanel() {
         <div className="flex-1 overflow-y-auto">
           <FocusPanel />
         </div>
+      ) : rightTab === "aiReview" ? (
+        <AiReviewPanel />
       ) : !configured ? (
         /* Empty state — LLM not configured */
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-fg-muted">

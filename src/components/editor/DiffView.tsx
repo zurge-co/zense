@@ -8,11 +8,14 @@ import {
   Rows2,
   Sparkles,
   RotateCcw,
+  Loader2,
 } from "lucide-react";
 import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { gitDiffFile, gitDiffCommitFile, gitDiscardFile, gitDiscardLines } from "../../lib/git";
+import { explainDiffChange, summarizeFileChange } from "../../lib/aiReview";
+import { findChangeAtLine, extractChunk } from "../../lib/diffChunk";
 import { detectLanguage } from "../../lib/lang";
 import { defineTheme } from "./monacoSetup";
 import { PathBreadcrumb } from "./PathBreadcrumb";
@@ -44,6 +47,19 @@ export function DiffView({ tab }: { tab: EditorTab }) {
     isNonUtf8: boolean;
   } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+
+  /* The DiffEditor instance is shared across tabs / content loads, so the
+     Monaco context actions must resolve their inputs via refs — a mount
+     closure would go stale the first time a different file's diff loads. */
+  const contentRef = useRef(content);
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+  const metaRef = useRef({ path, staged, commitMode, root: workspacePath });
+  useEffect(() => {
+    metaRef.current = { path, staged, commitMode, root: workspacePath };
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -219,9 +235,25 @@ export function DiffView({ tab }: { tab: EditorTab }) {
             </button>
             <button
               title="Summarize this diff with AI"
-              className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20"
+              disabled={aiSummaryLoading}
+              onClick={async () => {
+                if (!workspacePath || aiSummaryLoading) return;
+                setAiSummaryLoading(true);
+                try {
+                  await summarizeFileChange(workspacePath, path, staged);
+                } catch (err) {
+                  setLoadError(String(err));
+                } finally {
+                  setAiSummaryLoading(false);
+                }
+              }}
+              className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20 disabled:opacity-50"
             >
-              <Sparkles size={12} />
+              {aiSummaryLoading ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Sparkles size={12} />
+              )}
               AI Summary
             </button>
           </>
@@ -255,6 +287,47 @@ export function DiffView({ tab }: { tab: EditorTab }) {
               const update = () => setChanges(editor.getLineChanges() ?? []);
               editor.onDidUpdateDiff(update);
               update();
+              const modifiedEditor = editor.getModifiedEditor();
+              // Right-click a changed chunk → AI explains what it does, why,
+              // what it relates to, how to verify, and its risks.
+              modifiedEditor.addAction({
+                id: "zense.explainChange",
+                label: "Explain this change with AI",
+                contextMenuGroupId: "zense",
+                contextMenuOrder: 0,
+                run: (ed) => {
+                  const pos = ed.getPosition();
+                  const c = contentRef.current;
+                  const meta = metaRef.current;
+                  if (!pos || !c || !meta.root) return;
+                  const change = findChangeAtLine(
+                    diffRef.current?.getLineChanges() ?? [],
+                    pos.lineNumber,
+                  );
+                  if (!change) return;
+                  const chunk = extractChunk(change, c.original, c.modified);
+                  void explainDiffChange({
+                    root: meta.root,
+                    path: meta.path,
+                    startLine: chunk.startLine,
+                    endLine: chunk.endLine,
+                    removed: chunk.removed,
+                    added: chunk.added,
+                  });
+                },
+              });
+              modifiedEditor.addAction({
+                id: "zense.summarizeDiff",
+                label: "Summarize this file's diff with AI",
+                contextMenuGroupId: "zense",
+                contextMenuOrder: 1,
+                run: () => {
+                  const meta = metaRef.current;
+                  // Commit-to-commit diffs have no working-tree patch to send.
+                  if (!meta.root || meta.commitMode) return;
+                  void summarizeFileChange(meta.root, meta.path, meta.staged);
+                },
+              });
             }}
             options={{
               readOnly: true,
@@ -265,7 +338,7 @@ export function DiffView({ tab }: { tab: EditorTab }) {
               lineNumbersMinChars: 3,
               scrollBeyondLastLine: false,
               padding: { top: 8 },
-              contextmenu: false,
+              contextmenu: true,
               folding: false,
               glyphMargin: false,
               lineDecorationsWidth: 8,

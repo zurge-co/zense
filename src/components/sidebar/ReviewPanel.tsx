@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Sparkles, Check, CheckCircle2, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw, AlertTriangle } from "lucide-react";
+import { GitBranch, Sparkles, Bug, Check, CheckCircle2, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw, AlertTriangle } from "lucide-react";
 import { generateCommitMessage } from "../../lib/commitMessage";
+import { summarizeFileChange, reviewAllChanges, findBugsInChanges } from "../../lib/aiReview";
 import { useGitStore } from "../../store/gitStore";
 import { useUIStore } from "../../store/uiStore";
 import { statusColor } from "../../lib/statusColor";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 
 export function ReviewPanel() {
   const { openDiff, openFile, workspacePath } = useUIStore();
@@ -15,6 +17,49 @@ export function ReviewPanel() {
   const [generating, setGenerating] = useState(false);
   /** File pending a reset confirmation: path + whether it's new (delete). */
   const [resetTarget, setResetTarget] = useState<{ path: string; isNew: boolean } | null>(null);
+  /** Right-click context menu (change rows + the AI Review button). */
+  const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const runAi = async (fn: () => Promise<void>) => {
+    setReviewError(null);
+    try {
+      await fn();
+    } catch (err) {
+      setReviewError(String(err));
+    }
+  };
+
+  /** Right-click on a change row → per-file AI review actions. */
+  const openFileMenu = (e: React.MouseEvent, path: string, staged: boolean) => {
+    e.preventDefault();
+    if (!workspacePath) return;
+    const root = workspacePath;
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          id: "ai-summarize",
+          label: "Summarize with AI",
+          icon: Sparkles,
+          onClick: () => void runAi(() => summarizeFileChange(root, path, staged)),
+        },
+        {
+          id: "ai-find-bugs",
+          label: "Find bugs with AI",
+          icon: Bug,
+          onClick: () => void runAi(() => findBugsInChanges(root, path, staged)),
+        },
+        {
+          id: "open-diff",
+          label: "Open diff",
+          icon: FileDiff,
+          onClick: () => openDiff(path),
+        },
+      ],
+    });
+  };
 
   useEffect(() => {
     if (workspacePath) void refresh(workspacePath);
@@ -174,7 +219,42 @@ export function ReviewPanel() {
             </button>
           </div>
 
+          {/* AI Review — summarize every change + what a human must check,
+              or scan all changes for bugs */}
+          <button
+            disabled={status.notARepo || (stagedFiles.length === 0 && unstagedFiles.length === 0)}
+            title="Let AI summarize all changes and flag what a human must review"
+            onClick={(e) => {
+              if (!workspacePath) return;
+              const root = workspacePath;
+              const rect = e.currentTarget.getBoundingClientRect();
+              setMenu({
+                x: rect.left,
+                y: rect.bottom + 4,
+                items: [
+                  {
+                    id: "ai-review-all",
+                    label: "Summarize all changes + review points",
+                    icon: Sparkles,
+                    onClick: () => void runAi(() => reviewAllChanges(root)),
+                  },
+                  {
+                    id: "ai-bugs-all",
+                    label: "Find bugs in all changes",
+                    icon: Bug,
+                    onClick: () => void runAi(() => findBugsInChanges(root)),
+                  },
+                ],
+              });
+            }}
+            className="flex w-full items-center justify-center gap-1.5 rounded border border-accent/30 bg-accent/10 py-1.5 text-[12px] text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Sparkles size={12} />
+            AI Review
+          </button>
+
           {commitError && <div className="text-[11px] text-danger">{commitError}</div>}
+          {reviewError && <div className="text-[11px] text-danger">{reviewError}</div>}
 
           {stagedFiles.length > 0 && (
             <>
@@ -187,7 +267,8 @@ export function ReviewPanel() {
                   <div
                     key={`staged-${f.path}`}
                     onClick={() => openDiff(f.path)}
-                    title={`Compare ${f.path} with HEAD`}
+                    onContextMenu={(e) => openFileMenu(e, f.path, true)}
+                    title={`Compare ${f.path} with HEAD — right-click for AI review`}
                     className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg-muted hover:bg-hover hover:text-fg"
                   >
                     <FileDiff size={13} className="shrink-0 text-fg-muted" />
@@ -244,7 +325,8 @@ export function ReviewPanel() {
               <div
                 key={`unstaged-${f.path}`}
                 onClick={() => openDiff(f.path)}
-                title={`Compare ${f.path} with HEAD`}
+                onContextMenu={(e) => openFileMenu(e, f.path, false)}
+                title={`Compare ${f.path} with HEAD — right-click for AI review`}
                 className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg-muted hover:bg-hover hover:text-fg"
               >
                 <FileDiff size={13} className="shrink-0 text-fg-muted" />
@@ -286,6 +368,10 @@ export function ReviewPanel() {
             <div className="text-[12.5px] text-fg-muted">No changes</div>
           )}
         </>
+      )}
+
+      {menu && (
+        <ContextMenu items={menu.items} position={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)} />
       )}
 
       {resetTarget && (

@@ -5,6 +5,7 @@ import { setupKeybindings } from "./monacoKeybindings";
 import { writeClipboardText } from "../../lib/clipboard";
 import { setActiveEditor } from "../../lib/editorRef";
 import { formatReference, selectionLines } from "../../lib/reference";
+import { explainSelection } from "../../lib/aiReview";
 import { useUIStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 
@@ -57,6 +58,23 @@ export function CodeEditor({
             if (!p || !sel) return;
             const { start, end } = selectionLines(sel);
             void writeClipboardText(formatReference(p, start, end));
+          },
+        });
+        // Context menu: "Explain with AI" — sends the selection to the AI
+        // Review panel to explain what it does, why, relations, and risks.
+        editor.addAction({
+          id: "zense.explainWithAi",
+          label: "Explain with AI",
+          contextMenuGroupId: "zense",
+          contextMenuOrder: 1,
+          run: (ed) => {
+            const p = pathRef.current;
+            const sel = ed.getSelection();
+            const root = useUIStore.getState().workspacePath;
+            if (!p || !sel || sel.isEmpty() || !root) return;
+            const snippet = ed.getModel()?.getValueInRange(sel) ?? "";
+            const { start, end } = selectionLines(sel);
+            void explainSelection({ root, path: p, startLine: start, endLine: end, snippet });
           },
         });
         // Live cursor position for the StatusBar.

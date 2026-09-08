@@ -1,8 +1,10 @@
 // @ts-nocheck
 /**
- * Tests for the thinking/loading indicator in ChatPanel.tsx — the
+ * Tests for the thinking/loading indicator used by ChatPanel.tsx — the
  * animated feedback shown while an LLM run is in flight but has not yet
  * produced visible output, so the user can tell the app isn't hung.
+ * The indicator component itself lives in ChatMessages.tsx (shared with
+ * the AI Review panel); ChatPanel.tsx only renders it.
  *
  * Follows the structural-verification pattern from App.test.tsx and
  * TitleBar.test.tsx: read source via Bun.file(), verify structure and
@@ -20,36 +22,45 @@ async function readSrc(relFromThisDir: string): Promise<string> {
 
 describe("ChatPanel.tsx — thinking indicator", () => {
   let src: string;
+  let bits: string;
 
   beforeAll(async () => {
     src = await readSrc("./ChatPanel.tsx");
+    bits = await readSrc("./ChatMessages.tsx");
   });
 
-  // ── Indicator component ─────────────────────────────────────────────────
+  // ── Indicator component (lives in ChatMessages.tsx, shared with the AI
+  //    Review panel) ──────────────────────────────────────────────────────
+
+  test("ChatPanel imports ThinkingIndicator from ChatMessages", () => {
+    expect(src).toContain('from "./ChatMessages"');
+    expect(src).toContain("ThinkingIndicator");
+    expect(src).not.toContain("function ThinkingIndicator");
+  });
 
   test("defines a ThinkingIndicator component", () => {
-    expect(src).toContain("function ThinkingIndicator");
+    expect(bits).toContain("function ThinkingIndicator");
   });
 
   test("indicator is animated (proves the app isn't hung)", () => {
     // Tailwind animate-bounce dots with staggered delays.
-    expect(src).toContain("animate-bounce");
-    expect(src).toContain("animationDelay");
+    expect(bits).toContain("animate-bounce");
+    expect(bits).toContain("animationDelay");
   });
 
   test("indicator shows an elapsed-seconds timer that ticks every second", () => {
-    expect(src).toContain("setInterval");
+    expect(bits).toContain("setInterval");
     // Elapsed time derived from a start timestamp, floored to seconds.
-    expect(src).toMatch(/Math\.floor\(/);
-    expect(src).toContain("elapsed");
+    expect(bits).toMatch(/Math\.floor\(/);
+    expect(bits).toContain("elapsed");
   });
 
   test("indicator cleans up its interval on unmount", () => {
-    expect(src).toContain("clearInterval");
+    expect(bits).toContain("clearInterval");
   });
 
   test("indicator is labelled 'Thinking…'", () => {
-    expect(src).toContain("Thinking…");
+    expect(bits).toContain("Thinking…");
   });
 
   // ── Render condition ────────────────────────────────────────────────────
