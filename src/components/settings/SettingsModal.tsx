@@ -5,7 +5,7 @@ import { shortcutGroups } from "../../lib/mockData";
 import { useChatStore } from "../../store/chatStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { applyAutoSave, applyCommitStamp, applyCommitStampName, applyEditorFontSize, applyShowHiddenFiles, applyUiZoom } from "../../lib/settings";
-import type { LlmConfig, EnabledTools, AgentGuards } from "../../lib/llm";
+import type { LlmConfig, EnabledTools, AgentGuards, PreferredLanguage } from "../../lib/llm";
 import { DEFAULT_ENABLED_TOOLS, DEFAULT_GUARDS, llmTestConnection } from "../../lib/llm";
 
 const sections: { id: SettingsSection; label: string; icon: typeof Settings2 }[] = [
@@ -232,6 +232,9 @@ function LlmSection() {
   const [guards, setGuards] = useState<AgentGuards>(
     config?.guards ?? DEFAULT_GUARDS,
   );
+  const [preferredLanguage, setPreferredLanguage] = useState<PreferredLanguage>(
+    config?.preferredLanguage ?? "th",
+  );
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"ok" | "err" | null>(null);
   const [testMsg, setTestMsg] = useState("");
@@ -242,21 +245,27 @@ function LlmSection() {
   };
 
   const handleBlur = () => {
-    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards };
+    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards, preferredLanguage };
     void saveConfig(cfg);
   };
 
   const toggleTool = (key: keyof EnabledTools) => {
     const next = { ...enabledTools, [key]: !enabledTools[key] };
     setEnabledTools(next);
-    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools: next, guards };
+    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools: next, guards, preferredLanguage };
     void saveConfig(cfg);
   };
 
   const updateGuard = (key: keyof AgentGuards, value: number) => {
     const next = { ...guards, [key]: value };
     setGuards(next);
-    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards: next };
+    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards: next, preferredLanguage };
+    void saveConfig(cfg);
+  };
+
+  const updateLanguage = (lang: PreferredLanguage) => {
+    setPreferredLanguage(lang);
+    const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards, preferredLanguage: lang };
     void saveConfig(cfg);
   };
 
@@ -264,7 +273,7 @@ function LlmSection() {
     setTesting(true);
     setTestResult(null);
     try {
-      const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards };
+      const cfg: LlmConfig = { apiFormat, baseUrl, apiKey, model, enabledTools, guards, preferredLanguage };
       await saveConfig(cfg);
       const reply = await llmTestConnection(cfg);
       setTestResult("ok");
@@ -344,6 +353,16 @@ function LlmSection() {
           {testMsg}
         </div>
       )}
+      <Row label="Preferred language" hint="Language the AI answers in — forced via the system prompt, short and simple words">
+        <select
+          value={preferredLanguage}
+          onChange={(e) => updateLanguage(e.target.value as PreferredLanguage)}
+          className="rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none"
+        >
+          <option value="th">ไทย</option>
+          <option value="en">English</option>
+        </select>
+      </Row>
 
       {/* --- Tools --- */}
       <div className="mb-1 mt-4 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">

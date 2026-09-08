@@ -77,7 +77,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const allMessages = [...get().messages, userMsg];
     set({ messages: allMessages });
 
-    const sysPrompt = systemPrompt(workspaceRoot);
+    const sysPrompt = systemPrompt(workspaceRoot, config.preferredLanguage);
 
     try {
       const finalText = await chatSend(config, sysPrompt, allMessages, workspaceRoot, (e: StreamEvent) => {

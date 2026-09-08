@@ -128,7 +128,7 @@ export const useAiReviewStore = create<AiReviewState>((set, get) => {
       if (!thread) return;
       const finalText = await chatSend(
         config,
-        systemPrompt(root),
+        systemPrompt(root, config.preferredLanguage),
         thread.messages,
         root,
         onEvent,

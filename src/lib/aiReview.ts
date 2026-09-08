@@ -61,10 +61,10 @@ export async function reviewAllChanges(root: string): Promise<void> {
 
 /** หา bug / ความผิดพลาดจาก changes — ทั้ง repo หรือเฉพาะไฟล์ */
 export async function findBugsInChanges(root: string, path?: string, staged = false): Promise<void> {
-  let scope = "changes ทั้งหมด (staged + unstaged)";
+  let scope = "all changes (staged + unstaged)";
   let patch: string;
   if (path) {
-    scope = `changes ในไฟล์ \`${path}\``;
+    scope = `the changes in \`${path}\``;
     patch = await patchForFile(root, path, staged);
   } else {
     const [stagedPatch, unstagedPatch] = await Promise.all([

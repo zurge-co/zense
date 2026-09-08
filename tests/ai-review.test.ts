@@ -38,6 +38,7 @@ const fakeConfig: LlmConfig = {
   model: "test-model",
   enabledTools: { readFile: true, readFileRange: true, listFiles: true, gitTools: true },
   guards: { maxTurns: 5, maxToolOutput: 5000 },
+  preferredLanguage: "th",
 };
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -102,7 +103,7 @@ describe("AI Review prompt builders", () => {
     const p = buildFileSummaryPrompt("src/a.ts", TWO_FILE_PATCH, false);
     expect(p).toContain("src/a.ts");
     expect(p).toContain("```diff");
-    expect(p).toContain("สรุป");
+    expect(p).toContain("summarize");
   });
 
   test("file summary falls back to tools when no patch is available", () => {
@@ -113,10 +114,10 @@ describe("AI Review prompt builders", () => {
 
   test("review-all covers staged+unstaged and demands human review points", () => {
     const p = buildReviewAllPrompt(TWO_FILE_PATCH, "");
-    expect(p).toContain("จุดที่มนุษย์ต้อง review เอง");
+    expect(p).toContain("Points a human must review");
     expect(p).toContain("Staged diff");
     expect(p).toContain("Unstaged diff");
-    expect(p).toContain("(ไม่มี unstaged changes)");
+    expect(p).toContain("(no unstaged changes)");
   });
 
   test("commit-file summary embeds both versions with the sha refs", () => {
@@ -126,11 +127,11 @@ describe("AI Review prompt builders", () => {
     expect(p).toContain("e5f6071");
     expect(p).toContain("old code");
     expect(p).toContain("new code");
-    expect(p).toContain("สรุป");
+    expect(p).toContain("summarize");
   });
 
   test("bug hunt asks for severity-classified findings", () => {
-    const p = buildBugHuntPrompt("changes ทั้งหมด", TWO_FILE_PATCH);
+    const p = buildBugHuntPrompt("all changes", TWO_FILE_PATCH);
     expect(p).toContain("[severity]");
     expect(p).toContain("edge case");
   });
@@ -142,7 +143,7 @@ describe("AI Review prompt builders", () => {
       endLine: 8,
       snippet: "const x = f();",
     });
-    for (const section of ["คืออะไร", "ทำไปเพื่ออะไร", "เกี่ยวข้องกับอะไร", "ต้องตรวจสอบยังไง", "ความเสี่ยง"]) {
+    for (const section of ["What it is", "Why", "Related code", "How to verify", "Risk"]) {
       expect(p).toContain(section);
     }
     expect(p).toContain("src/a.ts:3-8");
@@ -157,7 +158,7 @@ describe("AI Review prompt builders", () => {
       snippet: "+new code",
       removed: "-old code",
     });
-    expect(p).toContain("โค้ดเดิม");
+    expect(p).toContain("Old code");
     expect(p).toContain("-old code");
     expect(p).toContain("+new code");
   });

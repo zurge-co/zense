@@ -2,14 +2,17 @@
  * Prompt builders + patch helpers for the AI Review feature. Pure functions
  * so tests can exercise them without a workspace, git, or LLM.
  *
- * The four review kinds map to the user's four review questions:
- * - file-summary  — คลิกขวาที่ change → สรุปการเปลี่ยนแปลงของไฟล์นั้น
- * - review-all    — ปุ่ม AI ใน Review panel → สรุปทั้งหมด + จุดที่คนต้อง review
- * - bug-hunt      — หา bug / ความผิดพลาด / edge case จาก changes
- * - explain       — คลิกขวาที่ code/chunk → อธิบายว่าคืออะไร เสี่ยงอะไร ตรวจยังไง
+ * The four review kinds map to the user's four review actions:
+ * - file-summary  — right-click a change → summarize that file's changes
+ * - review-all    — the AI button in the Review panel → summarize everything
+ *                   + points a human must review
+ * - bug-hunt      — find bugs / mistakes / edge cases in the changes
+ * - explain       — right-click code/chunk → explain what it is, its risks,
+ *                   how to verify
  *
- * Prompts are written in Thai so the model answers in Thai (the product's
- * language); the global system prompt still governs formatting/citations.
+ * Prompt templates are English-only; the answer language is controlled by
+ * the system prompt's preferred-language directive, not by these prompts.
+ * Only the user-facing UI labels (KIND_LABEL, userBubbleLabel) stay Thai.
  */
 
 export type AiReviewKind = "file-summary" | "review-all" | "bug-hunt" | "explain";
@@ -57,64 +60,60 @@ export function filterPatchForPath(patch: string, path: string): string {
 const MAX_SNIPPET = 4000;
 function clip(text: string): string {
   return text.length > MAX_SNIPPET
-    ? `${text.slice(0, MAX_SNIPPET)}\n… (ตัดมาเฉพาะส่วนต้น — ใช้ read_file tool อ่านเพิ่มได้) …`
+    ? `${text.slice(0, MAX_SNIPPET)}\n… (truncated — use the read_file tool to read more) …`
     : text;
 }
 
-const THAI_FOOTER =
-  "ตอบเป็นภาษาไทย กระชับ ใช้ Markdown และอ้างอิง file:line เสมอ";
-
 /**
- * สรุปการเปลี่ยนแปลงของไฟล์เดียว (คลิกขวาที่ change ใน Review panel).
- * When `patch` is empty the file may be untracked — fall back to tools.
+ * Summarize the changes of a single file (right-click a change in the
+ * Review panel). When `patch` is empty the file may be untracked — fall
+ * back to tools.
  */
 export function buildFileSummaryPrompt(path: string, patch: string, staged: boolean): string {
-  const scope = staged ? "staged (เทียบกับ HEAD)" : "unstaged (เทียบกับ index)";
+  const scope = staged ? "staged (vs HEAD)" : "unstaged (vs index)";
   const context = patch.trim()
-    ? `Unified diff ของไฟล์นั้น (${scope}):\n\n\`\`\`diff\n${clip(patch)}\n\`\`\``
-    : `ไม่มี diff ของไฟล์นี้ใน patch (${scope}) — อาจเป็นไฟล์ใหม่ที่ยัง untracked หรือ diff ถูกตัด ให้ใช้ git_status / read_file tools อ่านไฟล์ปัจจุบันแล้วสรุปจากเนื้อหาจริง`;
-  return `ช่วยสรุปการเปลี่ยนแปลงของไฟล์ \`${path}\` ให้หน่อย
+    ? `Unified diff of that file (${scope}):\n\n\`\`\`diff\n${clip(patch)}\n\`\`\``
+    : `No diff for this file in the patch (${scope}) — it may be a new untracked file or the diff was truncated. Use the git_status / read_file tools to read the current file and summarize from its actual content.`;
+  return `Please summarize the changes in \`${path}\`.
 
 ${context}
 
-รูปแบบคำตอบ:
-1. **สรุปภาพรวม** 1–2 ประโยค — แก้อะไร เพื่ออะไร
-2. **รายละเอียดสำคัญ** เป็น bullet (อ้าง file:line)
-3. **จุดที่คน review ต้องดูเป็นพิเศษ** (ถ้าไม่มีให้บอกว่าไม่มี)
-
-${THAI_FOOTER}`;
+Answer format:
+1. **Overview** — 1–2 sentences: what changed and why
+2. **Key details** — bullets (cite file:line)
+3. **Points a reviewer must check** (say "none" if there are none)`;
 }
 
-/** สรุป changes ทั้งหมด + จุดที่มนุษย์ต้อง review (ปุ่ม AI ใน Review panel). */
+/** Summarize all changes + points a human must review (AI button in the Review panel). */
 export function buildReviewAllPrompt(stagedPatch: string, unstagedPatch: string): string {
-  const staged = stagedPatch.trim() ? clip(stagedPatch) : "(ไม่มี staged changes)";
-  const unstaged = unstagedPatch.trim() ? clip(unstagedPatch) : "(ไม่มี unstaged changes)";
-  return `ช่วย review changes ทั้งหมดที่ยังไม่ได้ commit ใน workspace นี้
+  const staged = stagedPatch.trim() ? clip(stagedPatch) : "(no staged changes)";
+  const unstaged = unstagedPatch.trim() ? clip(unstagedPatch) : "(no unstaged changes)";
+  return `Please review all uncommitted changes in this workspace.
 
-Staged diff (เทียบกับ HEAD):
+Staged diff (vs HEAD):
 \`\`\`diff
 ${staged}
 \`\`\`
 
-Unstaged diff (เทียบกับ index):
+Unstaged diff (vs index):
 \`\`\`diff
 ${unstaged}
 \`\`\`
 
-รูปแบบคำตอบ:
-1. **สรุปภาพรวม** — changes ชุดนี้ทำอะไร เพื่ออะไร
-2. **แยกตามไฟล์/กลุ่ม** — แต่ละไฟล์เปลี่ยนอะไรแบบสั้น ๆ
-3. **⭐ จุดที่มนุษย์ต้อง review เอง** — checklist ของจุดที่ AI ตัดสินแทนไม่ได้ เช่น logic ที่เปลี่ยนพฤติกรรม, business rule, ค่าคงที่, migration, ความเข้ากันได้กับส่วนอื่น
-4. **ความเสี่ยงโดยรวม** — สิ่งที่ควรทดสอบก่อน commit
+Answer format:
+1. **Overview** — what this change set does and why
+2. **Per file/group** — what each file changed, briefly
+3. **⭐ Points a human must review** — a checklist of things an AI cannot decide: behavior-changing logic, business rules, constants, migrations, compatibility with other parts
+4. **Overall risk** — what should be tested before committing
 
-ใช้ git_diff / read_file tools ตรวจรายละเอียดเพิ่มได้ถ้า patch ไม่พอ
-${THAI_FOOTER}`;
+Use the git_diff / read_file tools to inspect details if the patch is not enough.`;
 }
 
 /**
- * สรุปการเปลี่ยนแปลงของไฟล์ระหว่างสอง commit (commitDiff tabs จาก
- * History/CompareView). ไม่มี commit-patch tool ฝั่ง backend (git_show ให้
- * เฉพาะ line stats) จึง embed content ทั้งสองเวอร์ชัน inline (clipped).
+ * Summarize the changes of a file between two commits (commitDiff tabs from
+ * History/CompareView). There is no commit-patch tool in the backend
+ * (git_show gives only line stats), so both versions are embedded inline
+ * (clipped).
  */
 export function buildCommitFileSummaryPrompt(
   path: string,
@@ -123,41 +122,37 @@ export function buildCommitFileSummaryPrompt(
   original: string,
   modified: string,
 ): string {
-  return `ช่วยสรุปการเปลี่ยนแปลงของไฟล์ \`${path}\` ระหว่าง commit \`${fromLabel}\` → \`${toLabel}\`
+  return `Please summarize the changes in \`${path}\` between commit \`${fromLabel}\` → \`${toLabel}\`.
 
-โค้ดเดิม (ที่ \`${fromLabel}\`):
+Old code (at \`${fromLabel}\`):
 \`\`\`
 ${clip(original)}
 \`\`\`
 
-โค้ดใหม่ (ที่ \`${toLabel}\`):
+New code (at \`${toLabel}\`):
 \`\`\`
 ${clip(modified)}
 \`\`\`
 
-(ถ้าเนื้อหาถูกตัดให้สรุปเท่าที่เห็นและระบุไว้ด้วย)
-รูปแบบคำตอบ:
-1. **สรุปภาพรวม** 1–2 ประโยค — แก้อะไร เพื่ออะไร (ดู commit message ผ่าน git_show ประกอบได้)
-2. **รายละเอียดสำคัญ** เป็น bullet (อ้าง file:line)
-3. **จุดที่คน review ต้องดูเป็นพิเศษ** (ถ้าไม่มีให้บอกว่าไม่มี)
-
-${THAI_FOOTER}`;
+(If the content was truncated, summarize what you can see and say so.)
+Answer format:
+1. **Overview** — 1–2 sentences: what changed and why (you may check the commit message via git_show)
+2. **Key details** — bullets (cite file:line)
+3. **Points a reviewer must check** (say "none" if there are none)`;
 }
 
-/** หา bug / ความผิดพลาด / edge case จาก changes (scope = path หรือ "changes ทั้งหมด"). */
+/** Find bugs / mistakes / edge cases in changes (scope = a path or "all changes"). */
 export function buildBugHuntPrompt(scope: string, patch: string): string {
   const context = patch.trim()
-    ? `Unified diff ที่ต้องวิเคราะห์:\n\n\`\`\`diff\n${clip(patch)}\n\`\`\``
-    : `ไม่มี diff inline — ใช้ git_diff / read_file tools ดึง changes ของ ${scope} มาวิเคราะห์เอง`;
-  return `ช่วยหา bug / ความผิดพลาด / edge case ที่อาจเกิดจาก ${scope}
+    ? `Unified diff to analyze:\n\n\`\`\`diff\n${clip(patch)}\n\`\`\``
+    : `No inline diff — use the git_diff / read_file tools to fetch the changes of ${scope} and analyze them yourself.`;
+  return `Please find bugs / mistakes / edge cases that may come from ${scope}.
 
 ${context}
 
-วิเคราะห์เชิงลึก: logic ผิด, off-by-one, null/undefined, error handling ที่หายไป, race condition, ผลข้างเคียงกับ caller, เคสที่เคยทำงานแล้วจะพัง
-ตอบเป็น findings ตาม format code review ของระบบ ([severity] category — file:line) เรียง critical ก่อน
-ถ้าไม่พบปัญหา ให้บอกชัดเจนและเสนอสิ่งที่ควรทดสอบเพิ่ม 1–2 ข้อ
-
-${THAI_FOOTER}`;
+Analyze deeply: wrong logic, off-by-one, null/undefined, missing error handling, race conditions, side effects on callers, cases that worked before and will break now.
+Answer as findings in the system's code review format ([severity] category — file:line), critical first.
+If no problems are found, say so clearly and suggest 1–2 things worth testing.`;
 }
 
 export interface ExplainInput {
@@ -171,7 +166,7 @@ export interface ExplainInput {
   removed?: string;
 }
 
-/** อธิบาย code/chunk — คืออะไร ทำไมต้องแก้ เกี่ยวกับอะไร ตรวจยังไง เสี่ยงอะไร. */
+/** Explain code/chunk — what it is, why it changed, what it relates to, how to verify, risks. */
 export function buildExplainPrompt(input: ExplainInput): string {
   const ref =
     input.startLine === input.endLine
@@ -179,37 +174,35 @@ export function buildExplainPrompt(input: ExplainInput): string {
       : `${input.path}:${input.startLine}-${input.endLine}`;
   const context =
     input.removed !== undefined
-      ? `Change chunk ในไฟล์ \`${input.path}\` (ด้านใหม่เริ่มบรรทัด ${input.startLine}):
+      ? `Change chunk in \`${input.path}\` (new side starts at line ${input.startLine}):
 
-โค้ดเดิมที่ถูกลบ/แทนที่:
+Old code that was removed/replaced:
 \`\`\`
-${clip(input.removed) || "(ไม่มี — เป็นการเพิ่มบรรทัดใหม่ล้วน)"}
+${clip(input.removed) || "(none — pure addition)"}
 \`\`\`
 
-โค้ดใหม่:
+New code:
 \`\`\`
-${clip(input.snippet) || "(ไม่มี — เป็นการลบบรรทัดล้วน)"}
+${clip(input.snippet) || "(none — pure deletion)"}
 \`\`\``
       : `Selection \`${ref}\`:
 
 \`\`\`
 ${clip(input.snippet)}
 \`\`\``;
-  return `ช่วยอธิบายโค้ดส่วนนี้ให้หน่อย
+  return `Please explain this code.
 
 ${context}
 
-ตอบครบ 5 ประเด็น:
-1. **คืออะไร** — สรุป 1 ประโยคว่าโค้ด/chunk นี้ทำอะไร
-2. **ทำไปเพื่ออะไร** — จุดประสงค์/ปัญหาที่แก้ (ถ้าเป็น chunk ใน diff ให้เทียบกับโค้ดเดิม)
-3. **เกี่ยวข้องกับอะไร** — ใช้ read_file / read_file_range tools ตามไปดู caller, import, หรือไฟล์ที่เกี่ยวข้อง แล้วบอกว่าการเปลี่ยนตรงนี้กระทบที่ไหน
-4. **ต้องตรวจสอบยังไง** — วิธี verify ว่าถูกต้อง (test ที่ควรรัน / เคสที่ต้องลอง)
-5. **ความเสี่ยง** — สิ่งที่อาจพังถ้าส่วนนี้ผิด
-
-${THAI_FOOTER}`;
+Cover all 5 points:
+1. **What it is** — one sentence: what this code/chunk does
+2. **Why** — its purpose / the problem it solves (if it is a diff chunk, compare with the old code)
+3. **Related code** — use the read_file / read_file_range tools to follow callers, imports, or related files, then say what this change affects
+4. **How to verify** — how to check it is correct (tests to run / cases to try)
+5. **Risk** — what may break if this part is wrong`;
 }
 
-/** หัวข้อ bubble ฝั่ง user ใน thread — สั้น ไม่ใช่ prompt เต็ม. */
+/** Short heading for the user-side bubble in a thread — not the full prompt. */
 export function userBubbleLabel(kind: AiReviewKind, target?: string): string {
   switch (kind) {
     case "file-summary":
