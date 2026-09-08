@@ -5,6 +5,7 @@ import { gitShow, type GitShowCommit } from "../../lib/git";
 import { formatRelativeTime, formatFullTime } from "../../lib/time";
 import { statusColor } from "../../lib/statusColor";
 import { writeClipboardText } from "../../lib/clipboard";
+import { errMessage } from "../../lib/errors";
 
 /**
  * Commit detail tab: header (message, author, time, sha) + the files changed
@@ -26,7 +27,7 @@ export function CommitDetail({ sha }: { sha: string }) {
         if (!cancelled) setCommit(c);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(String(err));
+        if (!cancelled) setLoadError(errMessage(err));
       });
     return () => {
       cancelled = true;

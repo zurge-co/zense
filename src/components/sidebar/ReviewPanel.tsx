@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Sparkles, Bug, Check, CheckCircle2, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw, AlertTriangle } from "lucide-react";
+import { GitBranch, Sparkles, Bug, Check, CheckCircle2, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw, AlertTriangle, Upload } from "lucide-react";
+import { gitPush } from "../../lib/git";
+import { errMessage } from "../../lib/errors";
 import { generateCommitMessage } from "../../lib/commitMessage";
 import { summarizeFileChange, reviewAllChanges, findBugsInChanges } from "../../lib/aiReview";
 import { useGitStore } from "../../store/gitStore";
@@ -20,13 +22,32 @@ export function ReviewPanel() {
   /** Right-click context menu (change rows + the AI Review button). */
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  /** Push-from-Review state: in-flight push + last result (ok = accent, err = danger). */
+  const [pushing, setPushing] = useState(false);
+  const [pushFeedback, setPushFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+
+  /** Push without leaving the panel — same friendly GitOpResult as the BranchMenu. */
+  const doPush = async () => {
+    if (!workspacePath || pushing) return;
+    setPushing(true);
+    setPushFeedback(null);
+    try {
+      const r = await gitPush(workspacePath);
+      setPushFeedback(r);
+    } catch (err) {
+      setPushFeedback({ ok: false, message: errMessage(err) });
+    } finally {
+      setPushing(false);
+      await refresh(workspacePath);
+    }
+  };
 
   const runAi = async (fn: () => Promise<void>) => {
     setReviewError(null);
     try {
       await fn();
     } catch (err) {
-      setReviewError(String(err));
+      setReviewError(errMessage(err));
     }
   };
 
@@ -85,15 +106,39 @@ export function ReviewPanel() {
             </span>
           )}
         </span>
-        <button
-          title="Refresh"
-          onClick={() => {
-            if (workspacePath) void refresh(workspacePath);
-          }}
-          className="rounded p-1 text-fg-muted hover:bg-hover hover:text-fg"
-        >
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-        </button>
+        <span className="flex items-center gap-0.5">
+          {!status.notARepo && (
+            <button
+              // Lock push on states where it can't or shouldn't run:
+              // detached HEAD (no branch name to push) and merge in-progress
+              // (a half-resolved merge must not reach the server). Mirrors the
+              // Commit button's Conflict-Mode lock below.
+              disabled={pushing || branchInfo.ahead === 0 || branchInfo.detached || mergeInfo.inProgress}
+              title={
+                branchInfo.detached
+                  ? "You're looking at an old commit, not a branch — switch back to a branch first, then push"
+                  : mergeInfo.inProgress
+                    ? "Conflict Mode is on — finish the merge first (Push is locked for safety)"
+                    : branchInfo.ahead === 0
+                      ? "Nothing to push — all your commits are on the server already"
+                      : `Upload ${branchInfo.ahead} commit${branchInfo.ahead === 1 ? "" : "s"} to the server`
+              }
+              onClick={() => void doPush()}
+              className="rounded p-1 text-fg-muted hover:bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {pushing ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+            </button>
+          )}
+          <button
+            title="Refresh"
+            onClick={() => {
+              if (workspacePath) void refresh(workspacePath);
+            }}
+            className="rounded p-1 text-fg-muted hover:bg-hover hover:text-fg"
+          >
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          </button>
+        </span>
       </div>
 
       {status.notARepo ? (
@@ -183,7 +228,7 @@ export function ReviewPanel() {
                   await commit(message);
                   setMessage("");
                 } catch (err) {
-                  setCommitError(String(err));
+                  setCommitError(errMessage(err));
                 } finally {
                   setCommitting(false);
                 }
@@ -207,7 +252,7 @@ export function ReviewPanel() {
                 try {
                   setMessage(await generateCommitMessage(workspacePath));
                 } catch (err) {
-                  setCommitError(String(err));
+                  setCommitError(errMessage(err));
                 } finally {
                   setGenerating(false);
                 }
@@ -255,6 +300,11 @@ export function ReviewPanel() {
 
           {commitError && <div className="text-[11px] text-danger">{commitError}</div>}
           {reviewError && <div className="text-[11px] text-danger">{reviewError}</div>}
+          {pushFeedback && (
+            <div className={`whitespace-pre-line text-[11px] ${pushFeedback.ok ? "text-accent" : "text-danger"}`}>
+              {pushFeedback.message}
+            </div>
+          )}
 
           {stagedFiles.length > 0 && (
             <>

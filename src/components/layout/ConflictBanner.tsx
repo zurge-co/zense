@@ -5,6 +5,7 @@ import { useGitStore } from "../../store/gitStore";
 import { useUIStore } from "../../store/uiStore";
 import { ConfirmDialog } from "../ConfirmDialog";
 import type { GitMergeInProgress } from "../../lib/git";
+import { errMessage } from "../../lib/errors";
 
 /**
  * Plain-language header for the parked operation — no git jargon.
@@ -60,7 +61,7 @@ export function ConflictBanner() {
     } catch (err) {
       // Backend's message verbatim — e.g. the terminal hint for
       // rebase/cherry-pick/revert, which Abort doesn't support yet.
-      setAbortError(String(err));
+      setAbortError(errMessage(err));
     } finally {
       setAborting(false);
     }

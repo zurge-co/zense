@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { checkForUpdate, installUpdate } from "../lib/updater";
+import { errMessage } from "../lib/errors";
 
 type Phase = "idle" | "available" | "downloading" | "error";
 
@@ -40,7 +41,7 @@ export function UpdateDialog() {
       });
       // relaunch() never returns on success.
     } catch (err) {
-      setError(String(err));
+      setError(errMessage(err));
       setPhase("error");
     }
   };

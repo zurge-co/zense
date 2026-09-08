@@ -3,6 +3,7 @@ import { FileDiff, GitCompareArrows, TriangleAlert } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
 import { gitDiffCommits, type GitDiffCommits } from "../../lib/git";
 import { statusColor } from "../../lib/statusColor";
+import { errMessage } from "../../lib/errors";
 
 /**
  * Compare tab: per-file changes between two commits (from → to) with totals.
@@ -22,7 +23,7 @@ export function CompareView({ fromSha, toSha }: { fromSha: string; toSha: string
         if (!cancelled) setResult(r);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(String(err));
+        if (!cancelled) setLoadError(errMessage(err));
       });
     return () => {
       cancelled = true;

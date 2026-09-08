@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useUIStore, tabKey } from "./uiStore";
 import { copyEntry, createDir, deleteFile, importExternalEntries, listFiles, moveWorkspaceEntries, readFileContent, readFileTree, renameFile, writeFileContent } from "../lib/workspaceFs";
 import { isTauri } from "../lib/workspace";
+import { errMessage } from "../lib/errors";
 import {
   allFiles,
   extraWorkingFiles,
@@ -168,7 +169,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
         originalContents: { ...s.originalContents, [path]: content },
       }));
     } catch (err) {
-      set((s) => ({ fileErrors: { ...s.fileErrors, [path]: String(err) } }));
+      set((s) => ({ fileErrors: { ...s.fileErrors, [path]: errMessage(err) } }));
     }
   },
 
@@ -241,7 +242,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
         };
       });
     } catch (err) {
-      set((s) => ({ fileErrors: { ...s.fileErrors, [path]: String(err) } }));
+      set((s) => ({ fileErrors: { ...s.fileErrors, [path]: errMessage(err) } }));
     }
   },
 

@@ -7,6 +7,7 @@
  * partial streamed text as a message.
  */
 import { create } from "zustand";
+import { errMessage } from "../lib/errors";
 import {
   chatSend,
   loadLlmConfig,
@@ -146,7 +147,7 @@ export const useAiReviewStore = create<AiReviewState>((set, get) => {
         streaming: false,
         streamingText: "",
         activeTools: [],
-        error: String(err),
+        error: errMessage(err),
       });
     }
   };

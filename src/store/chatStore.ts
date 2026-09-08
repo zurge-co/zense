@@ -8,6 +8,7 @@ import {
   type StreamEvent,
 } from "../lib/llm";
 import { systemPrompt } from "../lib/systemPrompt";
+import { errMessage } from "../lib/errors";
 
 export interface ToolCallIndicator {
   id: string;
@@ -121,7 +122,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           streaming: false,
           streamingText: "",
           activeTools: [],
-          error: String(err),
+          error: errMessage(err),
         });
       }
     }

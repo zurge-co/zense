@@ -7,6 +7,7 @@ import { useWorkspaceStore } from "../../store/workspaceStore";
 import { applyAutoSave, applyCommitStamp, applyCommitStampName, applyEditorFontSize, applyShowHiddenFiles, applyUiZoom } from "../../lib/settings";
 import type { LlmConfig, EnabledTools, AgentGuards, PreferredLanguage } from "../../lib/llm";
 import { DEFAULT_ENABLED_TOOLS, DEFAULT_GUARDS, llmTestConnection } from "../../lib/llm";
+import { errMessage } from "../../lib/errors";
 
 const sections: { id: SettingsSection; label: string; icon: typeof Settings2 }[] = [
   { id: "general", label: "General", icon: Settings2 },
@@ -280,7 +281,7 @@ function LlmSection() {
       setTestMsg(reply);
     } catch (err) {
       setTestResult("err");
-      setTestMsg(String(err));
+      setTestMsg(errMessage(err));
     } finally {
       setTesting(false);
     }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ImageIcon, TriangleAlert } from "lucide-react";
 import { readFileBinary } from "../../lib/workspaceFs";
 import { imageMimeType } from "../../lib/image";
+import { errMessage } from "../../lib/errors";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -35,7 +36,7 @@ export function ImageViewer({ root, path }: { root: string; path: string }) {
         setUrl(objectUrl);
         setSize(bytes.length);
       } catch (err) {
-        if (!cancelled) setError(String(err));
+        if (!cancelled) setError(errMessage(err));
       }
     })();
     return () => {

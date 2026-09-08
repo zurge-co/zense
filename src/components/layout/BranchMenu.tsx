@@ -14,6 +14,7 @@ import {
   gitPush,
   type GitBranchEntry,
 } from "../../lib/git";
+import { errMessage } from "../../lib/errors";
 
 interface Feedback {
   ok: boolean;
@@ -97,7 +98,7 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
     try {
       setFeedback(await fn());
     } catch (err) {
-      setFeedback({ ok: false, message: String(err) });
+      setFeedback({ ok: false, message: errMessage(err) });
     } finally {
       setBusy(null);
     }
@@ -147,7 +148,7 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
       },
       (err) => {
         setBusy(null);
-        setFeedback({ ok: false, message: String(err) });
+        setFeedback({ ok: false, message: errMessage(err) });
       },
     );
   };
@@ -164,7 +165,7 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
       },
       (err) => {
         setBusy(null);
-        setFeedback({ ok: false, message: String(err) });
+        setFeedback({ ok: false, message: errMessage(err) });
       },
     );
   };

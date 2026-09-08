@@ -17,6 +17,7 @@ import { gitDiffFile, gitDiffCommitFile, gitDiscardFile, gitDiscardLines } from 
 import { explainDiffChange, summarizeFileChange, summarizeCommitFileChange } from "../../lib/aiReview";
 import { findChangeAtLine, extractChunk } from "../../lib/diffChunk";
 import { detectLanguage } from "../../lib/lang";
+import { errMessage } from "../../lib/errors";
 import { defineTheme } from "./monacoSetup";
 import { PathBreadcrumb } from "./PathBreadcrumb";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -91,7 +92,7 @@ export function DiffView({ tab }: { tab: EditorTab }) {
         });
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(String(err));
+        if (!cancelled) setLoadError(errMessage(err));
       });
     return () => {
       cancelled = true;
@@ -141,7 +142,7 @@ export function DiffView({ tab }: { tab: EditorTab }) {
       await useGitStore.getState().refresh(workspacePath);
       setReloadNonce((n) => n + 1);
     } catch (err) {
-      setLoadError(String(err));
+      setLoadError(errMessage(err));
     }
   };
 
@@ -242,7 +243,7 @@ export function DiffView({ tab }: { tab: EditorTab }) {
                 try {
                   await summarizeFileChange(workspacePath, path, staged);
                 } catch (err) {
-                  setLoadError(String(err));
+                  setLoadError(errMessage(err));
                 } finally {
                   setAiSummaryLoading(false);
                 }
@@ -395,7 +396,7 @@ export function DiffView({ tab }: { tab: EditorTab }) {
                 setReloadNonce((n) => n + 1);
               }
             } catch (err) {
-              setLoadError(String(err));
+              setLoadError(errMessage(err));
             }
           }}
           onCancel={() => setConfirmReset(false)}

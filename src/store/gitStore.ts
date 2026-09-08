@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { appendZenseTrailer } from "../lib/commitTrailer";
+import { errMessage } from "../lib/errors";
 import { useWorkspaceStore } from "./workspaceStore";
 import {
   gitStatus,
@@ -162,7 +163,7 @@ export const useGitStore = create<GitState>((set, get) => ({
         error: null,
       });
     } catch (err) {
-      if (nonce === refreshNonce) set({ error: String(err) });
+      if (nonce === refreshNonce) set({ error: errMessage(err) });
     } finally {
       if (nonce === refreshNonce) set({ loading: false });
     }
@@ -179,7 +180,7 @@ export const useGitStore = create<GitState>((set, get) => ({
         logHasMore: page.length === 50,
       }));
     } catch (err) {
-      set({ error: String(err) });
+      set({ error: errMessage(err) });
     } finally {
       set({ logLoading: false });
     }
@@ -192,7 +193,7 @@ export const useGitStore = create<GitState>((set, get) => ({
       await gitStage(currentRoot, path);
       await get().refresh(currentRoot);
     } catch (err) {
-      set({ error: String(err) });
+      set({ error: errMessage(err) });
     }
   },
 
@@ -203,7 +204,7 @@ export const useGitStore = create<GitState>((set, get) => ({
       await gitUnstage(currentRoot, path);
       await get().refresh(currentRoot);
     } catch (err) {
-      set({ error: String(err) });
+      set({ error: errMessage(err) });
     }
   },
 
@@ -214,7 +215,7 @@ export const useGitStore = create<GitState>((set, get) => ({
       await gitDiscardFile(currentRoot, path);
       await get().refresh(currentRoot);
     } catch (err) {
-      set({ error: String(err) });
+      set({ error: errMessage(err) });
     }
   },
 

@@ -3,6 +3,7 @@ import { Eye, TriangleAlert } from "lucide-react";
 import { readFileBinary, readFileContent } from "../../lib/workspaceFs";
 import { previewKind, type PreviewKind } from "../../lib/preview";
 import { renderMarkdownDocument } from "../../lib/markdown";
+import { errMessage } from "../../lib/errors";
 
 const KIND_LABEL: Record<PreviewKind, string> = {
   svg: "SVG",
@@ -50,7 +51,7 @@ export function PreviewView({ root, path }: { root: string; path: string }) {
           setError("This file type has no preview.");
         }
       } catch (err) {
-        if (!cancelled) setError(String(err));
+        if (!cancelled) setError(errMessage(err));
       }
     })();
     return () => {

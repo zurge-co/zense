@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
+import { errMessage } from "../../lib/errors";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import {
   searchWorkspace,
@@ -94,7 +95,7 @@ export function SearchPanel() {
         })
         .catch((err) => {
           if (searchSeq.current !== seq) return;
-          setError(String(err));
+          setError(errMessage(err));
           setSearching(false);
         });
     }, 250);
@@ -149,7 +150,7 @@ export function SearchPanel() {
       );
       setRefreshNonce((v) => v + 1);
     } catch (err) {
-      setError(String(err));
+      setError(errMessage(err));
     }
   };
 
