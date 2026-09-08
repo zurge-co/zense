@@ -113,13 +113,40 @@ export const useGitStore = create<GitState>((set, get) => ({
     const nonce = ++refreshNonce;
     set({ loading: true, currentRoot: root });
     try {
-      const [status, branchInfo, diffSummary, page, mergeInfo, conflicts] = await Promise.all([
-        gitStatus(root),
-        gitBranchInfo(root),
-        gitDiffSummary(root),
-        gitLog(root, 0, 50),
-        gitMergeInProgress(root),
-        gitConflicts(root),
+      const status = await gitStatus(root);
+      if (nonce !== refreshNonce) return; // a newer refresh superseded this one
+      if (status.notARepo) {
+        // Project without git: clear any leftover state (incl. the browser-dev
+        // mock initial state) so panels show the real "not a repo" empty state.
+        // The remaining commands would error on a non-repo root anyway.
+        set({
+          status,
+          branchInfo: { detached: false, ahead: 0, behind: 0 },
+          diffSummary: { staged: [], unstaged: [] },
+          commits: [],
+          logHasMore: false,
+          mergeInfo: mockMergeInProgress,
+          conflicts: [],
+          resolvedPaths: [],
+          error: null,
+        });
+        return;
+      }
+      // Per-call fallbacks: on an empty repo gitBranchInfo errors
+      // ("repository has no commits"), and one failing command must never
+      // leave stale/mock data behind.
+      const [branchInfo, diffSummary, page, mergeInfo, conflicts] = await Promise.all([
+        gitBranchInfo(root).catch(
+          (): GitBranchInfo => ({ detached: false, ahead: 0, behind: 0 })
+        ),
+        gitDiffSummary(root).catch(
+          (): GitDiffSummary => ({ staged: [], unstaged: [] })
+        ),
+        gitLog(root, 0, 50).catch((): GitLogEntry[] => []),
+        gitMergeInProgress(root).catch(
+          (): GitMergeInProgress => mockMergeInProgress
+        ),
+        gitConflicts(root).catch((): GitConflictEntry[] => []),
       ]);
       if (nonce !== refreshNonce) return; // a newer refresh superseded this one
       const resolvedPaths = deriveResolvedPaths(get(), mergeInfo, conflicts);
