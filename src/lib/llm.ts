@@ -16,6 +16,14 @@ export interface AgentGuards {
   maxToolOutput: number;
 }
 
+/** Language the agent must answer in (injected into the system prompt). */
+export type PreferredLanguage = "th" | "en";
+
+export const PREFERRED_LANGUAGE_LABEL: Record<PreferredLanguage, string> = {
+  th: "Thai",
+  en: "English",
+};
+
 export interface LlmConfig {
   apiFormat: "openai" | "anthropic";
   baseUrl: string;
@@ -23,6 +31,7 @@ export interface LlmConfig {
   model: string;
   enabledTools: EnabledTools;
   guards: AgentGuards;
+  preferredLanguage: PreferredLanguage;
 }
 
 export const DEFAULT_ENABLED_TOOLS: EnabledTools = {
@@ -61,6 +70,7 @@ function migrateConfig(cfg: Partial<LlmConfig>): LlmConfig {
     model: cfg.model ?? "",
     enabledTools: { ...DEFAULT_ENABLED_TOOLS, ...cfg.enabledTools },
     guards: { ...DEFAULT_GUARDS, ...cfg.guards },
+    preferredLanguage: cfg.preferredLanguage ?? "th",
   };
 }
 
