@@ -14,7 +14,7 @@ import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { gitDiffFile, gitDiffCommitFile, gitDiscardFile, gitDiscardLines } from "../../lib/git";
-import { explainDiffChange, summarizeFileChange } from "../../lib/aiReview";
+import { explainDiffChange, summarizeFileChange, summarizeCommitFileChange } from "../../lib/aiReview";
 import { findChangeAtLine, extractChunk } from "../../lib/diffChunk";
 import { detectLanguage } from "../../lib/lang";
 import { defineTheme } from "./monacoSetup";
@@ -56,9 +56,9 @@ export function DiffView({ tab }: { tab: EditorTab }) {
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
-  const metaRef = useRef({ path, staged, commitMode, root: workspacePath });
+  const metaRef = useRef({ path, staged, commitMode, fromSha, toSha, root: workspacePath });
   useEffect(() => {
-    metaRef.current = { path, staged, commitMode, root: workspacePath };
+    metaRef.current = { path, staged, commitMode, fromSha, toSha, root: workspacePath };
   });
 
   useEffect(() => {
@@ -313,8 +313,22 @@ export function DiffView({ tab }: { tab: EditorTab }) {
               };
               const runSummarize = () => {
                 const meta = metaRef.current;
-                // Commit-to-commit diffs have no working-tree patch to send.
-                if (!meta.root || meta.commitMode) return;
+                if (!meta.root) return;
+                // Commit-to-commit diffs have no working-tree patch — send
+                // the loaded file pair inline instead.
+                if (meta.commitMode) {
+                  const c = contentRef.current;
+                  if (!c || !meta.toSha) return;
+                  void summarizeCommitFileChange({
+                    root: meta.root,
+                    path: meta.path,
+                    fromLabel: meta.fromSha ? short(meta.fromSha) : `${short(meta.toSha)}^`,
+                    toLabel: short(meta.toSha),
+                    original: c.original,
+                    modified: c.modified,
+                  });
+                  return;
+                }
                 void summarizeFileChange(meta.root, meta.path, meta.staged);
               };
               for (const side of ["modified", "original"] as const) {

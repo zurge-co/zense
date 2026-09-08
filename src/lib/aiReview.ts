@@ -11,6 +11,7 @@ import { useAiReviewStore } from "../store/aiReviewStore";
 import { useUIStore } from "../store/uiStore";
 import {
   buildBugHuntPrompt,
+  buildCommitFileSummaryPrompt,
   buildExplainPrompt,
   buildFileSummaryPrompt,
   buildReviewAllPrompt,
@@ -76,6 +77,29 @@ export async function findBugsInChanges(root: string, path?: string, staged = fa
     patch = `--- Staged ---\n${stagedPatch}\n--- Unstaged ---\n${unstagedPatch}`;
   }
   await begin("bug-hunt", path, buildBugHuntPrompt(scope, patch), root);
+}
+
+/** คลิกขวาใน commitDiff tab → สรุปการเปลี่ยนแปลงของไฟล์ระหว่างสอง commit */
+export async function summarizeCommitFileChange(args: {
+  root: string;
+  path: string;
+  fromLabel: string;
+  toLabel: string;
+  original: string;
+  modified: string;
+}): Promise<void> {
+  await begin(
+    "file-summary",
+    args.path,
+    buildCommitFileSummaryPrompt(
+      args.path,
+      args.fromLabel,
+      args.toLabel,
+      args.original,
+      args.modified,
+    ),
+    args.root,
+  );
 }
 
 /** คลิกขวาที่ selection ใน editor → อธิบายโค้ด */

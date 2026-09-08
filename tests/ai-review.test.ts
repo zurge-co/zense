@@ -17,6 +17,7 @@ import * as path from "path";
 import {
   filterPatchForPath,
   buildFileSummaryPrompt,
+  buildCommitFileSummaryPrompt,
   buildReviewAllPrompt,
   buildBugHuntPrompt,
   buildExplainPrompt,
@@ -116,6 +117,16 @@ describe("AI Review prompt builders", () => {
     expect(p).toContain("Staged diff");
     expect(p).toContain("Unstaged diff");
     expect(p).toContain("(ไม่มี unstaged changes)");
+  });
+
+  test("commit-file summary embeds both versions with the sha refs", () => {
+    const p = buildCommitFileSummaryPrompt("src/a.ts", "a1b2c3d", "e5f6071", "old code", "new code");
+    expect(p).toContain("src/a.ts");
+    expect(p).toContain("a1b2c3d");
+    expect(p).toContain("e5f6071");
+    expect(p).toContain("old code");
+    expect(p).toContain("new code");
+    expect(p).toContain("สรุป");
   });
 
   test("bug hunt asks for severity-classified findings", () => {
@@ -367,6 +378,17 @@ describe("AI Review wiring (structural)", () => {
     expect(actions.length).toBeGreaterThanOrEqual(2);
   });
 
+  test("DiffView: summarize menu works in commit-diff tabs too (not a dead item)", () => {
+    const src = readSrc("src/components/editor/DiffView.tsx");
+    expect(src).toContain("summarizeCommitFileChange");
+    expect(src).toContain("fromSha");
+    expect(src).toContain("toSha");
+    // The commit-mode branch must send the loaded file pair inline.
+    const commitBranch = src.indexOf("if (meta.commitMode)");
+    expect(commitBranch).toBeGreaterThan(-1);
+    expect(src.slice(commitBranch, commitBranch + 700)).toContain("original: c.original");
+  });
+
   test("DiffView: the pre-existing AI Summary button is wired", () => {
     const src = readSrc("src/components/editor/DiffView.tsx");
     const titleIdx = src.indexOf('title="Summarize this diff with AI"');
@@ -381,6 +403,7 @@ describe("AI Review wiring (structural)", () => {
     const src = readSrc("src/lib/aiReview.ts");
     for (const fn of [
       "summarizeFileChange",
+      "summarizeCommitFileChange",
       "reviewAllChanges",
       "findBugsInChanges",
       "explainSelection",

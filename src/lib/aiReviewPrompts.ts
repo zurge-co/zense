@@ -111,6 +111,39 @@ ${unstaged}
 ${THAI_FOOTER}`;
 }
 
+/**
+ * สรุปการเปลี่ยนแปลงของไฟล์ระหว่างสอง commit (commitDiff tabs จาก
+ * History/CompareView). ไม่มี commit-patch tool ฝั่ง backend (git_show ให้
+ * เฉพาะ line stats) จึง embed content ทั้งสองเวอร์ชัน inline (clipped).
+ */
+export function buildCommitFileSummaryPrompt(
+  path: string,
+  fromLabel: string,
+  toLabel: string,
+  original: string,
+  modified: string,
+): string {
+  return `ช่วยสรุปการเปลี่ยนแปลงของไฟล์ \`${path}\` ระหว่าง commit \`${fromLabel}\` → \`${toLabel}\`
+
+โค้ดเดิม (ที่ \`${fromLabel}\`):
+\`\`\`
+${clip(original)}
+\`\`\`
+
+โค้ดใหม่ (ที่ \`${toLabel}\`):
+\`\`\`
+${clip(modified)}
+\`\`\`
+
+(ถ้าเนื้อหาถูกตัดให้สรุปเท่าที่เห็นและระบุไว้ด้วย)
+รูปแบบคำตอบ:
+1. **สรุปภาพรวม** 1–2 ประโยค — แก้อะไร เพื่ออะไร (ดู commit message ผ่าน git_show ประกอบได้)
+2. **รายละเอียดสำคัญ** เป็น bullet (อ้าง file:line)
+3. **จุดที่คน review ต้องดูเป็นพิเศษ** (ถ้าไม่มีให้บอกว่าไม่มี)
+
+${THAI_FOOTER}`;
+}
+
 /** หา bug / ความผิดพลาด / edge case จาก changes (scope = path หรือ "changes ทั้งหมด"). */
 export function buildBugHuntPrompt(scope: string, patch: string): string {
   const context = patch.trim()
