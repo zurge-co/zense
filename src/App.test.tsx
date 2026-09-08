@@ -169,6 +169,24 @@ describe("App.tsx — keyboard shortcuts (task 1.4)", () => {
     expect(src).toContain("closeSettings()");
   });
 
+  test("⌘C: selected text beats file-tree copy (chat panel stays copyable)", () => {
+    // Regression: onTreeKey hijacked every ⌘C outside an input, breaking
+    // plain copy in the chat / AI review panels. The guard must check the
+    // window selection BEFORE calling copyNode.
+    expect(src).toContain("window.getSelection()?.toString()");
+    const guard = src.indexOf("window.getSelection()?.toString()");
+    const copyNode = src.indexOf("ws.copyNode(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(copyNode).toBeGreaterThan(guard);
+  });
+
+  test("chat + AI review user bubbles are selectable", async () => {
+    const chat = await readSrc("components/chat/ChatPanel.tsx");
+    const review = await readSrc("components/aiReview/AiReviewPanel.tsx");
+    expect(chat).toContain("whitespace-pre-wrap select-text");
+    expect(review).toContain("whitespace-pre-wrap select-text");
+  });
+
   test("⌘S: handler returns early when not on workspace screen", () => {
     expect(src).toContain('ui.screen !== "workspace"');
   });

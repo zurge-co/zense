@@ -487,6 +487,12 @@ function useKeyboardShortcuts() {
       if (!ws.selectedTreeNode) return;
 
       if (e.key.toLowerCase() === "c") {
+        // Selected text (chat / AI review prose, diff lines, …) beats the
+        // file-tree copy node: ⌘/Ctrl+C with a text selection must copy
+        // the text. Without this check the tree-node copy hijacked every
+        // copy keystroke outside an input, forcing right-click copy in
+        // the chat panel.
+        if (window.getSelection()?.toString()) return;
         e.preventDefault();
         ws.copyNode(ws.selectedTreeNode.path, ws.selectedTreeNode.type);
       } else if (e.key.toLowerCase() === "v") {

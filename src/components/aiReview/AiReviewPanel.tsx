@@ -112,7 +112,8 @@ export function AiReviewPanel() {
                 }`}
               >
                 {msg.role === "user" ? (
-                  <div className="whitespace-pre-wrap">
+                  // select-text: see ChatPanel — body is user-select:none.
+                  <div className="whitespace-pre-wrap select-text">
                     {i === 0 ? active.bubble : msg.content}
                   </div>
                 ) : (

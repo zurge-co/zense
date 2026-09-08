@@ -130,7 +130,10 @@ export function ChatPanel() {
                 }`}
               >
                 {msg.role === "user" ? (
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                  // select-text: body is user-select:none; your own prompt
+                  // must be copyable with ⌘/Ctrl+C, like assistant output
+                  // (.md-content sets the same in index.css).
+                  <div className="whitespace-pre-wrap select-text">{msg.content}</div>
                 ) : (
                   <MarkdownView source={msg.content} />
                 )}
