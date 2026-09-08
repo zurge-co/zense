@@ -63,18 +63,22 @@ bunx wrangler deploy          # deploy worker.ts
 ## ออก release ใหม่
 
 ```bash
-# 1) อัปเดต version ใน src-tauri/tauri.conf.json
-# 2) publish
-export ZENSE_DOWNLOAD_URL="https://zense.zurge.co"
-bun run publish            # เต็ม: build + sign + latest.json + upload
-bun run publish -- --dry-run     # ดูก่อนว่าจะอัปโหลดอะไรบ้าง
-bun run publish -- --skip-build  # ใช้ bundle ที่ build ไว้แล้ว
+# 1) เขียน release notes ใน RELEASE_NOTES.md (บังคับ — ไม่เขียน release จะ fail)
+# 2) release คำสั่งเดียว: bump → commit → tag → push → publish
+bun run release -- patch          # หรือ minor / major / เลขเวอร์ชันตรง ๆ
+bun run release -- patch --dry-run     # ดู plan ก่อน ไม่แก้อะไรเลย
+bun run release -- patch --no-publish  # หยุดหลัง push (publish ทีหลังด้วย bun run publish)
 ```
 
-สคริปต์จะอัปโหลด: `latest.json`, `*.app.tar.gz(.sig)` (rename เป็น
+`scripts/release.mjs` อ่านเนื้อหา `RELEASE_NOTES.md` (ตัด HTML comment ออก)
+ส่งเข้า `NOTES` env ของ publish → ไปอยู่ใน `latest.json` → แสดงใน
+UpdateDialog ของแอป และใส่ในข้อความของ git tag ด้วย
+
+สคริปต์ publish จะอัปโหลด: `latest.json`, `*.app.tar.gz(.sig)` (rename เป็น
 `zense_<ver>_<arch>.app.tar.gz`), `*.dmg`, และ `install.sh` (แปะ origin จริงให้แล้ว)
 
-> หมายเหตุ: `NOTES="..."` env ใส่ release notes ที่จะไปโผล่ใน latest.json ได้
+> หมายเหตุ: ถ้ารัน `bun run publish` ตรง ๆ (ไม่ผ่าน release) ยังใช้
+> `NOTES="..."` env แบบเดิมได้ — ค่า default คือ `Zense <version>`
 
 ## ผู้ใช้ติดตั้งครั้งแรก (macOS)
 

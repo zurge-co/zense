@@ -7,14 +7,17 @@
  * What it does, in order (all guards run before anything is modified):
  *   1. Guards: clean worktree, on a real branch, new semver > current,
  *      git tag does not exist locally or on the remote
- *   2. Bump version in all three sources of truth:
+ *   2. Read RELEASE_NOTES.md (fail if missing / empty / headings only) —
+ *      it becomes the notes in latest.json and the git tag message
+ *   3. Bump version in all three sources of truth:
  *        - package.json
  *        - src-tauri/tauri.conf.json
  *        - src-tauri/Cargo.toml
- *   3. git commit "chore: bump version to <version>"
- *   4. git tag -a v<version>
- *   5. git push origin <branch> + the new tag
- *   6. node scripts/publish-update.mjs  (tauri build → latest.json → R2)
+ *   4. git commit "chore: bump version to <version>"
+ *   5. git tag -a v<version> (message = tag + release notes)
+ *   6. git push origin <branch> + the new tag
+ *   7. node scripts/publish-update.mjs  (tauri build → latest.json → R2,
+ *      NOTES env = release notes)
  *
  * Options:
  *   --dry-run        print the plan, change nothing (publish is NOT run)
@@ -25,7 +28,8 @@
  *
  * Env (all optional — defaults come from repo config; see publish-update.mjs):
  *   ZENSE_DOWNLOAD_URL   overrides the updater-endpoint origin in tauri.conf.json
- *   TAURI_SIGNING_PRIVATE_KEY_PATH, R2_BUCKET, NOTES
+ *   TAURI_SIGNING_PRIVATE_KEY_PATH, R2_BUCKET
+ *   NOTES is NOT read from env here — notes always come from RELEASE_NOTES.md
  *
  * If the publish step fails, the version commit/tag/push are already done
  * and safe — retry with:  bun run publish
@@ -115,6 +119,25 @@ if (!gt(next, parseSemver(current))) {
 const nextVersion = next.join(".");
 const tagName = `v${nextVersion}`;
 
+// ── Release notes (fail fast, before guards/bump touch anything) ───────────
+const NOTES_PATH = join(ROOT, "RELEASE_NOTES.md");
+function readReleaseNotes() {
+  let raw;
+  try {
+    raw = readFileSync(NOTES_PATH, "utf8");
+  } catch {
+    fail(`RELEASE_NOTES.md not found — write the notes for ${nextVersion} first`);
+  }
+  const body = raw.replace(/<!--[\s\S]*?-->/g, "").trim();
+  // Real content = at least one line that is not blank and not a heading.
+  const hasContent = body.split("\n").some((l) => l.trim() && !l.trim().startsWith("#"));
+  if (!hasContent) {
+    fail(`RELEASE_NOTES.md has no notes for ${nextVersion} (only headings) — write what ships in this release first`);
+  }
+  return body;
+}
+const notes = readReleaseNotes();
+
 // ── Guards (read-only, before any modification) ──────────────────────────
 console.log(`→ Guards: repo state, tag uniqueness, publish env…`);
 
@@ -166,6 +189,7 @@ Plan:
   commit    chore: bump version to ${nextVersion}
   tag       ${tagName} (annotated)
   push      origin ${branch} + ${tagName}
+  notes     ${notes.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#"))[0]?.trim() ?? ""}
   download  ${(() => { const u = process.env.ZENSE_DOWNLOAD_URL ?? tauriConf.plugins?.updater?.endpoints?.[0]; return u ? new URL(u).origin : "(not set — publish would fail)"; })()}
   publish   ${NO_PUBLISH ? "skipped (--no-publish)" : `scripts/publish-update.mjs${SKIP_BUILD ? " --skip-build" : ""}`}
 `);
@@ -195,7 +219,7 @@ console.log(`✓ bumped ${current} → ${nextVersion} in ${VERSION_FILES.length}
 // ── Commit, tag, push ────────────────────────────────────────────────────
 run("git", ["add", ...VERSION_FILES]);
 run("git", ["commit", "-m", `chore: bump version to ${nextVersion}`]);
-run("git", ["tag", "-a", tagName, "-m", tagName]);
+run("git", ["tag", "-a", tagName, "-m", tagName, "-m", notes]);
 run("git", ["push", "origin", branch]);
 run("git", ["push", "origin", tagName]);
 
@@ -204,6 +228,12 @@ if (NO_PUBLISH) {
   console.log(`\n✓ released ${tagName} (publish skipped). Run later: bun run publish`);
 } else {
   const forwarded = PUBLISH_FORWARDED_FLAGS.filter((f) => args.includes(f));
-  run("node", [join(ROOT, "scripts/publish-update.mjs"), ...forwarded], `publish ${nextVersion}`);
+  // NOTES env carries RELEASE_NOTES.md into latest.json (see publish-update.mjs).
+  console.log(`→ publish ${nextVersion}`);
+  execFileSync("node", [join(ROOT, "scripts/publish-update.mjs"), ...forwarded], {
+    cwd: ROOT,
+    stdio: "inherit",
+    env: { ...process.env, NOTES: notes },
+  });
   console.log(`\n✓ released ${tagName} — build signed and uploaded to R2`);
 }
