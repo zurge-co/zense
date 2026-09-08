@@ -241,7 +241,7 @@ export function DiffView({ tab }: { tab: EditorTab }) {
                 if (!workspacePath || aiSummaryLoading) return;
                 setAiSummaryLoading(true);
                 try {
-                  await summarizeFileChange(workspacePath, path, staged);
+                  await summarizeFileChange(workspacePath, path, staged, "AI Summary");
                 } catch (err) {
                   setLoadError(errMessage(err));
                 } finally {
@@ -310,6 +310,7 @@ export function DiffView({ tab }: { tab: EditorTab }) {
                   endLine: chunk.endLine,
                   removed: chunk.removed,
                   added: chunk.added,
+                  bubble: "Explain this change with AI",
                 });
               };
               const runSummarize = () => {
@@ -327,10 +328,11 @@ export function DiffView({ tab }: { tab: EditorTab }) {
                     toLabel: short(meta.toSha),
                     original: c.original,
                     modified: c.modified,
+                    bubble: "Summarize this file's diff with AI",
                   });
                   return;
                 }
-                void summarizeFileChange(meta.root, meta.path, meta.staged);
+                void summarizeFileChange(meta.root, meta.path, meta.staged, "Summarize this file's diff with AI");
               };
               for (const side of ["modified", "original"] as const) {
                 const ed =

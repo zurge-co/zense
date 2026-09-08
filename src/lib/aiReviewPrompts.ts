@@ -12,7 +12,9 @@
  *
  * Prompt templates are English-only; the answer language is controlled by
  * the system prompt's preferred-language directive, not by these prompts.
- * Only the user-facing UI labels (KIND_LABEL, userBubbleLabel) stay Thai.
+ * Only the thread-tab labels (KIND_LABEL) stay Thai; the user bubble shows
+ * the exact name of the button/menu item the user clicked (English, same
+ * as the context menus).
  */
 
 export type AiReviewKind = "file-summary" | "review-all" | "bug-hunt" | "explain";
@@ -202,16 +204,20 @@ Cover all 5 points:
 5. **Risk** — what may break if this part is wrong`;
 }
 
-/** Short heading for the user-side bubble in a thread — not the full prompt. */
-export function userBubbleLabel(kind: AiReviewKind, target?: string): string {
+/**
+ * Fallback short heading for the user-side bubble in a thread — NOT the
+ * full prompt. Callers normally pass the exact label of the button/menu
+ * item the user clicked (see aiReview.ts); this is the kind-only default.
+ */
+export function userBubbleLabel(kind: AiReviewKind): string {
   switch (kind) {
     case "file-summary":
-      return `สรุปการเปลี่ยนแปลงของ \`${target}\``;
+      return "Summarize with AI";
     case "review-all":
-      return "สรุป changes ทั้งหมด + จุดที่ต้อง review";
+      return "Summarize all changes + review points";
     case "bug-hunt":
-      return target ? `หาบั๊กใน \`${target}\`` : "หาบั๊กใน changes ทั้งหมด";
+      return "Find bugs with AI";
     case "explain":
-      return `อธิบาย \`${target}\``;
+      return "Explain with AI";
   }
 }

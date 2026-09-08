@@ -64,13 +64,13 @@ export function ReviewPanel() {
           id: "ai-summarize",
           label: "Summarize with AI",
           icon: Sparkles,
-          onClick: () => void runAi(() => summarizeFileChange(root, path, staged)),
+          onClick: () => void runAi(() => summarizeFileChange(root, path, staged, "Summarize with AI")),
         },
         {
           id: "ai-find-bugs",
           label: "Find bugs with AI",
           icon: Bug,
-          onClick: () => void runAi(() => findBugsInChanges(root, path, staged)),
+          onClick: () => void runAi(() => findBugsInChanges(root, path, staged, "Find bugs with AI")),
         },
         {
           id: "open-diff",
@@ -281,13 +281,13 @@ export function ReviewPanel() {
                     id: "ai-review-all",
                     label: "Summarize all changes + review points",
                     icon: Sparkles,
-                    onClick: () => void runAi(() => reviewAllChanges(root)),
+                    onClick: () => void runAi(() => reviewAllChanges(root, "Summarize all changes + review points")),
                   },
                   {
                     id: "ai-bugs-all",
                     label: "Find bugs in all changes",
                     icon: Bug,
-                    onClick: () => void runAi(() => findBugsInChanges(root)),
+                    onClick: () => void runAi(() => findBugsInChanges(root, undefined, false, "Find bugs in all changes")),
                   },
                 ],
               });

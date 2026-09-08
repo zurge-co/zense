@@ -23,9 +23,17 @@ import {
 /**
  * Open the AI Review panel and start a thread. When the LLM is not
  * configured the panel shows its setup empty state and no thread is
- * created (returns null).
+ * created (returns null). `bubble` is the exact label of the button/menu
+ * item the user clicked — shown in the user-side bubble instead of the
+ * full prompt.
  */
-async function begin(kind: AiReviewKind, target: string | undefined, prompt: string, root: string): Promise<string | null> {
+async function begin(
+  kind: AiReviewKind,
+  target: string | undefined,
+  prompt: string,
+  root: string,
+  bubble?: string,
+): Promise<string | null> {
   const store = useAiReviewStore.getState();
   if (!store.configLoaded) await store.loadConfig();
   useUIStore.getState().setRightTab("aiReview");
@@ -33,6 +41,7 @@ async function begin(kind: AiReviewKind, target: string | undefined, prompt: str
   return useAiReviewStore.getState().startReview({
     kind,
     title: threadTitle(kind, target),
+    bubble,
     prompt,
     root,
   });
@@ -45,22 +54,22 @@ async function patchForFile(root: string, path: string, staged: boolean): Promis
 }
 
 /** คลิกขวาที่ change → สรุปการเปลี่ยนแปลงของไฟล์นั้น */
-export async function summarizeFileChange(root: string, path: string, staged: boolean): Promise<void> {
+export async function summarizeFileChange(root: string, path: string, staged: boolean, bubble?: string): Promise<void> {
   const patch = await patchForFile(root, path, staged);
-  await begin("file-summary", path, buildFileSummaryPrompt(path, patch, staged), root);
+  await begin("file-summary", path, buildFileSummaryPrompt(path, patch, staged), root, bubble);
 }
 
 /** ปุ่ม AI ใน Review panel → สรุป changes ทั้งหมด + จุดที่คนต้อง review */
-export async function reviewAllChanges(root: string): Promise<void> {
+export async function reviewAllChanges(root: string, bubble?: string): Promise<void> {
   const [staged, unstaged] = await Promise.all([gitStagedDiff(root), gitUnstagedDiff(root)]);
   if (!staged.trim() && !unstaged.trim()) {
     throw new Error("No changes to review — ยังไม่มีการเปลี่ยนแปลงใด ๆ");
   }
-  await begin("review-all", undefined, buildReviewAllPrompt(staged, unstaged), root);
+  await begin("review-all", undefined, buildReviewAllPrompt(staged, unstaged), root, bubble);
 }
 
 /** หา bug / ความผิดพลาดจาก changes — ทั้ง repo หรือเฉพาะไฟล์ */
-export async function findBugsInChanges(root: string, path?: string, staged = false): Promise<void> {
+export async function findBugsInChanges(root: string, path?: string, staged = false, bubble?: string): Promise<void> {
   let scope = "all changes (staged + unstaged)";
   let patch: string;
   if (path) {
@@ -76,7 +85,7 @@ export async function findBugsInChanges(root: string, path?: string, staged = fa
     }
     patch = `--- Staged ---\n${stagedPatch}\n--- Unstaged ---\n${unstagedPatch}`;
   }
-  await begin("bug-hunt", path, buildBugHuntPrompt(scope, patch), root);
+  await begin("bug-hunt", path, buildBugHuntPrompt(scope, patch), root, bubble);
 }
 
 /** คลิกขวาใน commitDiff tab → สรุปการเปลี่ยนแปลงของไฟล์ระหว่างสอง commit */
@@ -87,6 +96,7 @@ export async function summarizeCommitFileChange(args: {
   toLabel: string;
   original: string;
   modified: string;
+  bubble?: string;
 }): Promise<void> {
   await begin(
     "file-summary",
@@ -99,6 +109,7 @@ export async function summarizeCommitFileChange(args: {
       args.modified,
     ),
     args.root,
+    args.bubble,
   );
 }
 
@@ -109,6 +120,7 @@ export async function explainSelection(args: {
   startLine: number;
   endLine: number;
   snippet: string;
+  bubble?: string;
 }): Promise<void> {
   if (!args.snippet.trim()) return;
   const target =
@@ -125,6 +137,7 @@ export async function explainSelection(args: {
       snippet: args.snippet,
     }),
     args.root,
+    args.bubble,
   );
 }
 
@@ -136,6 +149,7 @@ export async function explainDiffChange(args: {
   endLine: number;
   removed: string;
   added: string;
+  bubble?: string;
 }): Promise<void> {
   if (!args.removed.trim() && !args.added.trim()) return;
   const target = `${args.path}:${args.startLine}${args.endLine > args.startLine ? `-${args.endLine}` : ""}`;
@@ -150,5 +164,6 @@ export async function explainDiffChange(args: {
       removed: args.removed,
     }),
     args.root,
+    args.bubble,
   );
 }

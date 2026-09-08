@@ -163,9 +163,15 @@ describe("AI Review prompt builders", () => {
     expect(p).toContain("+new code");
   });
 
-  test("thread titles and bubbles are compact Thai labels", () => {
+  test("thread tab titles keep Thai kind labels", () => {
     expect(threadTitle("file-summary", "src/a.ts")).toContain("src/a.ts");
-    expect(userBubbleLabel("explain", "src/a.ts:3-8")).toBe("อธิบาย `src/a.ts:3-8`");
+  });
+
+  test("bubble fallback mirrors the English button/menu labels", () => {
+    expect(userBubbleLabel("file-summary")).toBe("Summarize with AI");
+    expect(userBubbleLabel("review-all")).toBe("Summarize all changes + review points");
+    expect(userBubbleLabel("bug-hunt")).toBe("Find bugs with AI");
+    expect(userBubbleLabel("explain")).toBe("Explain with AI");
   });
 });
 
@@ -267,6 +273,20 @@ describe("aiReviewStore", () => {
     expect(s.threads[0].streaming).toBe(false);
     expect(s.threads[0].messages).toHaveLength(2);
     expect(s.threads[0].messages[1].role).toBe("assistant");
+  });
+
+  test("startReview stores an explicit bubble (clicked button label) verbatim", () => {
+    const id = useAiReviewStore.getState().startReview({
+      kind: "bug-hunt",
+      title: "หาบั๊ก · src/a.ts",
+      bubble: "Find bugs in all changes",
+      prompt: "real english prompt",
+      root: "/tmp",
+    });
+    const t = useAiReviewStore.getState().threads.find((x) => x.id === id)!;
+    expect(t.bubble).toBe("Find bugs in all changes");
+    // The bubble is display-only — the LLM still gets the full prompt.
+    expect(t.messages[0]).toEqual({ role: "user", content: "real english prompt" });
   });
 
   test("followUp appends user + assistant messages to the same thread", async () => {

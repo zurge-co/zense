@@ -82,7 +82,7 @@ export function CodeEditor({
               ? model.getLineContent(sel.startLineNumber)
               : model.getValueInRange(sel);
             if (!snippet.trim()) return;
-            void explainSelection({ root, path: p, startLine: start, endLine: end, snippet });
+            void explainSelection({ root, path: p, startLine: start, endLine: end, snippet, bubble: "Explain with AI" });
           },
         });
         // Live cursor position for the StatusBar.

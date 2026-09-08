@@ -169,7 +169,7 @@ export const useAiReviewStore = create<AiReviewState>((set, get) => {
         id,
         kind,
         title,
-        bubble: bubble ?? userBubbleLabel(kind, title),
+        bubble: bubble ?? userBubbleLabel(kind),
         messages: [{ role: "user", content: prompt }],
         streaming: false,
         streamingText: "",
