@@ -1,7 +1,7 @@
 //! File-system commands: workspace file index/tree (for the explorer and the
 //! composer @-mentions) and guarded file reads (editor content + snippets).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 
 /// Safety valve for pathological workspaces (e.g. no .gitignore).
 const MAX_ENTRIES: usize = 20_000;
+
+/// Per-dir budget for the contents of an ignored dot folder (see
+/// `read_file_tree`). Dot state dirs (`.zense`, `.idea`, ...) stay browsable
+/// but capped; non-dot ignored dirs (node_modules/target) are never descended
+/// into at all.
+const MAX_IGNORED_DOT_ENTRIES: usize = 500;
 /// Refuse to load huge files into the editor.
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 /// Refuse to load huge binary files (images) into the preview.
@@ -185,9 +191,12 @@ pub fn list_files(root: String, include_hidden: bool) -> Result<Vec<String>, Str
 /// them instead of making them invisible:
 ///
 /// - **git-ignored direct children of visible directories** — shown with
-///   `ignored: true` (dimmed UI, VS Code style). We deliberately do NOT walk
-///   into ignored dirs (that would descend into node_modules/target on every
-///   refresh); ignored folders appear dimmed and without children.
+///   `ignored: true` (dimmed UI, VS Code style). Ignored *dot* folders
+///   (`.zense`, `.idea`, ...) are state dirs the user wants to browse, so
+///   they are walked with a per-dir budget (MAX_IGNORED_DOT_ENTRIES) and all
+///   descendants are flagged `ignored` too. Non-dot ignored dirs
+///   (node_modules/target/dist) deliberately stay childless — walking those
+///   on every refresh is exactly the cost this section exists to avoid.
 /// - **`.git` itself** — shown as a synthetic folder node without contents
 ///   (still hidden when `include_hidden` is false, like every dot entry).
 #[tauri::command]
@@ -304,7 +313,13 @@ pub fn read_file_tree(root: String, include_hidden: bool) -> Result<Vec<FsNode>,
       }
       let is_dir = item.file_type().is_ok_and(|t| t.is_dir());
       if stack.is_ignored(&item.path(), is_dir) {
-        entries.push((rel, is_dir, true));
+        entries.push((rel.clone(), is_dir, true));
+        // Ignored dot folders (`.zense`, `.idea`, ...) are small state dirs
+        // the user wants to browse — walk into them, bounded. (Top-level
+        // `.git` is skipped above and stays childless.)
+        if is_dir && name.starts_with('.') {
+          collect_ignored_dot_dir(&item.path(), &rel, &mut entries);
+        }
         if entries.len() >= MAX_ENTRIES {
           break 'dirs;
         }
@@ -318,6 +333,39 @@ pub fn read_file_tree(root: String, include_hidden: bool) -> Result<Vec<FsNode>,
     insert(&mut root_builder, &segments, is_dir, ignored);
   }
   Ok(build(root_builder, ""))
+}
+
+/// Bounded enumeration of an ignored dot dir's contents: plain BFS (FIFO
+/// queue, so a mid-walk budget cutoff keeps every top-level entry instead of
+/// draining one deep subtree first) with a per-dir budget and the global
+/// MAX_ENTRIES cap. Everything inside an ignored dir is by definition
+/// git-ignored, so every descendant is flagged `ignored=true`. `.git` dirs at
+/// any depth are skipped and symlinks are never followed
+/// (`DirEntry::file_type` doesn't traverse links, so a symlinked dir is
+/// reported as a non-dir).
+fn collect_ignored_dot_dir(dir_abs: &Path, rel_prefix: &str, entries: &mut Vec<(String, bool, bool)>) {
+  let budget_end = entries.len() + MAX_IGNORED_DOT_ENTRIES;
+  let mut queue = VecDeque::from([(dir_abs.to_path_buf(), rel_prefix.to_string())]);
+  while let Some((abs, rel)) = queue.pop_front() {
+    let Ok(rd) = std::fs::read_dir(&abs) else {
+      continue;
+    };
+    for item in rd.flatten() {
+      let name = item.file_name().to_string_lossy().replace('\\', "/");
+      if name == ".git" {
+        continue;
+      }
+      let child_rel = format!("{rel}/{name}");
+      let is_dir = item.file_type().is_ok_and(|t| t.is_dir());
+      if is_dir {
+        queue.push_back((item.path(), child_rel.clone()));
+      }
+      entries.push((child_rel, is_dir, true));
+      if entries.len() >= budget_end || entries.len() >= MAX_ENTRIES {
+        return;
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1235,6 +1283,58 @@ mod tests {
     // list_files is untouched by the tree change (still git-respecting).
     let files = list_files(root, true).unwrap();
     assert_eq!(files, vec![".gitignore", "keep.log", "src/keep.ts"]);
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn read_file_tree_walks_ignored_dot_dirs_but_not_dotgit() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::write(dir.join(".gitignore"), ".zense/\n").unwrap();
+    fs::create_dir_all(dir.join(".zense/sub")).unwrap();
+    fs::write(dir.join(".zense/focus.json"), "{}").unwrap();
+    fs::write(dir.join(".zense/sub/inner.txt"), "x").unwrap();
+    fs::create_dir_all(dir.join(".git")).unwrap();
+    fs::write(dir.join(".git/HEAD"), "x").unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/keep.ts"), "x").unwrap();
+
+    let tree = read_file_tree(root.clone(), true).unwrap();
+    let dz = tree.iter().find(|n| n.name == ".zense").expect(".zense must be shown");
+    assert!(dz.ignored);
+    let dz_children = dz.children.as_ref().unwrap();
+    let focus = dz_children
+      .iter()
+      .find(|n| n.name == "focus.json")
+      .expect("children of an ignored dot dir are enumerated");
+    assert!(focus.ignored, "descendants of an ignored dir stay flagged");
+    let sub = dz_children.iter().find(|n| n.name == "sub").expect("nested dir enumerated");
+    assert!(sub.ignored);
+    assert!(sub.children.as_ref().unwrap().iter().any(|n| n.name == "inner.txt" && n.ignored));
+
+    // `.git` still stays childless even when it sits next to a walked dot dir.
+    let dotgit = tree.iter().find(|n| n.name == ".git").unwrap();
+    assert_eq!(dotgit.children.as_ref().unwrap().len(), 0);
+
+    // list_files is untouched: still purely git-respecting.
+    assert!(list_files(root, true).unwrap().iter().all(|p| !p.starts_with(".zense")));
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn read_file_tree_caps_ignored_dot_dir_contents() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    fs::write(dir.join(".gitignore"), ".zcap/\n").unwrap();
+    fs::create_dir_all(dir.join(".zcap")).unwrap();
+    for i in 0..(MAX_IGNORED_DOT_ENTRIES + 50) {
+      fs::write(dir.join(format!(".zcap/f{i}.txt")), "x").unwrap();
+    }
+
+    let tree = read_file_tree(root, true).unwrap();
+    let dz = tree.iter().find(|n| n.name == ".zcap").expect(".zcap must be shown");
+    assert!(dz.ignored);
+    assert_eq!(dz.children.as_ref().unwrap().len(), MAX_IGNORED_DOT_ENTRIES);
     fs::remove_dir_all(&dir).ok();
   }
 

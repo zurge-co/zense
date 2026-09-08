@@ -58,4 +58,12 @@ describe("fscmd.rs — tree includes ignored + .git without walking into them", 
     expect(src).toContain("IgnoreStack");
     expect(src).toContain("std::fs::read_dir(&dir_abs)");
   });
+
+  test("ignored dot folders (.zense, ...) ARE browsable, budgeted per dir", () => {
+    expect(src).toContain("const MAX_IGNORED_DOT_ENTRIES: usize = 500;");
+    expect(src).toContain("collect_ignored_dot_dir");
+    // descent only for dot dirs, .git skipped at every depth
+    expect(src).toContain("name.starts_with('.')");
+    expect(src).toContain('if name == ".git"');
+  });
 });
