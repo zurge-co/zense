@@ -71,9 +71,17 @@ export function CodeEditor({
             const p = pathRef.current;
             const sel = ed.getSelection();
             const root = useUIStore.getState().workspacePath;
-            if (!p || !sel || sel.isEmpty() || !root) return;
-            const snippet = ed.getModel()?.getValueInRange(sel) ?? "";
-            const { start, end } = selectionLines(sel);
+            const model = ed.getModel();
+            if (!p || !sel || !root || !model) return;
+            // Right-click without a selection (Monaco moves the cursor to
+            // the click position) → explain the line under the cursor.
+            const { start, end } = sel.isEmpty()
+              ? { start: sel.startLineNumber, end: sel.startLineNumber }
+              : selectionLines(sel);
+            const snippet = sel.isEmpty()
+              ? model.getLineContent(sel.startLineNumber)
+              : model.getValueInRange(sel);
+            if (!snippet.trim()) return;
             void explainSelection({ root, path: p, startLine: start, endLine: end, snippet });
           },
         });

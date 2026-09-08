@@ -185,6 +185,15 @@ describe("diffChunk helpers", () => {
     expect(findChangeAtLine([], 5)).toBeUndefined();
   });
 
+  test("findChangeAtLine resolves lines on the original side too", () => {
+    // A pure deletion: empty modified range, real original range.
+    const changes = [change(20, 23, 21, 0), change(5, 5, 5, 7)];
+    // Original-side line of the deleted block hits the deletion change.
+    expect(findChangeAtLine(changes, 22, "original")).toBe(changes[0]);
+    // Modified-side line 22 does NOT (it belongs to the second change's vicinity is checked separately).
+    expect(findChangeAtLine(changes, 6, "modified")).toBe(changes[1]);
+  });
+
   test("extractChunk pulls removed and added text", () => {
     const original = "a\nb\nc\nd";
     const modified = "a\nX\nY\nd";
@@ -334,11 +343,28 @@ describe("AI Review wiring (structural)", () => {
     expect(src).toContain("Explain with AI");
   });
 
+  test("CodeEditor: explain falls back to the cursor line without a selection", () => {
+    const src = readSrc("src/components/editor/CodeEditor.tsx");
+    expect(src).toContain("sel.isEmpty()");
+    expect(src).toContain("getLineContent(sel.startLineNumber)");
+    // An empty selection must no longer silently abort.
+    expect(src).not.toContain("sel.isEmpty() || !root");
+  });
+
   test("DiffView: context menu enabled with explain/summarize actions", () => {
     const src = readSrc("src/components/editor/DiffView.tsx");
     expect(src).toContain("addAction");
     expect(src).toContain("zense.explainChange");
     expect(src).toContain("contextmenu: true");
+  });
+
+  test("DiffView: AI actions exist on BOTH diff sides (new + old code)", () => {
+    const src = readSrc("src/components/editor/DiffView.tsx");
+    expect(src).toContain("getModifiedEditor()");
+    expect(src).toContain("getOriginalEditor()");
+    expect(src).toContain('"original"');
+    const actions = src.match(/\.addAction\(/g) ?? [];
+    expect(actions.length).toBeGreaterThanOrEqual(2);
   });
 
   test("DiffView: the pre-existing AI Summary button is wired", () => {

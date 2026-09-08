@@ -287,47 +287,56 @@ export function DiffView({ tab }: { tab: EditorTab }) {
               const update = () => setChanges(editor.getLineChanges() ?? []);
               editor.onDidUpdateDiff(update);
               update();
-              const modifiedEditor = editor.getModifiedEditor();
-              // Right-click a changed chunk → AI explains what it does, why,
+              // Right-click a changed chunk on EITHER side (new code or the
+              // old lines being replaced) → AI explains what it does, why,
               // what it relates to, how to verify, and its risks.
-              modifiedEditor.addAction({
-                id: "zense.explainChange",
-                label: "Explain this change with AI",
-                contextMenuGroupId: "zense",
-                contextMenuOrder: 0,
-                run: (ed) => {
-                  const pos = ed.getPosition();
-                  const c = contentRef.current;
-                  const meta = metaRef.current;
-                  if (!pos || !c || !meta.root) return;
-                  const change = findChangeAtLine(
-                    diffRef.current?.getLineChanges() ?? [],
-                    pos.lineNumber,
-                  );
-                  if (!change) return;
-                  const chunk = extractChunk(change, c.original, c.modified);
-                  void explainDiffChange({
-                    root: meta.root,
-                    path: meta.path,
-                    startLine: chunk.startLine,
-                    endLine: chunk.endLine,
-                    removed: chunk.removed,
-                    added: chunk.added,
-                  });
-                },
-              });
-              modifiedEditor.addAction({
-                id: "zense.summarizeDiff",
-                label: "Summarize this file's diff with AI",
-                contextMenuGroupId: "zense",
-                contextMenuOrder: 1,
-                run: () => {
-                  const meta = metaRef.current;
-                  // Commit-to-commit diffs have no working-tree patch to send.
-                  if (!meta.root || meta.commitMode) return;
-                  void summarizeFileChange(meta.root, meta.path, meta.staged);
-                },
-              });
+              const runExplain = (side: "modified" | "original") => (ed: monaco.editor.IStandaloneCodeEditor) => {
+                const pos = ed.getPosition();
+                const c = contentRef.current;
+                const meta = metaRef.current;
+                if (!pos || !c || !meta.root) return;
+                const change = findChangeAtLine(
+                  diffRef.current?.getLineChanges() ?? [],
+                  pos.lineNumber,
+                  side,
+                );
+                if (!change) return;
+                const chunk = extractChunk(change, c.original, c.modified);
+                void explainDiffChange({
+                  root: meta.root,
+                  path: meta.path,
+                  startLine: chunk.startLine,
+                  endLine: chunk.endLine,
+                  removed: chunk.removed,
+                  added: chunk.added,
+                });
+              };
+              const runSummarize = () => {
+                const meta = metaRef.current;
+                // Commit-to-commit diffs have no working-tree patch to send.
+                if (!meta.root || meta.commitMode) return;
+                void summarizeFileChange(meta.root, meta.path, meta.staged);
+              };
+              for (const side of ["modified", "original"] as const) {
+                const ed =
+                  side === "modified"
+                    ? editor.getModifiedEditor()
+                    : editor.getOriginalEditor();
+                ed.addAction({
+                  id: `zense.explainChange.${side}`,
+                  label: "Explain this change with AI",
+                  contextMenuGroupId: "zense",
+                  contextMenuOrder: 0,
+                  run: runExplain(side),
+                });
+                ed.addAction({
+                  id: `zense.summarizeDiff.${side}`,
+                  label: "Summarize this file's diff with AI",
+                  contextMenuGroupId: "zense",
+                  contextMenuOrder: 1,
+                  run: runSummarize,
+                });
+              }
             }}
             options={{
               readOnly: true,
