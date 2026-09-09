@@ -57,7 +57,7 @@ describe("gitStore.refresh on a non-git workspace", () => {
     // Pre-seed the leftover state the bug left on screen.
     useGitStore.setState({
       status: { files: [{ path: "x.ts", unstaged: "M" }], notARepo: false, emptyRepo: false },
-      branchInfo: { branch: "main", detached: false, ahead: 2, behind: 0 },
+      branchInfo: { branch: "main", detached: false, ahead: 2, behind: 0, hasUpstream: true },
       commits: [
         { sha: "a", shortSha: "a", message: "m", summary: "m", author: "d", time: 0, parentCount: 1, isMerge: false, filesChanged: 1, additions: 1, deletions: 0 },
       ],
@@ -68,6 +68,8 @@ describe("gitStore.refresh on a non-git workspace", () => {
     expect(next.status.files).toEqual([]);
     expect(next.branchInfo.branch).toBeUndefined();
     expect(next.branchInfo.ahead).toBe(0);
+    // Fail-closed: unknown branch state must keep Push locked, not open it.
+    expect(next.branchInfo.hasUpstream).toBe(true);
     expect(next.diffSummary).toEqual({ staged: [], unstaged: [] });
     expect(next.commits).toEqual([]);
     expect(next.logHasMore).toBe(false);
@@ -86,6 +88,9 @@ describe("gitStore.refresh on a non-git workspace", () => {
     expect(s.status.emptyRepo).toBe(true);
     expect(s.branchInfo.branch).toBeUndefined();
     expect(s.branchInfo.detached).toBe(false);
+    // Fail-closed: an un-pushable empty repo must keep Push locked
+    // (hasUpstream true + ahead 0 reproduces the old ahead === 0 lock).
+    expect(s.branchInfo.hasUpstream).toBe(true);
     expect(s.commits).toEqual([]);
     expect(s.error).toBeNull();
   });

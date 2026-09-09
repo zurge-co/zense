@@ -25,6 +25,9 @@ export interface GitBranchInfo {
   detached: boolean;
   ahead: number;
   behind: number;
+  /** False when the branch was never pushed / has no upstream ref — in that
+      state ahead is meaningless (always 0) and Push must stay enabled. */
+  hasUpstream: boolean;
 }
 
 export interface GitDiffEntry {
@@ -100,6 +103,7 @@ export const mockBranchInfo: GitBranchInfo = {
   detached: false,
   ahead: 2,
   behind: 0,
+  hasUpstream: true,
 };
 
 export const mockDiffSummary: GitDiffSummary = {

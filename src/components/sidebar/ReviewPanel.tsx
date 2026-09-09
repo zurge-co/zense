@@ -111,17 +111,20 @@ export function ReviewPanel() {
             <button
               // Lock push on states where it can't or shouldn't run:
               // detached HEAD (no branch name to push) and merge in-progress
-              // (a half-resolved merge must not reach the server). Mirrors the
-              // Commit button's Conflict-Mode lock below.
-              disabled={pushing || branchInfo.ahead === 0 || branchInfo.detached || mergeInfo.inProgress}
+              // (a half-resolved merge must not reach the server). A branch
+              // that was never pushed has ahead = 0 yet still needs the
+              // button — git_push links it with --set-upstream on first push.
+              disabled={pushing || branchInfo.detached || mergeInfo.inProgress || (branchInfo.hasUpstream && branchInfo.ahead === 0)}
               title={
                 branchInfo.detached
                   ? "You're looking at an old commit, not a branch — switch back to a branch first, then push"
                   : mergeInfo.inProgress
                     ? "Conflict Mode is on — finish the merge first (Push is locked for safety)"
-                    : branchInfo.ahead === 0
-                      ? "Nothing to push — all your commits are on the server already"
-                      : `Upload ${branchInfo.ahead} commit${branchInfo.ahead === 1 ? "" : "s"} to the server`
+                    : branchInfo.hasUpstream
+                      ? branchInfo.ahead === 0
+                        ? "Nothing to push — all your commits are on the server already"
+                        : `Upload ${branchInfo.ahead} commit${branchInfo.ahead === 1 ? "" : "s"} to the server`
+                      : "Upload your commits to the server — the first push also links this branch to it"
               }
               onClick={() => void doPush()}
               className="rounded p-1 text-fg-muted hover:bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"

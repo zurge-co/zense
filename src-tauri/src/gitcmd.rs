@@ -39,6 +39,11 @@ pub struct GitBranchInfo {
   detached: bool,
   ahead: usize,
   behind: usize,
+  /// True when an upstream ref exists (configured upstream, or the
+  /// conventional refs/remotes/origin/<branch>). The UI uses this to tell
+  /// "nothing to push" (upstream found, ahead = 0) from "never pushed"
+  /// (no upstream) — the push button must stay enabled in the latter case.
+  has_upstream: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -338,34 +343,77 @@ pub fn git_branch_info(root: String) -> Result<GitBranchInfo, String> {
       detached: true,
       ahead: 0,
       behind: 0,
+      has_upstream: false,
     });
   }
 
   let branch_name = head.shorthand().map(String::from);
 
-  let (ahead, behind) = match &branch_name {
-    Some(name) => {
-      let upstream = repo.branch_upstream_name(name).ok().and_then(|refname| {
+  // Upstream OID: the configured upstream first; fall back to any remote's
+  // refs/remotes/<remote>/<branch> so ahead/behind still work before any
+  // upstream is configured (e.g. after a first push, or when the configured
+  // upstream ref was pruned) — both (0,0) cases that used to lock the Push
+  // button even with unpushed commits.
+  let upstream = branch_name.as_ref().and_then(|name| {
+    // branch_upstream_name wants the FULL local refname (refs/heads/<name>),
+    // not the shorthand — passing "main" makes libgit2 error and this whole
+    // configured-upstream path dies silently.
+    repo
+      .branch_upstream_name(&format!("refs/heads/{name}"))
+      .ok()
+      .and_then(|refname| refname.as_str().map(String::from)) // not UTF-8 → unreliable, fall through
+      .and_then(|refname| {
+        // The configured remote itself can be gone (`git remote remove`)
+        // while branch.<name>.remote and the tracking ref both survive — a
+        // stale ref like that must not count as upstream (same rule as the
+        // fallback scan below), or Push locks with a bogus "Nothing to push".
+        let remote = refname
+          .strip_prefix("refs/remotes/")
+          .and_then(|rest| rest.split('/').next())?;
+        if repo.find_remote(remote).is_err() {
+          return None;
+        }
         repo
-          .find_reference(refname.as_str().unwrap_or(""))
+          .find_reference(&refname)
           .ok()
           .and_then(|r| r.target())
-      });
-      match (upstream, head.target()) {
-        (Some(up_oid), Some(head_oid)) => {
-          repo.graph_ahead_behind(head_oid, up_oid).unwrap_or((0, 0))
-        }
-        _ => (0, 0),
-      }
+      })
+      .or_else(|| {
+        // Scan every configured remote — remotes are often named github /
+        // upstream / fork, not just origin. Reading names from
+        // repo.remotes() also inherently skips stale refs/remotes/<gone>/...
+        // left over by removed or renamed remotes, which must not count as
+        // upstream (Push would lock with a bogus "Nothing to push").
+        let mut remotes: Vec<String> = repo
+          .remotes()
+          .map(|rs| rs.iter().flatten().map(String::from).collect())
+          .unwrap_or_default();
+        remotes.sort_by_key(|r| r != "origin"); // try the conventional one first
+        remotes.iter().find_map(|remote| {
+          repo
+            .find_reference(&format!("refs/remotes/{remote}/{name}"))
+            .ok()
+            .and_then(|r| r.target())
+        })
+      })
+  });
+
+  let (ahead, behind) = match (upstream, head.target()) {
+    (Some(up_oid), Some(head_oid)) => {
+      repo.graph_ahead_behind(head_oid, up_oid).unwrap_or((0, 0))
     }
-    None => (0, 0),
+    _ => (0, 0),
   };
 
   Ok(GitBranchInfo {
-    branch: branch_name,
     detached: false,
     ahead,
     behind,
+    // branch_name None means the HEAD shorthand isn't UTF-8 — the branch is
+    // unknown, so fail closed (has_upstream true + ahead 0 locks Push) just
+    // like the gitStore.fallbacks do for errored branch info.
+    has_upstream: upstream.is_some() || branch_name.is_none(),
+    branch: branch_name,
   })
 }
 
@@ -2306,6 +2354,225 @@ mod tests {
     );
     assert_eq!(info.ahead, 0);
     assert_eq!(info.behind, 0);
+    assert!(!info.has_upstream);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_branch_info_configured_upstream() {
+    // Branch tracking origin/<name> via set_upstream — exercises the primary
+    // path (branch_upstream_name), which silently dies on a shorthand.
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "v1\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    let first = commit_head(&repo, "initial").unwrap();
+
+    repo.remote("origin", "https://example.com/repo.git").unwrap();
+    let name = repo.head().unwrap().shorthand().unwrap().to_string();
+    repo
+      .reference(
+        &format!("refs/remotes/origin/{name}"),
+        first,
+        false,
+        "test",
+      )
+      .unwrap();
+    let mut branch = repo
+      .find_branch(&name, git2::BranchType::Local)
+      .unwrap();
+    branch
+      .set_upstream(Some(&format!("origin/{name}")))
+      .unwrap();
+
+    fs::write(dir.join("file.txt"), "v2\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    commit_head(&repo, "second").unwrap();
+
+    let info = git_branch_info(root).unwrap();
+    assert!(info.has_upstream);
+    assert_eq!(info.ahead, 1);
+    assert_eq!(info.behind, 0);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_branch_info_configured_upstream_different_branch_name() {
+    // Local branch tracking origin/feature: no refs/remotes/<remote>/<name>
+    // fallback can ever match, so the count proves the configured-upstream
+    // path itself works (it needs the full refs/heads/<name> refname).
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "v1\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    let first = commit_head(&repo, "initial").unwrap();
+
+    repo.remote("origin", "https://example.com/repo.git").unwrap();
+    let name = repo.head().unwrap().shorthand().unwrap().to_string();
+    repo
+      .reference("refs/remotes/origin/feature", first, false, "test")
+      .unwrap();
+    let mut branch = repo
+      .find_branch(&name, git2::BranchType::Local)
+      .unwrap();
+    branch.set_upstream(Some("origin/feature")).unwrap();
+
+    fs::write(dir.join("file.txt"), "v2\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    commit_head(&repo, "second").unwrap();
+
+    let info = git_branch_info(root).unwrap();
+    assert!(info.has_upstream, "configured upstream must be honored");
+    assert_eq!(info.ahead, 1);
+    assert_eq!(info.behind, 0);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_branch_info_fallback_non_origin_remote() {
+    // Remote named "github" (no origin, no configured upstream): the
+    // fallback must scan every configured remote, so a branch already pushed
+    // to a non-origin remote is not misreported as never-pushed.
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "v1\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    let first = commit_head(&repo, "initial").unwrap();
+
+    repo.remote("github", "https://example.com/repo.git").unwrap();
+    let name = repo.head().unwrap().shorthand().unwrap().to_string();
+    repo
+      .reference(
+        &format!("refs/remotes/github/{name}"),
+        first,
+        false,
+        "test",
+      )
+      .unwrap();
+
+    fs::write(dir.join("file.txt"), "v2\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    commit_head(&repo, "second").unwrap();
+
+    let info = git_branch_info(root).unwrap();
+    assert!(info.has_upstream, "non-origin remote must count as upstream");
+    assert_eq!(info.ahead, 1);
+    assert_eq!(info.behind, 0);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_branch_info_configured_upstream_remote_removed() {
+    // upstream configured via set_upstream, then `git remote remove origin`
+    // — branch.<name>.remote and the stale tracking ref survive, but the
+    // ref must not count as upstream on the primary path either (Push would
+    // lock with "Nothing to push" while pushing isn't even possible).
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "v1\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    let first = commit_head(&repo, "initial").unwrap();
+
+    repo.remote("origin", "https://example.com/repo.git").unwrap();
+    let name = repo.head().unwrap().shorthand().unwrap().to_string();
+    repo
+      .reference(
+        &format!("refs/remotes/origin/{name}"),
+        first,
+        false,
+        "test",
+      )
+      .unwrap();
+    let mut branch = repo
+      .find_branch(&name, git2::BranchType::Local)
+      .unwrap();
+    branch
+      .set_upstream(Some(&format!("origin/{name}")))
+      .unwrap();
+    repo.remote_delete("origin").unwrap();
+
+    let info = git_branch_info(root).unwrap();
+    assert!(
+      !info.has_upstream,
+      "upstream of a removed remote must not count"
+    );
+    assert_eq!(info.ahead, 0);
+    assert_eq!(info.behind, 0);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_branch_info_origin_fallback_without_upstream() {
+    // No configured upstream, but a conventional refs/remotes/origin/<branch>
+    // exists — ahead/behind must be computed against it and has_upstream is
+    // true. This is the state right after a first push from a repo that was
+    // never cloned, where the old code returned (0,0) and locked Push.
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "v1\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    let first = commit_head(&repo, "initial").unwrap();
+
+    repo.remote("origin", "https://example.com/repo.git").unwrap();
+    let name = repo.head().unwrap().shorthand().unwrap().to_string();
+    repo
+      .reference(
+        &format!("refs/remotes/origin/{name}"),
+        first,
+        false,
+        "test",
+      )
+      .unwrap();
+
+    // One local commit past the remote-tracking ref.
+    fs::write(dir.join("file.txt"), "v2\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    commit_head(&repo, "second").unwrap();
+
+    let info = git_branch_info(root).unwrap();
+    assert!(info.has_upstream, "origin/<branch> must count as upstream");
+    assert_eq!(info.ahead, 1);
+    assert_eq!(info.behind, 0);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_branch_info_stale_origin_ref_without_remote() {
+    // refs/remotes/origin/<branch> left over after the origin remote was
+    // removed — must NOT count as upstream (otherwise Push would lock with a
+    // bogus "Nothing to push" while pushing isn't even possible).
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "v1\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    let first = commit_head(&repo, "initial").unwrap();
+
+    let name = repo.head().unwrap().shorthand().unwrap().to_string();
+    repo
+      .reference(
+        &format!("refs/remotes/origin/{name}"),
+        first,
+        false,
+        "test",
+      )
+      .unwrap();
+
+    let info = git_branch_info(root).unwrap();
+    assert!(!info.has_upstream, "stale ref without origin remote must not count");
+    assert_eq!(info.ahead, 0);
+    assert_eq!(info.behind, 0);
 
     fs::remove_dir_all(&dir).ok();
   }
@@ -2332,6 +2599,7 @@ mod tests {
     assert!(info.branch.is_none());
     assert_eq!(info.ahead, 0);
     assert_eq!(info.behind, 0);
+    assert!(!info.has_upstream);
 
     fs::remove_dir_all(&dir).ok();
   }

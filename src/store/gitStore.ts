@@ -122,7 +122,9 @@ export const useGitStore = create<GitState>((set, get) => ({
         // The remaining commands would error on a non-repo root anyway.
         set({
           status,
-          branchInfo: { detached: false, ahead: 0, behind: 0 },
+          // hasUpstream: true is a fail-closed lie: with ahead = 0 it keeps
+          // Push locked, exactly like the old ahead === 0 behavior.
+          branchInfo: { detached: false, ahead: 0, behind: 0, hasUpstream: true },
           diffSummary: { staged: [], unstaged: [] },
           commits: [],
           logHasMore: false,
@@ -138,7 +140,10 @@ export const useGitStore = create<GitState>((set, get) => ({
       // leave stale/mock data behind.
       const [branchInfo, diffSummary, page, mergeInfo, conflicts] = await Promise.all([
         gitBranchInfo(root).catch(
-          (): GitBranchInfo => ({ detached: false, ahead: 0, behind: 0 })
+          // Push must stay locked when branch info is unknown (empty repo,
+          // permission error, corrupt repo) — hasUpstream: true + ahead: 0
+          // reproduces the old fail-closed ahead === 0 lock.
+          (): GitBranchInfo => ({ detached: false, ahead: 0, behind: 0, hasUpstream: true })
         ),
         gitDiffSummary(root).catch(
           (): GitDiffSummary => ({ staged: [], unstaged: [] })
