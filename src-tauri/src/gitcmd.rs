@@ -379,17 +379,29 @@ pub fn git_branch_info(root: String) -> Result<GitBranchInfo, String> {
           .and_then(|r| r.target())
       })
       .or_else(|| {
-        // Scan every configured remote — remotes are often named github /
-        // upstream / fork, not just origin. Reading names from
-        // repo.remotes() also inherently skips stale refs/remotes/<gone>/...
-        // left over by removed or renamed remotes, which must not count as
-        // upstream (Push would lock with a bogus "Nothing to push").
-        let mut remotes: Vec<String> = repo
+        // Only the remote git_push would actually use counts here: origin
+        // when it exists, otherwise the single remote of the repo. Counting
+        // refs/remotes/<other-remote>/<name> in a multi-remote (fork) repo
+        // would report has_upstream=true + ahead=0 for a branch never pushed
+        // to its own remote and lock Push with a bogus "Nothing to push".
+        // Remote names come from repo.remotes(), which also inherently skips
+        // stale refs/remotes/<gone>/... left by removed or renamed remotes.
+        let remotes: Vec<String> = repo
           .remotes()
           .map(|rs| rs.iter().flatten().map(String::from).collect())
           .unwrap_or_default();
-        remotes.sort_by_key(|r| r != "origin"); // try the conventional one first
-        remotes.iter().find_map(|remote| {
+        let hint = if remotes.iter().any(|r| r == "origin") {
+          Some("origin".to_string())
+        } else if remotes.len() == 1 {
+          // Single-remote repos are unambiguous — that remote is where a
+          // first push lands, even when it isn't named origin.
+          remotes.into_iter().next()
+        } else {
+          // Multi-remote without origin: nothing git_push targets by
+          // default, so no remote-tracking ref may lock Push.
+          None
+        };
+        hint.and_then(|remote| {
           repo
             .find_reference(&format!("refs/remotes/{remote}/{name}"))
             .ok()
@@ -2435,9 +2447,10 @@ mod tests {
 
   #[test]
   fn test_git_branch_info_fallback_non_origin_remote() {
-    // Remote named "github" (no origin, no configured upstream): the
-    // fallback must scan every configured remote, so a branch already pushed
-    // to a non-origin remote is not misreported as never-pushed.
+    // Single remote named "github" (no origin, no configured upstream): in
+    // a one-remote repo that remote is where a push lands, so its tracking
+    // ref counts — a branch already pushed there is not misreported as
+    // never-pushed.
     let dir = temp_ws();
     let root = dir.to_string_lossy().into_owned();
     let repo = git2::Repository::init(&dir).unwrap();
@@ -2541,6 +2554,82 @@ mod tests {
 
     let info = git_branch_info(root).unwrap();
     assert!(info.has_upstream, "origin/<branch> must count as upstream");
+    assert_eq!(info.ahead, 1);
+    assert_eq!(info.behind, 0);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  #[test]
+  fn test_git_branch_info_fork_remote_ignored_when_origin_present() {
+    // Fork workflow: remotes origin + upstream, no configured upstream, and
+    // only refs/remotes/upstream/<branch> exists (at the HEAD commit). The
+    // branch was never pushed to its own origin, so upstream/<branch> must
+    // NOT count — otherwise has_upstream=true + ahead=0 locks Push with a
+    // bogus "Nothing to push".
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "v1\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    let first = commit_head(&repo, "initial").unwrap();
+
+    repo.remote("origin", "https://example.com/fork.git").unwrap();
+    repo.remote("upstream", "https://example.com/source.git").unwrap();
+    let name = repo.head().unwrap().shorthand().unwrap().to_string();
+    repo
+      .reference(
+        &format!("refs/remotes/upstream/{name}"),
+        first,
+        false,
+        "test",
+      )
+      .unwrap();
+
+    let info = git_branch_info(root).unwrap();
+    assert!(
+      !info.has_upstream,
+      "upstream/<branch> must not count when origin has no such ref"
+    );
+    assert_eq!(info.ahead, 0);
+    assert_eq!(info.behind, 0);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_branch_info_multi_remote_origin_ref_counts() {
+    // Same fork setup, but refs/remotes/origin/<branch> exists one commit
+    // behind HEAD — it IS the ref git_push targets, so ahead/behind are
+    // computed against it even though upstream also holds the branch name.
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("file.txt"), "v1\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    let first = commit_head(&repo, "initial").unwrap();
+
+    repo.remote("origin", "https://example.com/fork.git").unwrap();
+    repo.remote("upstream", "https://example.com/source.git").unwrap();
+    let name = repo.head().unwrap().shorthand().unwrap().to_string();
+    for remote in ["origin", "upstream"] {
+      repo
+        .reference(
+          &format!("refs/remotes/{remote}/{name}"),
+          first,
+          false,
+          "test",
+        )
+        .unwrap();
+    }
+
+    fs::write(dir.join("file.txt"), "v2\n").unwrap();
+    stage_file(&repo, "file.txt").unwrap();
+    commit_head(&repo, "second").unwrap();
+
+    let info = git_branch_info(root).unwrap();
+    assert!(info.has_upstream, "origin/<branch> must count in multi-remote repos");
     assert_eq!(info.ahead, 1);
     assert_eq!(info.behind, 0);
 

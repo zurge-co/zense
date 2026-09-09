@@ -41,7 +41,8 @@ mock.module("../src/lib/git", () => ({
   gitConflicts: async () => [],
   gitMergeAbort: async () => {},
   mockGitStatus: { files: [], notARepo: false, emptyRepo: false },
-  mockBranchInfo: { branch: "mock", detached: false, ahead: 0, behind: 0 },
+  // Must match the required GitBranchInfo schema (hasUpstream included).
+  mockBranchInfo: { branch: "mock", detached: false, ahead: 0, behind: 0, hasUpstream: true },
   mockDiffSummary: { staged: [], unstaged: [] },
   mockGitLog: [],
   mockMergeInProgress: { inProgress: false },
