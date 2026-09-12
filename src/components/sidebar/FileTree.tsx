@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type PointerEvent as ReactPointerEvent } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -26,8 +26,6 @@ import { useWorkspaceStore } from "../../store/workspaceStore";
 import { useGitStore } from "../../store/gitStore";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { ConfirmDialog } from "../ConfirmDialog";
-
-const TREE_DRAG_MIME = "application/x-zense-file-tree-paths";
 
 function dropTargetAt(position: { x: number; y: number }, scaleFactor: number): string | null {
   // WKWebView draggingLocation is already in webview CSS points even though
@@ -69,19 +67,29 @@ function flattenVisibleNodes(nodes: FileNode[], expanded: Set<string>): FileNode
   return out;
 }
 
-function isInternalTreeDrag(e: React.DragEvent<HTMLElement>): boolean {
-  return Array.from(e.dataTransfer.types).includes(TREE_DRAG_MIME);
+/// HTML5 drag-and-drop never reaches the webview inside Tauri (wry intercepts
+/// all NSDraggingDestination methods when dragDropEnabled=true — required for
+/// native Finder imports — so `drop` events for internal drags are swallowed).
+/// Internal tree moves therefore use a plain pointer-based drag: pointerdown
+/// arms a candidate, pointermove past a threshold starts it, pointerup drops.
+
+/** Hit-test the DOM at client coords for the nearest drop target path. */
+function dropTargetAtClient(clientX: number, clientY: number): string | null {
+  for (const element of document.elementsFromPoint(clientX, clientY)) {
+    const target = element instanceof HTMLElement ? element.closest("[data-file-drop-path]") : null;
+    if (target instanceof HTMLElement) return target.dataset.fileDropPath ?? "";
+  }
+  return null;
 }
 
-function internalDragPaths(e: React.DragEvent<HTMLElement>): string[] | null {
-  const raw = e.dataTransfer.getData(TREE_DRAG_MIME);
-  if (!raw) return null;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.every((p) => typeof p === "string") ? parsed : null;
-  } catch {
-    return null;
-  }
+/** Dropping an entry onto itself or its own descendant is rejected by the
+ *  backend as a whole-batch error — treat those targets as "no target" here. */
+function isInvalidDropTarget(target: string, paths: string[]): boolean {
+  return paths.some((p) => target === p || target.startsWith(`${p}/`));
+}
+
+function parentDirOf(path: string): string {
+  return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 }
 
 export function FileTree() {
@@ -194,48 +202,66 @@ export function FileTree() {
     setAnchorPath(node.path);
   };
 
-  const beginTreeDrag = (e: React.DragEvent<HTMLElement>, node: FileNode) => {
+  const [treeDragging, setTreeDragging] = useState(false);
+  const dragSession = useRef<{ paths: string[]; startX: number; startY: number; started: boolean } | null>(null);
+
+  // Pointer-based drag lifecycle (see note above dropTargetAtClient).
+  const beginTreeDrag = (e: ReactPointerEvent<HTMLElement>, node: FileNode) => {
+    if (e.button !== 0) return;
     const isSelected = selectedPaths.has(node.path);
     const paths = isSelected ? [...selectedPaths] : [node.path];
     if (!isSelected) {
       setSelectedPaths(new Set([node.path]));
       setAnchorPath(node.path);
     }
-    e.dataTransfer.setData(TREE_DRAG_MIME, JSON.stringify(paths));
-    e.dataTransfer.effectAllowed = "move";
-    e.stopPropagation();
-  };
+    dragSession.current = { paths, startX: e.clientX, startY: e.clientY, started: false };
 
-  const handleInternalDragOver = (e: React.DragEvent<HTMLElement>, path: string) => {
-    if (!isInternalTreeDrag(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "move";
-    setDropTargetPath(path);
-  };
+    const onMove = (ev: PointerEvent) => {
+      const drag = dragSession.current;
+      if (!drag) return;
+      if (!drag.started) {
+        if (Math.abs(ev.clientX - drag.startX) < 5 && Math.abs(ev.clientY - drag.startY) < 5) return;
+        drag.started = true;
+        setTreeDragging(true);
+      }
+      const raw = dropTargetAtClient(ev.clientX, ev.clientY);
+      setDropTargetPath(raw !== null && !isInvalidDropTarget(raw, drag.paths) ? raw : null);
+    };
 
-  const handleInternalDragLeave = (e: React.DragEvent<HTMLElement>) => {
-    if (!isInternalTreeDrag(e)) return;
-    const related = e.relatedTarget instanceof Node ? e.relatedTarget : null;
-    if (!related || !e.currentTarget.contains(related)) setDropTargetPath(null);
-  };
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      // pointerup uses { once: true } (self-removing); this clears the
+      // pointercancel twin whichever way the gesture ended.
+      window.removeEventListener("pointercancel", onUp);
+      const drag = dragSession.current;
+      dragSession.current = null;
+      setDropTargetPath(null);
+      setTreeDragging(false);
+      if (!drag?.started) return;
+      // Release over the originating row still fires a click (would toggle a
+      // folder / open the file) — swallow the click that follows a real drag.
+      const eatClick = (cev: MouseEvent) => {
+        cev.stopPropagation();
+        cev.preventDefault();
+      };
+      window.addEventListener("click", eatClick, { capture: true, once: true });
+      window.setTimeout(() => window.removeEventListener("click", eatClick, true), 200);
 
-  const handleInternalDrop = (e: React.DragEvent<HTMLElement>, destDir: string) => {
-    if (!isInternalTreeDrag(e)) return;
-    const paths = internalDragPaths(e);
-    e.preventDefault();
-    e.stopPropagation();
-    setDropTargetPath(null);
-    if (!paths?.length || !workspacePath) return;
-    void moveEntries(workspacePath, destDir, paths)
-      .then((moved) => {
-        setSelectedPaths(new Set(moved));
-        setAnchorPath(moved[0] ?? null);
-      })
-      .catch((err) => console.error("move selected files failed:", err));
-  };
+      const raw = dropTargetAtClient(ev.clientX, ev.clientY);
+      const destDir = raw !== null && !isInvalidDropTarget(raw, drag.paths) ? raw : null;
+      if (destDir === null || !workspacePath) return;
+      void moveEntries(workspacePath, destDir, drag.paths)
+        .then((moved) => {
+          setSelectedPaths(new Set(moved));
+          setAnchorPath(moved[0] ?? null);
+        })
+        .catch((err) => console.error("move selected files failed:", err));
+    };
 
-  const endTreeDrag = () => setDropTargetPath(null);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+    window.addEventListener("pointercancel", onUp, { once: true });
+  };
 
   // ⌘N (New File) targeting the workspace root.
   const rootCreate = pendingCreate && pendingCreate.parentPath === "" ? pendingCreate : null;
@@ -257,11 +283,8 @@ export function FileTree() {
   return (
     <div
       data-file-drop-path=""
-      className={`min-h-full pb-4 ${dropTargetPath === "" ? "ring-1 ring-inset ring-accent" : ""}`}
+      className={`min-h-full pb-4 ${dropTargetPath === "" ? "ring-1 ring-inset ring-accent" : ""} ${treeDragging ? "cursor-grabbing select-none" : ""}`}
       onContextMenu={(e) => e.preventDefault()}
-      onDragOver={(e) => handleInternalDragOver(e, "")}
-      onDragLeave={handleInternalDragLeave}
-      onDrop={(e) => handleInternalDrop(e, "")}
     >
       <Section
         title={workspaceName ?? "workspace"}
@@ -292,10 +315,6 @@ export function FileTree() {
             onSelectNode={selectNode}
             onSetFolderExpanded={setFolderExpanded}
             onBeginTreeDrag={beginTreeDrag}
-            onInternalDragOver={handleInternalDragOver}
-            onInternalDragLeave={handleInternalDragLeave}
-            onInternalDrop={handleInternalDrop}
-            onEndTreeDrag={endTreeDrag}
           />
         ))}
         {rootCreate && (
@@ -378,10 +397,6 @@ function TreeNode({
   onSelectNode,
   onSetFolderExpanded,
   onBeginTreeDrag,
-  onInternalDragOver,
-  onInternalDragLeave,
-  onInternalDrop,
-  onEndTreeDrag,
 }: {
   node: FileNode;
   depth: number;
@@ -390,11 +405,7 @@ function TreeNode({
   selectedPaths: Set<string>;
   onSelectNode: (node: FileNode, e: React.MouseEvent<HTMLElement>) => void;
   onSetFolderExpanded: (path: string, expanded: boolean) => void;
-  onBeginTreeDrag: (e: React.DragEvent<HTMLElement>, node: FileNode) => void;
-  onInternalDragOver: (e: React.DragEvent<HTMLElement>, path: string) => void;
-  onInternalDragLeave: (e: React.DragEvent<HTMLElement>) => void;
-  onInternalDrop: (e: React.DragEvent<HTMLElement>, destDir: string) => void;
-  onEndTreeDrag: () => void;
+  onBeginTreeDrag: (e: ReactPointerEvent<HTMLElement>, node: FileNode) => void;
 }) {
   const open = node.type === "folder" && expandedPaths.has(node.path);
   const { selectedFile, openFile, openPreview, workspacePath } = useUIStore();
@@ -505,16 +516,13 @@ function TreeNode({
       <>
         <button
           data-file-drop-path={node.path}
-          draggable={!isInlineRenaming}
           onClick={(e) => {
             handleSelect(e);
             if (!handleClickSelectOnly(e)) onSetFolderExpanded(node.path, !open);
           }}
-          onDragStart={(e) => onBeginTreeDrag(e, node)}
-          onDragEnd={onEndTreeDrag}
-          onDragOver={(e) => onInternalDragOver(e, node.path)}
-          onDragLeave={onInternalDragLeave}
-          onDrop={(e) => onInternalDrop(e, node.path)}
+          onPointerDown={(e) => {
+            if (!isInlineRenaming) onBeginTreeDrag(e, node);
+          }}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -571,10 +579,6 @@ function TreeNode({
                 onSelectNode={onSelectNode}
                 onSetFolderExpanded={onSetFolderExpanded}
                 onBeginTreeDrag={onBeginTreeDrag}
-                onInternalDragOver={onInternalDragOver}
-                onInternalDragLeave={onInternalDragLeave}
-                onInternalDrop={onInternalDrop}
-                onEndTreeDrag={onEndTreeDrag}
               />
             ))}
             {inline && inline.parentPath === node.path && (
@@ -628,13 +632,14 @@ function TreeNode({
   return (
     <>
       <button
-        draggable={!isInlineRenaming}
+        data-file-drop-path={parentDirOf(node.path)}
         onClick={(e) => {
           handleSelect(e);
           if (!handleClickSelectOnly(e)) openFile(node.path);
         }}
-        onDragStart={(e) => onBeginTreeDrag(e, node)}
-        onDragEnd={onEndTreeDrag}
+        onPointerDown={(e) => {
+          if (!isInlineRenaming) onBeginTreeDrag(e, node);
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();

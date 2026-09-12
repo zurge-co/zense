@@ -236,7 +236,10 @@ pub fn run() {
       match event {
         tauri::WindowEvent::CloseRequested { api, .. } => {
           api.prevent_close();
-          window.emit("app://close-requested", ()).ok();
+          // Emitter::emit broadcasts to EVERY window (each window's close
+          // guard would fire and destroy itself — closing one window kills
+          // them all). Scope the prompt to the requesting window only.
+          window.emit_to(window.label(), "app://close-requested", ()).ok();
         }
         // Keep the menu-action router pointed at the window the user is
         // actually working in (multi-project windows).
@@ -286,7 +289,8 @@ pub fn run() {
             .get_webview_window(&target)
             .or_else(|| app.get_webview_window("main"));
           if let Some(w) = win {
-            let _ = w.emit("menu-action", other);
+            // w.emit would broadcast to all windows — must stay scoped.
+            let _ = w.emit_to(w.label(), "menu-action", other);
           }
         }
       }

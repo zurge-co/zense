@@ -205,17 +205,21 @@ export function EditorArea() {
               }`}
             >
               {tab.kind === "diff" || tab.kind === "commitDiff" || tab.kind === "compare" ? (
-                <GitCompareArrows size={13} className={active ? "text-accent" : "text-fg-muted"} />
+                <GitCompareArrows size={13} className={`shrink-0 ${active ? "text-accent" : "text-fg-muted"}`} />
               ) : tab.kind === "commit" ? (
-                <GitCommitHorizontal size={13} className={active ? "text-accent" : "text-fg-muted"} />
+                <GitCommitHorizontal size={13} className={`shrink-0 ${active ? "text-accent" : "text-fg-muted"}`} />
               ) : tab.kind === "preview" ? (
-                <Eye size={13} className={active ? "text-accent" : "text-fg-muted"} />
+                <Eye size={13} className={`shrink-0 ${active ? "text-accent" : "text-fg-muted"}`} />
               ) : tab.kind === "file" && isImagePath(tab.path) ? (
-                <FileImage size={13} className={active ? "text-accent" : "text-fg-muted"} />
+                <FileImage size={13} className={`shrink-0 ${active ? "text-accent" : "text-fg-muted"}`} />
               ) : (
-                <File size={13} className={active ? "text-accent" : "text-fg-muted"} />
+                <File size={13} className={`shrink-0 ${active ? "text-accent" : "text-fg-muted"}`} />
               )}
-              <span>{name}</span>
+              {/* Single-line tab name: long names get an ellipsis; hovering
+                  reveals the full name/path as a tooltip. */}
+              <span className="min-w-0 max-w-[220px] truncate whitespace-nowrap" title={tab.kind === "commit" || tab.kind === "compare" || tab.kind === "untitled" ? name : tab.path}>
+                {name}
+              </span>
               {tab.kind === "diff" && (
                 <span className="rounded bg-accent/15 px-1 text-[9.5px] font-medium text-accent">DIFF</span>
               )}
@@ -237,7 +241,7 @@ export function EditorArea() {
                       closeSingle(key);
                     }}
                     title={dirty ? "Close (unsaved changes)" : "Close"}
-                    className={`rounded p-0.5 hover:bg-active ${
+                    className={`shrink-0 rounded p-0.5 hover:bg-active ${
                       active ? "opacity-80 hover:opacity-100" : "opacity-0 group-hover:opacity-80"
                     }`}
                   >

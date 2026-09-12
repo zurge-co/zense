@@ -53,11 +53,13 @@ describe("multi-window: menu actions route to the focused window only", () => {
   });
 
   test("menu-action is emitted to a single (focused) window", () => {
-    expect(libRs).toContain('w.emit("menu-action", other)');
+    // Emitter::emit broadcasts to every window — must use emit_to(label).
+    expect(libRs).toContain('w.emit_to(w.label(), "menu-action", other)');
   });
 
   test("close-requested still goes to the requesting window only", () => {
-    expect(libRs).toContain('window.emit("app://close-requested", ())');
+    // A broadcast here makes closing one window close them all.
+    expect(libRs).toContain('window.emit_to(window.label(), "app://close-requested", ())');
   });
 });
 
