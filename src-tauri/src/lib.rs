@@ -238,7 +238,10 @@ pub fn run() {
           api.prevent_close();
           // Emitter::emit broadcasts to EVERY window (each window's close
           // guard would fire and destroy itself — closing one window kills
-          // them all). Scope the prompt to the requesting window only.
+          // them all). Scope the prompt to the requesting window only — AND
+          // keep the frontend listener window-scoped (getCurrentWindow()
+          // .listen): a global listen() registers target=Any, which Tauri
+          // delivers to every webview even for emit_to-scoped events.
           window.emit_to(window.label(), "app://close-requested", ()).ok();
         }
         // Keep the menu-action router pointed at the window the user is

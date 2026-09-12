@@ -63,6 +63,31 @@ describe("multi-window: menu actions route to the focused window only", () => {
   });
 });
 
+describe("multi-window: frontend listeners are window-scoped", () => {
+  let app: string;
+
+  beforeAll(async () => {
+    app = await Bun.file(`${ROOT}/src/App.tsx`).text();
+  });
+
+  // Global listen() registers target=Any, and Tauri delivers emit_to-scoped
+  // events to every webview's Any listeners (tauri event/listener.rs
+  // match_any_or_filter) — so these MUST go through getCurrentWindow().listen,
+  // otherwise closing one window destroys them all / menu actions fire in
+  // every window.
+  test("close-requested is listened on the current window only", () => {
+    expect(app).toContain('getCurrentWindow().listen("app://close-requested"');
+    // No bare (unscoped/global) listen for this event may remain.
+    const every = app.split('listen("app://close-requested"').length - 1;
+    const scoped = app.split('getCurrentWindow().listen("app://close-requested"').length - 1;
+    expect(every).toBe(scoped);
+  });
+
+  test("menu-action is listened on the current window only", () => {
+    expect(app).toContain('getCurrentWindow().listen<string>("menu-action"');
+  });
+});
+
 describe("multi-window: native title reflects the per-window project", () => {
   let app: string;
 

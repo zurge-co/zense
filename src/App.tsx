@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { useUIStore, tabKey } from "./store/uiStore";
 import { useTerminalStore } from "./store/terminalStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
@@ -162,6 +161,9 @@ function useUiZoom() {
  * Unsaved-changes guard for window close: Rust prevents the close and emits
  * "app://close-requested"; here we either destroy immediately (clean) or
  * prompt (dirty buffers) — Save All & Close / Discard & Close / Cancel.
+ * The listener MUST be window-scoped (getCurrentWindow().listen): the global
+ * listen() registers target=Any, and Tauri delivers emit_to-scoped events to
+ * every webview's Any listeners — closing one window would close them all.
  */
 function useCloseRequestGuard() {
   const [pending, setPending] = useState(false);
@@ -174,7 +176,7 @@ function useCloseRequestGuard() {
       void getCurrentWindow().destroy();
     };
     destroyRef.current = destroyWindow;
-    const unlisten = listen("app://close-requested", () => {
+    const unlisten = getCurrentWindow().listen("app://close-requested", () => {
       if (useWorkspaceStore.getState().dirtyPaths.size === 0) {
         void destroyWindow();
       } else {
@@ -279,12 +281,14 @@ function startNewFile() {
  * Native application menu events. Menu accelerators (⌘S, ⌘B, ⌘O, ⌘,, …)
  * are consumed before they reach the webview, so actions arrive through the
  * "menu-action" event instead of keydown handlers (which remain as the
- * fallback for browser dev mode).
+ * fallback for browser dev mode). Window-scoped listener: Rust emit_to's
+ * this to the focused window only, but a global listen() (target=Any)
+ * would still fire in EVERY window — e.g. ⌘S saving files in all windows.
  */
 function useMenuEvents() {
   useEffect(() => {
     if (!isTauri()) return;
-    const unlisten = listen<string>("menu-action", (e) => {
+    const unlisten = getCurrentWindow().listen<string>("menu-action", (e) => {
       const ui = useUIStore.getState();
       switch (e.payload) {
         case "new_file":
