@@ -91,6 +91,29 @@ describe("ChatPanel.tsx — thinking indicator", () => {
     expect(src).toContain("onClick={stop}");
   });
 
+  // ── Resize sash unmount-safety (window-registered drag listeners) ──────
+
+  test("resize drag teardown is tracked in a cleanup ref", () => {
+    expect(src).toContain("dragCleanupRef");
+    expect(src).toContain("(() => void) | null");
+    expect(src).toContain("trackCleanup");
+  });
+
+  test("component unmount runs any live drag teardown", () => {
+    expect(src).toContain("dragCleanupRef.current?.()");
+    expect(src).toMatch(/useEffect\(\(\) => \{\s*return \(\) => dragCleanupRef\.current/);
+  });
+
+  test("finished drags null the cleanup-tracker (teardown never runs twice)", () => {
+    expect(src).toContain("trackCleanup(null)");
+  });
+
+  test("teardown removes the window pointermove listener and restores body styles", () => {
+    expect(src).toContain('window.removeEventListener("pointermove", onMove)');
+    expect(src).toContain("document.body.style.cursor = prevCursor");
+    expect(src).toContain("document.body.style.userSelect = prevSelect");
+  });
+
   // ── Tab-header spinner while streaming ──────────────────────────────────
 
   test("Chat tab shows a spinning loader while streaming", () => {

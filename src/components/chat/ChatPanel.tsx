@@ -15,8 +15,16 @@ const tabs: { id: RightTab; label: string; icon: typeof MessageSquare }[] = [
 
 /** Pointer-based drag of the right-panel's left edge (VS Code sash):
  *  drag left → wider, drag right → narrower. Live width lives in uiStore
- *  (clamped); the final value is persisted on release. */
-function startPanelDrag(e: React.PointerEvent<HTMLElement>): void {
+ *  (clamped); the final value is persisted on release.
+ *
+ *  The gesture registers window-level listeners, so it exposes its teardown
+ *  through `trackCleanup`: if the panel unmounts mid-drag (panel toggled,
+ *  workspace switch) the recorded cleanup still removes the listeners and
+ *  restores document.body styles instead of leaking. */
+function startPanelDrag(
+  e: React.PointerEvent<HTMLElement>,
+  trackCleanup: (fn: (() => void) | null) => void,
+): void {
   if (e.button !== 0) return;
   e.preventDefault();
   const startX = e.clientX;
@@ -30,23 +38,38 @@ function startPanelDrag(e: React.PointerEvent<HTMLElement>): void {
   const onMove = (ev: PointerEvent) => {
     setChatPanelWidth(startWidth + (startX - ev.clientX));
   };
-  const onUp = () => {
-    // pointerup uses { once: true } (self-removing); this clears the
-    // pointercancel twin whichever way the gesture ended.
+
+  // Idempotent teardown: runs on pointerup/pointercancel OR unmount, never twice.
+  const teardown = () => {
     window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
     window.removeEventListener("pointercancel", onUp);
     document.body.style.cursor = prevCursor;
     document.body.style.userSelect = prevSelect;
+  };
+
+  const onUp = () => {
+    teardown();
+    trackCleanup(null);
     void applyChatPanelWidth(useUIStore.getState().chatPanelWidth);
   };
 
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp, { once: true });
   window.addEventListener("pointercancel", onUp, { once: true });
+  trackCleanup(teardown);
 }
 
 export function ChatPanel() {
   const { toggleChat, openSettings, rightTab, setRightTab, chatPanelWidth } = useUIStore();
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
+  // Unmount mid-drag: finish tearing down the live gesture (listeners +
+  // body styles). A completed gesture nulls the ref, so this is a no-op
+  // except when the panel really disappears mid-drag.
+  useEffect(() => {
+    return () => dragCleanupRef.current?.();
+  }, []);
   const {
     messages,
     streaming,
@@ -88,7 +111,7 @@ export function ChatPanel() {
     >
       {/* Drag-to-resize sash on the panel's left edge */}
       <div
-        onPointerDown={startPanelDrag}
+        onPointerDown={(e) => startPanelDrag(e, (fn) => (dragCleanupRef.current = fn))}
         title="Drag to resize panel"
         className="absolute -left-[3px] top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent/50 active:bg-accent"
       />

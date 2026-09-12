@@ -204,6 +204,12 @@ export function FileTree() {
 
   const [treeDragging, setTreeDragging] = useState(false);
   const dragSession = useRef<{ paths: string[]; startX: number; startY: number; started: boolean } | null>(null);
+  // Active-gesture teardown so window listeners + drag state never leak
+  // when the tree unmounts mid-drag (sidebar toggle / workspace switch).
+  const dragSessionCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    return () => dragSessionCleanup.current?.();
+  }, []);
 
   // Pointer-based drag lifecycle (see note above dropTargetAtClient).
   const beginTreeDrag = (e: ReactPointerEvent<HTMLElement>, node: FileNode) => {
@@ -228,15 +234,22 @@ export function FileTree() {
       setDropTargetPath(raw !== null && !isInvalidDropTarget(raw, drag.paths) ? raw : null);
     };
 
-    const onUp = (ev: PointerEvent) => {
+    // Cancel-flavored teardown: safe on pointerup/pointercancel/unmount;
+    // onUp nulls the ref so a later unmount cleanup is a no-op.
+    const cancelGesture = () => {
       window.removeEventListener("pointermove", onMove);
-      // pointerup uses { once: true } (self-removing); this clears the
-      // pointercancel twin whichever way the gesture ended.
+      window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
-      const drag = dragSession.current;
       dragSession.current = null;
       setDropTargetPath(null);
       setTreeDragging(false);
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      // Capture the session BEFORE cancelGesture clears it.
+      const drag = dragSession.current;
+      cancelGesture();
+      dragSessionCleanup.current = null;
       if (!drag?.started) return;
       // Release over the originating row still fires a click (would toggle a
       // folder / open the file) — swallow the click that follows a real drag.
@@ -261,6 +274,7 @@ export function FileTree() {
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp, { once: true });
     window.addEventListener("pointercancel", onUp, { once: true });
+    dragSessionCleanup.current = cancelGesture;
   };
 
   // ⌘N (New File) targeting the workspace root.
