@@ -661,10 +661,13 @@ function TreeNode({
           setMenu({ x: e.clientX, y: e.clientY, node });
         }}
         style={pad}
-        className={`group flex w-full items-center gap-1.5 py-0.5 pl-6 pr-2 text-[12.5px] ${
+        className={`group flex w-full items-center gap-1.5 py-0.5 pr-2 text-[12.5px] ${
           selected ? "bg-active text-fg" : isSelected ? "bg-active text-fg" : isTreeSelected ? "bg-hover text-fg" : "text-fg-muted hover:bg-hover hover:text-fg"
         } ${node.ignored ? "opacity-50" : ""}`}
       >
+        {/* Spacer matching the folder chevron (12px) so file icons line up
+            with folder icons instead of sticking out to the left. */}
+        <span className="w-3 shrink-0" aria-hidden />
         <File size={14} className="shrink-0 text-fg-muted" />
         <span className="flex-1 truncate text-left">{node.name}</span>
       </button>
@@ -742,7 +745,9 @@ function InlineInput({
   return (
     <div
       className="flex items-center gap-1.5 py-0.5 pr-2 text-[12.5px]"
-      style={{ paddingLeft: `${depth * 12 + 12}px` }}
+      // Extra 18px for files: matches the chevron (12px) + gap (6px) that
+      // folders render before their icon, keeping file icons aligned.
+      style={{ paddingLeft: `${depth * 12 + 12 + (isDir ? 0 : 18)}px` }}
     >
       {isDir ? (
         <Folder size={14} className="shrink-0 text-accent" />
