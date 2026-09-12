@@ -377,8 +377,16 @@ describe("ChatPanel.tsx — structural verification", () => {
 
   // ── Layout ─────────────────────────────────────────────────────────────────
 
-  test("panel is w-80 (fixed width sidebar)", () => {
-    expect(src).toContain("w-80");
+  test("panel width comes from uiStore (drag-resizable, no fixed w-80)", () => {
+    expect(src.includes("w-80")).toBe(false);
+    expect(src).toContain("chatPanelWidth");
+    expect(src).toContain("style={{ width: chatPanelWidth }}");
+  });
+
+  test("panel has a pointer-based resize sash that persists the width", () => {
+    expect(src).toContain("onPointerDown");
+    expect(src).toContain("cursor-col-resize");
+    expect(src).toContain("applyChatPanelWidth");
   });
 
   test("panel has left border", () => {

@@ -5,6 +5,11 @@ export type Activity = "review" | "history" | "editor" | "search" | "terminal";
 export type RightTab = "chat" | "focus" | "aiReview";
 export type Screen = "welcome" | "workspace";
 export type SettingsSection = "general" | "appearance" | "llm" | "shortcuts";
+
+/** Width bounds (px) for the drag-resizable right-hand panel (Chat/Focus/AI Review). */
+export const CHAT_PANEL_WIDTH_MIN = 260;
+export const CHAT_PANEL_WIDTH_MAX = 600;
+export const CHAT_PANEL_WIDTH_DEFAULT = 320;
 export type DiffMode = "split" | "inline";
 
 /**
@@ -56,6 +61,8 @@ interface UIState {
   chatVisible: boolean;
   /** Selected tab of the right-hand panel. */
   rightTab: RightTab;
+  /** Drag-resizable width (px) of the right-hand panel. */
+  chatPanelWidth: number;
 
   openTabs: EditorTab[];
   activeTabKey: string | null;
@@ -83,6 +90,8 @@ interface UIState {
   toggleChat: () => void;
   /** Select a right-panel tab (opens the panel if hidden). */
   setRightTab: (t: RightTab) => void;
+  /** Set the right-panel width, clamped to the CHAT_PANEL_WIDTH bounds. */
+  setChatPanelWidth: (w: number) => void;
   /** Open terminal panel and focus its input (⌘`). */
   toggleTerminal: () => void;
   /** Commit sha selected as the base for "Compare with Selected". */
@@ -125,6 +134,7 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarVisible: true,
   chatVisible: true,
   rightTab: "chat" as RightTab,
+  chatPanelWidth: CHAT_PANEL_WIDTH_DEFAULT,
 
   openTabs: [],
   activeTabKey: null,
@@ -165,6 +175,13 @@ export const useUIStore = create<UIState>((set) => ({
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   toggleChat: () => set((s) => ({ chatVisible: !s.chatVisible })),
   setRightTab: (rightTab) => set({ rightTab, chatVisible: true }),
+  setChatPanelWidth: (w) =>
+    set({
+      chatPanelWidth: Math.min(
+        CHAT_PANEL_WIDTH_MAX,
+        Math.max(CHAT_PANEL_WIDTH_MIN, Math.round(w)),
+      ),
+    }),
   toggleTerminal: () =>
     set((_s) => ({
       activity: "terminal" as Activity,

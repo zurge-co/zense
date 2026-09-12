@@ -20,6 +20,7 @@ const KEY_AUTO_SAVE = "autoSave";
 const KEY_SHOW_HIDDEN_FILES = "showHiddenFiles";
 const KEY_EDITOR_FONT_SIZE = "editorFontSize";
 const KEY_UI_ZOOM = "uiZoom";
+const KEY_CHAT_PANEL_WIDTH = "chatPanelWidth";
 const KEY_COMMIT_STAMP = "commitStamp";
 const KEY_COMMIT_STAMP_NAME = "commitStampName";
 
@@ -47,6 +48,11 @@ export async function loadUiPrefs(): Promise<void> {
     const uiZoom = await store.get<number>(KEY_UI_ZOOM);
     if (typeof uiZoom === "number" && uiZoom >= UI_ZOOM_MIN && uiZoom <= UI_ZOOM_MAX) {
       useWorkspaceStore.getState().setUiZoom(uiZoom);
+    }
+    const chatPanelWidth = await store.get<number>(KEY_CHAT_PANEL_WIDTH);
+    if (typeof chatPanelWidth === "number") {
+      // Setter clamps to the panel-width bounds.
+      useUIStore.getState().setChatPanelWidth(chatPanelWidth);
     }
     const commitStamp = await store.get<boolean>(KEY_COMMIT_STAMP);
     if (typeof commitStamp === "boolean") {
@@ -89,6 +95,19 @@ export async function applyEditorFontSize(v: number): Promise<void> {
     await store.save();
   } catch (err) {
     console.error("applyEditorFontSize failed:", err);
+  }
+}
+
+/** Set the right-hand panel width (px) and persist it (drag-to-resize). */
+export async function applyChatPanelWidth(v: number): Promise<void> {
+  useUIStore.getState().setChatPanelWidth(v);
+  if (!isTauri()) return;
+  try {
+    const store = await load(PREFS_FILE);
+    await store.set(KEY_CHAT_PANEL_WIDTH, useUIStore.getState().chatPanelWidth);
+    await store.save();
+  } catch (err) {
+    console.error("applyChatPanelWidth failed:", err);
   }
 }
 

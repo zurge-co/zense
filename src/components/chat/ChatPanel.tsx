@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { X, MessageSquare, Send, Square, Wrench, Eraser, Timer, Loader2, Sparkles } from "lucide-react";
 import { useUIStore, type RightTab } from "../../store/uiStore";
 import { useChatStore } from "../../store/chatStore";
+import { applyChatPanelWidth } from "../../lib/settings";
 import { FocusPanel } from "../focus/FocusPanel";
 import { AiReviewPanel } from "../aiReview/AiReviewPanel";
 import { MarkdownView, ThinkingIndicator } from "./ChatMessages";
@@ -12,8 +13,40 @@ const tabs: { id: RightTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "focus", label: "Focus", icon: Timer },
 ];
 
+/** Pointer-based drag of the right-panel's left edge (VS Code sash):
+ *  drag left → wider, drag right → narrower. Live width lives in uiStore
+ *  (clamped); the final value is persisted on release. */
+function startPanelDrag(e: React.PointerEvent<HTMLElement>): void {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = useUIStore.getState().chatPanelWidth;
+  const setChatPanelWidth = useUIStore.getState().setChatPanelWidth;
+  const prevCursor = document.body.style.cursor;
+  const prevSelect = document.body.style.userSelect;
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+
+  const onMove = (ev: PointerEvent) => {
+    setChatPanelWidth(startWidth + (startX - ev.clientX));
+  };
+  const onUp = () => {
+    // pointerup uses { once: true } (self-removing); this clears the
+    // pointercancel twin whichever way the gesture ended.
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointercancel", onUp);
+    document.body.style.cursor = prevCursor;
+    document.body.style.userSelect = prevSelect;
+    void applyChatPanelWidth(useUIStore.getState().chatPanelWidth);
+  };
+
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp, { once: true });
+  window.addEventListener("pointercancel", onUp, { once: true });
+}
+
 export function ChatPanel() {
-  const { toggleChat, openSettings, rightTab, setRightTab } = useUIStore();
+  const { toggleChat, openSettings, rightTab, setRightTab, chatPanelWidth } = useUIStore();
   const {
     messages,
     streaming,
@@ -49,7 +82,16 @@ export function ChatPanel() {
   const configured = isConfigured();
 
   return (
-    <div className="flex w-80 shrink-0 flex-col border-l border-border bg-panel">
+    <div
+      className="relative flex shrink-0 flex-col border-l border-border bg-panel"
+      style={{ width: chatPanelWidth }}
+    >
+      {/* Drag-to-resize sash on the panel's left edge */}
+      <div
+        onPointerDown={startPanelDrag}
+        title="Drag to resize panel"
+        className="absolute -left-[3px] top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent/50 active:bg-accent"
+      />
       {/* Header */}
       <div className="flex h-8 shrink-0 items-center justify-between border-b border-border pl-1 pr-3">
         <div className="flex h-full items-center">
