@@ -4,9 +4,16 @@
   ─────────────────────────────────────────────────────────────────
   Build: node scripts/build-landing.mjs  (fills version/logo/favicon
   placeholders and injects RELEASE_NOTES.md into the changelog marker)
+  Design source: docs/redesign-preview.html (worktree impl/v1, v2 mockup)
+
   Direction: "Precision Developer Tool"
   Dark Technical × Swiss Minimal × Premium macOS
   Brand green #00c55a — used with restraint (see design.md).
+
+  App-window mockups are CSS redraws matched to the real app
+  (see ../screenshot/*.png): icon rail, EDITOR/REVIEW sidebars,
+  CHAT / AI REVIEW / FOCUS right panel, DIFF view, terminal tabs,
+  status bar. Screenshots themselves are NOT embedded anywhere.
 -->
 <html lang="en">
 <head>
@@ -19,7 +26,7 @@
 <meta property="og:image" content="https://zense.zurge.co/shots/workspace.png">
 <link rel="icon" href="{{FAVICON}}">
 <style>
-  /* ───────────────────────── tokens ───────────────────────── */
+  /* ───────────────────────── page tokens ───────────────────────── */
   :root {
     --bg:        #09090B;
     --surface:   #0E0E11;
@@ -31,7 +38,7 @@
     --muted:     #A0A6AD;
     --faint:     #6E747C;
     --accent:    #00C55A;
-    --accent-2:  #7EE2A8;           /* soft green for code keywords / success */
+    --accent-2:  #7EE2A8;
     --accent-bg: rgba(0,197,90,.10);
     --gold:      #FACD04;
     --danger:    #F85149;
@@ -39,6 +46,11 @@
     --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
     --radius:    14px;
     --ease:      cubic-bezier(.2,.7,.2,1);
+    /* app window palette — mirrors the real Zense app (design.md) */
+    --ab:        rgba(255,255,255,.06);
+    --abase:     #0d0d0d;
+    --apanel:    #1a1a1a;
+    --arow:      #2b2b2b;
   }
   * { box-sizing:border-box; margin:0 }
   html { scroll-behavior:smooth }
@@ -49,7 +61,6 @@
   ::selection { background:rgba(0,197,90,.30) }
   a { color:inherit }
   .wrap { max-width:1120px; margin:0 auto; padding:0 28px }
-  .mono { font-family:var(--font-mono) }
 
   /* ───────────────────────── nav ───────────────────────── */
   nav {
@@ -142,80 +153,218 @@
   .install button:hover { color:var(--fg); border-color:var(--border-2) }
   .install button.done { color:var(--accent); border-color:rgba(0,197,90,.4) }
 
-  /* ───────────────────────── app mockup (shared) ───────────────────────── */
+  /* ════════════════════════════════════════════════════════════════
+     APP WINDOW MOCKUP — CSS redraw of the real Zense window
+     (icon rail · title bar · sidebar · editor tabs · breadcrumb ·
+      right panel CHAT/AI REVIEW/FOCUS · status bar)
+     ════════════════════════════════════════════════════════════════ */
   .app {
     border:1px solid var(--border-2); border-radius:var(--radius); overflow:hidden;
-    background:var(--surface); text-align:left;
-    box-shadow:0 40px 120px -30px rgba(0,0,0,.85), 0 0 90px -30px rgba(0,197,90,.16);
+    background:var(--abase); text-align:left; display:flex; flex-direction:column;
+    box-shadow:0 40px 120px -30px rgba(0,0,0,.85), 0 0 90px -30px rgba(0,197,90,.14);
     font-size:12px;
   }
-  .app-bar {
-    height:42px; display:flex; align-items:center; gap:8px; padding:0 16px;
-    background:var(--panel); border-bottom:1px solid var(--border);
+  /* title bar */
+  .tbar {
+    height:42px; flex:none; display:flex; align-items:center; gap:8px; padding:0 14px;
+    background:var(--apanel); border-bottom:1px solid var(--ab);
   }
-  .app-bar .dot { width:11px; height:11px; border-radius:50% }
+  .tbar .dot { width:11px; height:11px; border-radius:50% }
   .dot.r { background:#FF5F57 } .dot.y { background:#FEBC2E } .dot.g { background:#28C840 }
-  .app-bar .t { margin-left:10px; color:var(--faint); font-size:11.5px }
-  .app-bar .branch {
-    margin-left:auto; font-family:var(--font-mono); font-size:10.5px; color:var(--muted);
-    border:1px solid var(--border); border-radius:6px; padding:2px 8px;
+  .tbar .logo { width:15px; height:15px; margin-left:8px }
+  .tbar .name { font-weight:600; font-size:12.5px; color:var(--fg) }
+  .tbar .proj { color:var(--faint); font-size:12px }
+  .tbar .branch { display:inline-flex; align-items:center; gap:5px; color:var(--muted); font-size:11.5px; margin-left:10px }
+  .tbar .branch svg { width:11px; height:11px }
+  .tbar .right { margin-left:auto; display:flex; gap:12px; color:var(--faint) }
+  .tbar .right svg { width:15px; height:15px }
+  /* body */
+  .abody { display:flex; min-height:400px }
+  /* icon rail */
+  .rail {
+    width:42px; flex:none; background:var(--apanel); border-right:1px solid var(--ab);
+    display:flex; flex-direction:column; align-items:center; padding:8px 0;
   }
-  .app-bar .branch i { color:var(--accent); font-style:normal }
-  .app-body { display:flex; min-height:380px }
-  .app-side {
-    width:186px; flex:none; background:var(--panel); border-right:1px solid var(--border);
-    padding:12px 10px; font-family:var(--font-mono); font-size:11px; color:var(--muted);
+  .rail .ric { width:42px; height:40px; display:flex; align-items:center; justify-content:center; color:#8A8F98 }
+  .rail .ric svg { width:17px; height:17px }
+  .rail .ric.on { color:var(--accent); box-shadow:inset 2px 0 0 var(--accent) }
+  .rail .spacer { flex:1 }
+  /* sidebar */
+  .side {
+    width:198px; flex:none; background:var(--apanel); border-right:1px solid var(--ab);
+    padding:10px 8px; font-family:var(--font-mono); font-size:11px; color:var(--muted);
+    display:flex; flex-direction:column;
   }
-  .app-side .cap { font-size:9.5px; letter-spacing:.14em; color:var(--faint); padding:2px 8px 8px }
-  .tree div { padding:3px 8px; border-radius:6px; white-space:nowrap }
-  .tree .dir::before { content:"▾ "; color:var(--faint) }
-  .tree .ind { padding-left:24px }
-  .tree .ind2 { padding-left:40px }
-  .tree .file::before { content:"· "; color:var(--faint) }
-  .tree .on { background:var(--accent-bg); color:var(--fg); box-shadow:inset 2px 0 0 var(--accent) }
-  .app-main { flex:1; min-width:0; display:flex; flex-direction:column }
-  .tabs { display:flex; gap:2px; background:var(--panel); border-bottom:1px solid var(--border); padding:6px 10px 0 }
-  .tab {
+  .side .cap { font-size:10px; letter-spacing:.14em; color:var(--faint); padding:4px 8px 10px }
+  .tree { display:flex; flex-direction:column; gap:1px }
+  .tree .tr { display:flex; align-items:center; gap:6px; height:25px; padding:0 7px; border-radius:6px; white-space:nowrap }
+  .tree .tr svg { width:13px; height:13px; flex:none }
+  .tree .chev { color:var(--faint) }
+  .tree .fold { color:#3FB950 }
+  .tree .doc { color:#8A8F98 }
+  .tree .d2 { padding-left:26px }
+  .tree .d3 { padding-left:45px }
+  .tree .on { background:var(--arow); color:#E8E8E8 }
+  /* editor column */
+  .emain { flex:1; min-width:0; display:flex; flex-direction:column; background:var(--abase) }
+  .etabs { display:flex; align-items:center; background:#161616; border-bottom:1px solid var(--ab); padding:0 6px }
+  .etab {
+    display:flex; align-items:center; gap:7px; padding:10px 14px; margin-top:6px;
     font-family:var(--font-mono); font-size:11px; color:var(--faint);
-    padding:7px 14px; border-radius:8px 8px 0 0;
+    border-radius:7px 7px 0 0; white-space:nowrap;
   }
-  .tab.on { background:var(--surface); color:var(--fg); border:1px solid var(--border); border-bottom-color:var(--surface) }
-  .tab .mod { color:var(--gold) }
-  .code { flex:1; padding:14px 0; font-family:var(--font-mono); font-size:12px; line-height:1.75; overflow:hidden }
-  .code .ln { display:flex; padding:0 18px }
-  .code .no { width:26px; flex:none; color:rgba(255,255,255,.18); user-select:none }
-  .kw  { color:var(--accent-2) }
-  .st  { color:var(--gold) }
-  .fn  { color:#E8E8E8; font-weight:500 }
-  .cm  { color:var(--faint); font-style:italic }
-  .pl  { color:#C8CDD2 }
-  .app-chat {
-    width:230px; flex:none; border-left:1px solid var(--border); background:var(--panel);
-    display:flex; flex-direction:column; font-size:11.5px;
+  .etab svg { width:12px; height:12px }
+  .etab.on { background:var(--abase); color:#E8E8E8 }
+  .etab .difftag {
+    font-size:9px; letter-spacing:.08em; color:var(--accent); font-weight:600;
+    border:1px solid rgba(0,197,90,.45); background:var(--accent-bg); border-radius:4px; padding:1px 5px;
   }
-  .chat-h { padding:11px 14px; border-bottom:1px solid var(--border); font-size:10.5px; letter-spacing:.12em; color:var(--faint); text-transform:uppercase }
-  .chat-h b { color:var(--accent); font-weight:600 }
-  .chat-m { padding:12px 14px; display:flex; flex-direction:column; gap:10px; flex:1 }
-  .msg { border-radius:10px; padding:9px 12px; line-height:1.55 }
-  .msg.u { background:var(--elevated); color:var(--fg); align-self:flex-end; max-width:88%; border:1px solid var(--border-2) }
-  .msg.a { background:var(--surface); border:1px solid var(--border); color:var(--muted); max-width:94% }
-  .msg.a .chip {
-    display:inline-block; margin-top:7px; font-family:var(--font-mono); font-size:10px;
-    color:var(--accent); border:1px solid rgba(0,197,90,.35); border-radius:6px; padding:2px 8px;
-  }
-  .chat-in {
-    margin:0 12px 12px; border:1px solid var(--border); border-radius:9px;
-    padding:8px 11px; color:var(--faint); background:var(--surface);
-  }
-  .app-status {
-    height:30px; display:flex; align-items:center; gap:16px; padding:0 14px;
-    border-top:1px solid var(--border); background:var(--panel);
+  .etab .x { color:var(--faint); font-size:10px }
+  .etabs .espacer { flex:1 }
+  .etabs .esplit { color:var(--faint); padding:0 8px }
+  .etabs .esplit svg { width:14px; height:14px }
+  .crumb {
+    display:flex; gap:8px; align-items:center; padding:8px 16px;
     font-family:var(--font-mono); font-size:10.5px; color:var(--faint);
+    border-bottom:1px solid var(--ab);
   }
-  .app-status .ok { color:var(--accent) }
-  .app-status .right { margin-left:auto }
-  .cursor { display:inline-block; width:7px; height:13px; background:var(--accent); vertical-align:-2px; animation:blink 1.1s steps(1) infinite }
+  .crumb b { color:var(--muted); font-weight:400 }
+  /* code — VS Code Dark+ palette, as in the real editor */
+  .code { flex:1; padding:12px 0; font-family:var(--font-mono); font-size:12px; line-height:1.72; overflow:hidden }
+  .code .ln { display:flex; padding:0 16px; white-space:pre }
+  .code .no { width:30px; flex:none; text-align:right; margin-right:16px; color:#585858; user-select:none }
+  .tk-tag  { color:#569CD6 } .tk-attr { color:#9CDCFE }
+  .tk-str  { color:#CE9178 } .tk-cm  { color:#6A9955 }
+  .tk-kw   { color:#C586C0 } .tk-kw2 { color:#569CD6 }
+  .tk-fn   { color:#DCDCAA } .tk-type { color:#4EC9B0 }
+  .tk-num  { color:#B5CEA8 } .tk-pl  { color:#D4D4D4 }
+  .tk-punc { color:#D4D4D4 } .tk-var { color:#9CDCFE }
+  /* right panel — CHAT / AI REVIEW / FOCUS */
+  .rpanel {
+    width:252px; flex:none; background:var(--apanel); border-left:1px solid var(--ab);
+    display:flex; flex-direction:column;
+  }
+  .ptabs { display:flex; align-items:center; gap:13px; padding:0 12px 0 14px; height:40px; border-bottom:1px solid var(--ab) }
+  .ptab { position:relative; display:flex; align-items:center; gap:5px; font-size:9.5px; letter-spacing:.07em; color:var(--faint); padding:12px 0; text-transform:uppercase; white-space:nowrap }
+  .ptab svg { width:13px; height:13px }
+  .ptab.on { color:#F4F4F5; font-weight:600 }
+  .ptab.on::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--accent); border-radius:2px }
+  .ptabs .px { margin-left:auto; color:var(--faint); font-size:12px }
+  .pbody { flex:1; display:flex; flex-direction:column; overflow:hidden }
+  .pempty { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--faint); font-size:12.5px }
+  .pempty svg { width:22px; height:22px; opacity:.7 }
+  .pmsgs { flex:1; padding:12px 12px 0; display:flex; flex-direction:column; gap:10px; overflow:hidden }
+  .mu { background:rgba(0,197,90,.14); color:#E9F6EE; border-radius:8px; padding:9px 12px; font-size:12.3px; line-height:1.55 }
+  .ma { background:#242424; color:#D6DADF; border-radius:8px; padding:9px 12px; font-size:12.3px; line-height:1.6 }
+  .chip { font-family:var(--font-mono); font-size:10px; background:var(--abase); border:1px solid var(--ab); border-radius:4px; padding:1px 6px; color:#C8CDD2; white-space:nowrap }
+  .ma .chip { display:inline-block; margin:1px 0 }
+  .pbtns { display:flex; gap:8px; padding:12px 12px 0 }
+  .pbtn { display:inline-flex; align-items:center; gap:6px; font-size:11px; padding:6px 11px; border-radius:7px; border:1px solid var(--ab); color:var(--muted); background:#242424 }
+  .pbtn.g { color:var(--accent); border-color:rgba(0,197,90,.45); background:var(--accent-bg) }
+  .pbtn svg { width:11px; height:11px }
+  .pinput {
+    margin:12px; display:flex; align-items:center; gap:8px;
+    background:var(--abase); border:1px solid var(--ab); border-radius:8px;
+    padding:9px 12px; color:var(--faint); font-size:12px;
+  }
+  .pinput svg { width:13px; height:13px; margin-left:auto; color:var(--faint) }
+  /* FOCUS panel */
+  .frow { display:flex; gap:8px; padding:12px 12px 0 }
+  .finput {
+    flex:1; display:flex; align-items:center; border:1px solid rgba(0,197,90,.55); border-radius:8px;
+    padding:10px 12px; color:#E8E8E8; font-size:12.5px; background:var(--abase);
+  }
+  .fplus { width:38px; border:1px solid var(--ab); background:#242424; border-radius:8px; color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:14px }
+  .fcard { margin:10px 12px 0; background:#242424; border-radius:9px; padding:10px 12px; display:flex; align-items:center; gap:9px }
+  .fcard .gdot { width:7px; height:7px; border-radius:50%; background:var(--accent) }
+  .fcard .fname { font-size:12.5px; color:#F0F0F2 }
+  .fcard .ftime { font-family:var(--font-mono); font-size:10.5px; color:var(--faint) }
+  .fcard .fic { margin-left:auto; display:flex; gap:10px; color:var(--faint) }
+  .fcard .fic svg { width:13px; height:13px }
+  /* REVIEW sidebar */
+  .rbranch { display:flex; align-items:center; gap:7px; background:#242424; border-radius:8px; padding:8px 10px; font-family:var(--font-mono); font-size:11.5px; color:#E8E8E8; margin-bottom:10px }
+  .rbranch svg { width:12px; height:12px }
+  .rbranch .ri { margin-left:auto; display:flex; gap:10px; color:var(--faint) }
+  .rbranch .ri svg { width:12px; height:12px }
+  .rmsg {
+    background:var(--abase); border:1px solid var(--ab); border-radius:8px;
+    padding:10px 12px; color:var(--faint); font-size:11.5px; height:58px; margin-bottom:10px;
+  }
+  .rbtns { display:flex; gap:8px; margin-bottom:10px }
+  .rcommit {
+    flex:1; display:flex; align-items:center; justify-content:center; gap:7px;
+    background:var(--accent); color:#031308; font-weight:600; font-size:12px;
+    border-radius:8px; padding:9px 0;
+  }
+  .rai { width:40px; display:flex; align-items:center; justify-content:center; border:1px solid var(--ab); background:#242424; border-radius:8px; color:var(--muted) }
+  .rai svg, .rairev svg { width:13px; height:13px }
+  .rairev {
+    display:flex; align-items:center; justify-content:center; gap:7px;
+    border:1px solid var(--ab); background:#242424; color:#E0E0E3; font-size:11.5px;
+    border-radius:8px; padding:8px 0; margin-bottom:4px;
+  }
+  .rlabel { font-size:10px; letter-spacing:.14em; color:var(--faint); margin:14px 0 6px; padding-left:2px }
+  .rfile { display:flex; align-items:center; gap:7px; font-family:var(--font-mono); font-size:10.5px; color:#C8CDD2; padding:5px 6px }
+  .rfile svg { width:12px; height:12px; color:#8A8F98; flex:none }
+  .rfile .fn2 { white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .rfile .adds { color:#7EE2A8 } .rfile .dels { color:#FF8A85 }
+  .rfile .abadge { color:var(--accent); font-weight:600 }
+  /* diff view */
+  .dctl {
+    display:flex; align-items:center; gap:12px; padding:8px 14px;
+    background:#161616; border-bottom:1px solid var(--ab);
+    font-size:10.5px; color:var(--muted); white-space:nowrap;
+  }
+  .dctl .act { font-size:10px }
+  .dctl .rng { color:#E8E8E8; font-size:11px }
+  .dctl .adds { color:#7EE2A8; font-family:var(--font-mono) }
+  .dctl .dels { color:#FF8A85; font-family:var(--font-mono) }
+  .dctl .cnt { font-family:var(--font-mono) }
+  .dctl .spacer { flex:1 }
+  .dctl .act { display:flex; align-items:center; gap:5px }
+  .dctl .act svg { width:11px; height:11px }
+  .dctl .aisum {
+    display:flex; align-items:center; gap:5px; color:var(--accent);
+    border:1px solid rgba(0,197,90,.45); background:var(--accent-bg);
+    border-radius:6px; padding:3px 9px; font-size:10.5px; font-weight:600;
+  }
+  .drow { display:flex; font-family:var(--font-mono); font-size:11.3px; line-height:1.85; white-space:pre }
+  .drow .g1, .drow .g2 { width:26px; flex:none; text-align:right; padding-right:7px; color:#6b5a5c; user-select:none }
+  .drow .sg { width:18px; flex:none; text-align:center; user-select:none }
+  .drow.add { background:rgba(70,149,74,.13); color:#E9E9E9 }
+  .drow.add .g1 { background:rgba(70,149,74,.10); color:#5d7a62 }
+  .drow.add .g2 { background:rgba(70,149,74,.10); color:#9ccfa7 }
+  .drow.add .sg { color:#7EE2A8 }
+  .drow.del { background:rgba(248,81,73,.10); color:#FF9E98 }
+  .drow.del .g1 { background:rgba(248,81,73,.08); color:#8a5b58 }
+  .drow.del .sg { color:#FF8A85 }
+  .drow.ctx { color:#8A8F98 }
+  /* terminal */
+  .ttabs { display:flex; align-items:center; gap:6px; background:#161616; border-bottom:1px solid var(--ab); padding:0 10px; height:40px }
+  .ttab { display:flex; align-items:center; gap:7px; background:#242424; border-radius:7px; padding:6px 11px; font-family:var(--font-mono); font-size:11px; color:var(--muted) }
+  .ttab.on { color:#E8E8E8 }
+  .ttab .gdot2 { width:6px; height:6px; border-radius:50%; background:var(--accent) }
+  .ttab .x { color:var(--faint); font-size:10px }
+  .ttabadd { color:var(--faint); font-size:14px; padding:0 4px }
+  .ttabs .tspacer { flex:1 }
+  .ttabs .tic { display:flex; gap:12px; color:var(--faint) }
+  .ttabs .tic svg { width:13px; height:13px }
+  .tterm { flex:1; background:var(--abase); padding:14px 18px; font-family:var(--font-mono); font-size:12.3px; line-height:1.95; color:#D4D4D4; overflow:hidden }
+  .tterm .dim { color:#8A8F98 } .tterm .ok { color:#7EE2A8 } .tterm .cmd { color:#F0F0F2 }
+  .tcursor { display:inline-block; width:7px; height:13px; background:#E8E8E8; opacity:.75; vertical-align:-2px; animation:blink 1.1s steps(1) infinite }
   @keyframes blink { 50% { opacity:0 } }
+  /* status bar */
+  .sbar {
+    height:27px; flex:none; display:flex; align-items:center; gap:14px; padding:0 12px;
+    background:var(--apanel); border-top:1px solid var(--ab);
+    font-family:var(--font-mono); font-size:10.5px; color:#9BA1A6;
+  }
+  .sbar svg { width:11px; height:11px }
+  .sbar .br { display:flex; align-items:center; gap:5px }
+  .sbar .err { color:var(--danger); display:flex; align-items:center; gap:3px }
+  .sbar .warn { color:var(--gold); display:flex; align-items:center; gap:3px }
+  .sbar .r { margin-left:auto; display:flex; align-items:center; gap:14px }
+  .sbar .r .vic { color:var(--accent) }
 
   .hero-shot { position:relative; margin:64px auto 0; max-width:1010px }
   .hero-shot::after {
@@ -255,7 +404,7 @@
   .sc-tab p { font-size:13px; color:var(--muted); line-height:1.55 }
   .sc-tab[aria-selected="true"] { background:var(--panel); border-color:var(--border-2) }
   .sc-tab[aria-selected="true"] .n { color:var(--accent) }
-  .sc-stage { position:relative; min-height:430px }
+  .sc-stage { position:relative; min-height:460px }
   .sc-panel { position:absolute; inset:0; opacity:0; transform:translateY(8px) scale(.995); transition:.4s var(--ease); pointer-events:none }
   .sc-panel.on { opacity:1; transform:none; pointer-events:auto; position:relative }
   .sc-note {
@@ -263,33 +412,6 @@
     display:flex; gap:8px; align-items:center;
   }
   .sc-note::before { content:""; width:18px; height:1px; background:var(--accent) }
-
-  /* terminal variant */
-  .term { flex:1; padding:18px 20px; font-family:var(--font-mono); font-size:12.5px; line-height:2.0; color:var(--muted) }
-  .term .p { color:var(--accent) }
-  .term .cmd { color:var(--fg) }
-  .term .ok { color:var(--accent) }
-  .term .dim { color:var(--faint) }
-
-  /* git variant */
-  .git-h { display:flex; align-items:center; gap:12px; padding:12px 18px; border-bottom:1px solid var(--border); font-family:var(--font-mono); font-size:11.5px }
-  .git-h .file { color:var(--fg); font-weight:600 }
-  .git-h .add { color:var(--accent-2) } .git-h .del { color:#FF8A85 }
-  .badge-st {
-    margin-left:auto; font-size:10px; letter-spacing:.08em; color:var(--accent);
-    border:1px solid rgba(0,197,90,.4); background:var(--accent-bg); border-radius:999px; padding:3px 10px;
-  }
-  .diff { padding:12px 0; font-family:var(--font-mono); font-size:12px; line-height:1.8 }
-  .diff .dl2 { display:flex; padding:0 18px; white-space:pre }
-  .diff .sign { width:22px; flex:none }
-  .dl2.add { background:rgba(0,197,90,.09); color:var(--accent-2) }
-  .dl2.del { background:rgba(248,81,73,.09); color:#FF8A85 }
-  .dl2.ctx { color:var(--faint) }
-  .git-f { display:flex; align-items:center; gap:14px; padding:12px 18px; border-top:1px solid var(--border); font-family:var(--font-mono); font-size:11px; color:var(--faint) }
-  .git-f .commit {
-    margin-left:auto; background:var(--accent); color:#031308; font-weight:600;
-    border-radius:8px; padding:7px 16px; font-size:11.5px; font-family:var(--font-ui);
-  }
 
   /* ───────────────────────── workflow ───────────────────────── */
   .flow { display:grid; grid-template-columns:repeat(5, 1fr); gap:12px; margin-top:56px }
@@ -304,35 +426,29 @@
   .step p { font-size:12.5px; color:var(--muted); line-height:1.55 }
   .step .viz { height:64px; border-radius:10px; background:var(--panel); border:1px solid var(--border);
                margin-bottom:16px; display:flex; align-items:center; justify-content:center; overflow:hidden; padding:10px }
-  /* step connectors */
   .step::after {
     content:"→"; position:absolute; right:-13px; top:50%; transform:translateY(-50%);
     color:var(--faint); font-size:12px; z-index:2;
   }
   .step:last-child::after { content:none }
-  /* viz 1 — prompt typing */
   .viz-bubble { background:var(--elevated); border:1px solid var(--border-2); border-radius:8px 8px 8px 2px; padding:7px 11px; font-size:10.5px; color:var(--muted); font-family:var(--font-mono) }
   .viz-dots span { display:inline-block; width:4px; height:4px; border-radius:50%; background:var(--muted); margin-left:3px; animation:tdots 1.2s infinite }
   .viz-dots span:nth-child(2){ animation-delay:.15s } .viz-dots span:nth-child(3){ animation-delay:.3s }
   @keyframes tdots { 0%,60%,100%{opacity:.25} 30%{opacity:1} }
-  /* viz 2 — code lines */
   .viz-code { width:100%; display:flex; flex-direction:column; gap:5px }
   .viz-code i { display:block; height:5px; border-radius:3px; background:rgba(255,255,255,.14); transform-origin:left; animation:grow .7s var(--ease) both }
-  .viz-code i:nth-child(1){ width:72%; animation-delay:.1s; background:rgba(126,226,168,.45) }
+  .viz-code i:nth-child(1){ width:72%; animation-delay:.1s; background:rgba(86,156,214,.5) }
   .viz-code i:nth-child(2){ width:88%; animation-delay:.35s }
-  .viz-code i:nth-child(3){ width:52%; animation-delay:.6s; background:rgba(250,205,4,.4) }
+  .viz-code i:nth-child(3){ width:52%; animation-delay:.6s; background:rgba(206,145,120,.45) }
   @keyframes grow { from { transform:scaleX(0) } to { transform:scaleX(1) } }
-  /* viz 3 — diff */
   .viz-diff { width:100%; display:flex; flex-direction:column; gap:4px; font-family:var(--font-mono); font-size:10px }
   .viz-diff i { display:block; border-radius:3px; padding:2px 8px; opacity:0; animation:fadein .4s both; font-style:normal }
   .viz-diff i.d1 { background:rgba(248,81,73,.14); color:#FF8A85; animation-delay:.15s; text-decoration:line-through }
-  .viz-diff i.d2 { background:rgba(0,197,90,.14); color:var(--accent-2); animation-delay:.55s }
-  .viz-diff i.d3 { background:rgba(0,197,90,.14); color:var(--accent-2); animation-delay:.8s }
+  .viz-diff i.d2 { background:rgba(70,149,74,.16); color:#E9E9E9; animation-delay:.55s }
+  .viz-diff i.d3 { background:rgba(70,149,74,.16); color:#E9E9E9; animation-delay:.8s }
   @keyframes fadein { from{opacity:0; transform:translateY(3px)} to{opacity:1; transform:none} }
-  /* viz 4 — test result */
   .viz-test { font-family:var(--font-mono); font-size:10.5px; color:var(--faint) }
-  .viz-test .r { color:var(--accent); opacity:0; animation:fadein .4s .9s both }
-  /* viz 5 — commit button */
+  .viz-test .r { color:#7EE2A8; opacity:0; animation:fadein .4s .9s both }
   .viz-commit {
     font-size:11px; font-weight:600; background:var(--accent); color:#031308;
     border-radius:7px; padding:6px 14px; opacity:0; animation:fadein .4s 1.1s both;
@@ -464,15 +580,20 @@
     .foot-in { grid-template-columns:1fr 1fr }
     .hood { flex-wrap:wrap }
     .hood > div { flex:1 1 45%; border-bottom:1px solid var(--border) }
-    .app-chat { display:none }
+  }
+  @media (max-width:760px) {
+    .rpanel { display:none }
   }
   @media (max-width:620px) {
     .flow { grid-template-columns:1fr }
     .priv-line { flex-direction:column; gap:6px }
     .priv-line p { margin-left:0; text-align:left }
-    .nav-links { display:none }
     .trust-in { gap:18px }
-    .app-side { display:none }
+    .side { display:none }
+    /* keep nav links reachable on mobile instead of display:none */
+    .nav-in { flex-wrap:wrap; height:auto; padding:12px 0 10px; row-gap:4px; gap:16px }
+    .nav-links { order:3; width:100%; margin-left:0; gap:20px; overflow-x:auto; padding-bottom:4px }
+    .nav-cta .gh { display:none }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -483,6 +604,7 @@
 </style>
 </head>
 <body>
+
 
 <!-- ══════════════ NAV ══════════════ -->
 <nav id="nav">
@@ -528,61 +650,83 @@
       <button id="copybtn" type="button">COPY</button>
     </div>
 
-    <!-- hero app mockup -->
+    <!-- hero app mockup — editor + chat, faithful to the real window -->
     <div class="hero-shot reveal d4">
       <div class="app">
-        <div class="app-bar">
+        <div class="tbar">
           <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-          <span class="t">zense — ~/projects/checkout</span>
-          <span class="branch"><i>●</i> main</span>
+          <svg class="logo" viewBox="0 0 1059.13 1059.13" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="zhg" x1="415.388" y1="725.477" x2="753.406" y2="387.459" gradientTransform="translate(-195.413 587.36) rotate(-45)" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#00c55a"/><stop offset=".5" stop-color="#6cdd25"/><stop offset="1" stop-color="#facd04"/></linearGradient><linearGradient id="zhg2" x1="284.438" y1="568.258" x2="451.813" y2="735.633" gradientTransform="translate(145.4684 1320.2132) rotate(-135)" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#00c55a"/><stop offset="1" stop-color="#00c55a" stop-opacity="0"/></linearGradient></defs><rect x="525.577" y="183.834" width="171.446" height="691.462" rx="85.723" ry="85.723" transform="translate(553.504 -277.148) rotate(45)" fill="url(#zhg)"/><rect x="260.436" y="428.032" width="171.446" height="403.894" rx="85.723" ry="85.723" transform="translate(1036.3934 830.67) rotate(135)" fill="url(#zhg2)"/><circle cx="264.125" cy="548.115" r="85.787" fill="#00c55a"/></svg>
+          <span class="name">zense</span><span class="proj">— zense</span>
+          <span class="branch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+          <span class="right">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="9" height="18" x="3" y="3" rx="2"/><path d="M15 3h5a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-5"/></svg>
+          </span>
         </div>
-        <div class="app-body">
-          <div class="app-side">
-            <div class="cap">EXPLORER</div>
+        <div class="abody">
+          <div class="rail">
+            <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>
+            <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>
+            <span class="ric on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="13" x="9" y="9" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+            <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+            <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span>
+            <span class="spacer"></span>
+            <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span>
+          </div>
+          <div class="side">
+            <div class="cap">EDITOR</div>
             <div class="tree">
-              <div class="dir">src</div>
-              <div class="ind dir">editor</div>
-              <div class="ind2 file on">review.ts</div>
-              <div class="ind2 file">diff.ts</div>
-              <div class="ind2 file">tabs.ts</div>
-              <div class="ind dir">ai</div>
-              <div class="ind2 file">context.ts</div>
-              <div class="ind dir">git</div>
-              <div class="ind2 file">stage.ts</div>
-              <div class="file">package.json</div>
-              <div class="file">README.md</div>
+              <div class="tr"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg><svg class="fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>zense</div>
+              <div class="tr d2"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><svg class="fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>src</div>
+              <div class="tr d3"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><svg class="fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>components</div>
+              <div class="tr d3 on"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>ReviewPanel.tsx</div>
+              <div class="tr d3"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>DiffList.tsx</div>
+              <div class="tr d2"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><svg class="fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>store</div>
+              <div class="tr d2"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><svg class="fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>lib</div>
+              <div class="tr d2"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>package.json</div>
+              <div class="tr d2"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>design.md</div>
             </div>
           </div>
-          <div class="app-main">
-            <div class="tabs">
-              <span class="tab on">review.ts</span>
-              <span class="tab">diff.ts</span>
-              <span class="tab">stage.ts <span class="mod">●</span></span>
+          <div class="emain">
+            <div class="etabs">
+              <span class="etab on"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>ReviewPanel.tsx <span class="x">✕</span></span>
+              <span class="etab"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>DiffList.tsx</span>
+              <span class="espacer"></span>
+              <span class="esplit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="9" height="18" x="3" y="3" rx="2"/><path d="M15 3h5a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-5"/></svg></span>
             </div>
+            <div class="crumb">src <span>›</span> components <span>›</span> <b>ReviewPanel.tsx</b></div>
             <div class="code">
-              <div class="ln"><span class="no">1</span><span><span class="kw">import</span> <span class="pl">{ diffLines, summarize }</span> <span class="kw">from</span> <span class="st">"./diff"</span></span></div>
-              <div class="ln"><span class="no">2</span><span></span></div>
-              <div class="ln"><span class="no">3</span><span><span class="cm">// Review pipeline — nothing is committed unseen</span></span></div>
-              <div class="ln"><span class="no">4</span><span><span class="kw">export function</span> <span class="fn">review</span><span class="pl">(changes: Change[]) {</span></span></div>
-              <div class="ln"><span class="no">5</span><span class="pl">&nbsp;&nbsp;<span class="kw">const</span> staged = changes.<span class="fn">filter</span>(c =&gt; c.staged)</span></div>
-              <div class="ln"><span class="no">6</span><span class="pl">&nbsp;&nbsp;<span class="kw">return</span> staged.<span class="fn">map</span>(c =&gt; <span class="fn">summarize</span>(c))</span></div>
-              <div class="ln"><span class="no">7</span><span class="pl">}</span></div>
-              <div class="ln"><span class="no">8</span><span></span></div>
-              <div class="ln"><span class="no">9</span><span><span class="fn">review</span><span class="pl">(</span><span class="kw">await</span> <span class="fn">getChanges</span><span class="pl">())</span> <span class="cm">→ ready to commit</span></span></div>
+              <div class="ln"><span class="no">1</span><span><span class="tk-kw2">import</span> <span class="tk-punc">{</span> <span class="tk-var">useMemo</span> <span class="tk-punc">}</span> <span class="tk-kw2">from</span> <span class="tk-str">"react"</span></span></div>
+              <div class="ln"><span class="no">2</span><span><span class="tk-kw2">import</span> <span class="tk-punc">{</span> <span class="tk-var">useGitStore</span> <span class="tk-punc">}</span> <span class="tk-kw2">from</span> <span class="tk-str">"../store/git"</span></span></div>
+              <div class="ln"><span class="no">3</span><span> </span></div>
+              <div class="ln"><span class="no">4</span><span><span class="tk-cm">// Nothing ships without a human pass</span></span></div>
+              <div class="ln"><span class="no">5</span><span><span class="tk-kw2">export function</span> <span class="tk-fn">ReviewPanel</span><span class="tk-punc">({</span> <span class="tk-var">files</span> <span class="tk-punc">}: {</span> <span class="tk-var">files</span><span class="tk-punc">:</span> <span class="tk-type">ChangedFile</span><span class="tk-punc">[] }) {</span></span></div>
+              <div class="ln"><span class="no">6</span><span>  <span class="tk-kw">const</span> <span class="tk-var">staged</span> <span class="tk-punc">=</span> <span class="tk-fn">useMemo</span><span class="tk-punc">(() =&gt;</span> <span class="tk-var">files</span><span class="tk-punc">.</span><span class="tk-fn">filter</span><span class="tk-punc">(</span><span class="tk-var">f</span> <span class="tk-kw">=&gt;</span> <span class="tk-var">f</span><span class="tk-punc">.</span><span class="tk-var">staged</span><span class="tk-punc">), [</span><span class="tk-var">files</span><span class="tk-punc">])</span></span></div>
+              <div class="ln"><span class="no">7</span><span>  <span class="tk-kw">if</span> <span class="tk-punc">(!</span><span class="tk-var">staged</span><span class="tk-punc">.</span><span class="tk-var">length</span><span class="tk-punc">)</span> <span class="tk-kw">return</span> <span class="tk-punc">&lt;</span><span class="tk-tag">Empty</span> <span class="tk-attr">text</span><span class="tk-punc">=</span><span class="tk-str">"No staged changes"</span> <span class="tk-punc">/&gt;</span></span></div>
+              <div class="ln"><span class="no">8</span><span>  <span class="tk-kw">return</span> <span class="tk-punc">&lt;</span><span class="tk-tag">DiffList</span> <span class="tk-attr">files</span><span class="tk-punc">={</span><span class="tk-var">staged</span><span class="tk-punc">}</span> <span class="tk-attr">onStage</span><span class="tk-punc">={</span><span class="tk-var">toggleStage</span><span class="tk-punc">} /&gt;</span></span></div>
+              <div class="ln"><span class="no">9</span><span><span class="tk-punc">}</span></span></div>
             </div>
           </div>
-          <div class="app-chat">
-            <div class="chat-h">AI · <b>your key</b></div>
-            <div class="chat-m">
-              <div class="msg u">Summarize the staged changes</div>
-              <div class="msg a">Two edits in <b>review.ts</b>: staged changes are now filtered before summarizing, and the pipeline returns per-file summaries.<br><span class="chip">✓ 2 files · review diff</span></div>
+          <div class="rpanel">
+            <div class="ptabs">
+              <span class="ptab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>CHAT</span>
+              <span class="ptab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>AI REVIEW</span>
+              <span class="ptab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/><path d="m15 9-2 4-4 2 2-4 4-2"/></svg>FOCUS</span>
+              <span class="px">✕</span>
             </div>
-            <div class="chat-in">Ask about this workspace…</div>
+            <div class="pbody">
+              <div class="pmsgs">
+                <div class="mu">Summarize the staged changes</div>
+                <div class="ma">Two edits in <span class="chip">ReviewPanel.tsx</span> — staged files are filtered before rendering, and the list now disables staging for binary files.<br><span class="chip">✓ 2 files · review diff</span></div>
+              </div>
+              <div class="pinput">Ask about your code… <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg></div>
+            </div>
           </div>
         </div>
-        <div class="app-status">
-          <span class="ok">✓ ready</span><span>main</span><span>TypeScript</span>
-          <span class="right">Ln 9 · UTF-8 · LF</span>
+        <div class="sbar">
+          <span class="br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+          <span class="err">⨯ 1</span><span class="warn">⚠ 2</span>
+          <span class="r"><span>Ln 6, Col 20</span><span>Spaces: 2</span><span>TSX</span></span>
         </div>
       </div>
     </div>
@@ -606,7 +750,7 @@
     <div class="showcase reveal d2">
       <div class="sc-tabs" role="tablist">
         <button class="sc-tab" role="tab" aria-selected="true" data-p="p-workspace">
-          <span class="n">A</span><h3>Editor</h3><p>Monaco with tabs, symbol outline and diagnostics. Fast, native, keyboard-first.</p>
+          <span class="n">A</span><h3>Editor</h3><p>Monaco with tabs, breadcrumb, symbol outline and diagnostics. Fast, native, keyboard-first.</p>
         </button>
         <button class="sc-tab" role="tab" aria-selected="false" data-p="p-chat">
           <span class="n">B</span><h3>AI chat</h3><p>Ask about the codebase, generate edits, review the diff before anything applies.</p>
@@ -620,104 +764,268 @@
       </div>
 
       <div class="sc-stage">
-        <!-- workspace -->
+        <!-- A · workspace -->
         <div class="sc-panel on" id="p-workspace">
           <div class="app">
-            <div class="app-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="t">zense — editor</span><span class="branch"><i>●</i> main</span></div>
-            <div class="app-body" style="min-height:380px">
-              <div class="app-side">
-                <div class="cap">EXPLORER</div>
+            <div class="tbar">
+              <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+              <span class="name">zense</span><span class="proj">— zense</span>
+              <span class="branch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+            </div>
+            <div class="abody">
+              <div class="rail">
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>
+                <span class="ric on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="13" x="9" y="9" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span>
+                <span class="spacer"></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span>
+              </div>
+              <div class="side">
+                <div class="cap">EDITOR</div>
                 <div class="tree">
-                  <div class="dir">src</div>
-                  <div class="ind file on">review.ts</div>
-                  <div class="ind file">diff.ts</div>
-                  <div class="ind file">tabs.ts</div>
-                  <div class="ind dir">ai</div>
-                  <div class="ind2 file">context.ts</div>
-                  <div class="file">package.json</div>
+                  <div class="tr"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg><svg class="fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>zense</div>
+                  <div class="tr d2"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><svg class="fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>src</div>
+                  <div class="tr d3 on"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>ReviewPanel.tsx</div>
+                  <div class="tr d3"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>DiffList.tsx</div>
+                  <div class="tr d2"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><svg class="fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>store</div>
+                  <div class="tr d2"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>package.json</div>
                 </div>
               </div>
-              <div class="app-main">
-                <div class="tabs"><span class="tab on">review.ts</span><span class="tab">diff.ts</span></div>
+              <div class="emain">
+                <div class="etabs">
+                  <span class="etab on"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>ReviewPanel.tsx <span class="x">✕</span></span>
+                  <span class="etab"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>git.ts</span>
+                </div>
+                <div class="crumb">src <span>›</span> components <span>›</span> <b>ReviewPanel.tsx</b></div>
                 <div class="code">
-                  <div class="ln"><span class="no">1</span><span><span class="kw">import</span> <span class="pl">{ diffLines } from</span> <span class="st">"./diff"</span></span></div>
-                  <div class="ln"><span class="no">2</span><span></span></div>
-                  <div class="ln"><span class="no">3</span><span><span class="kw">export function</span> <span class="fn">review</span><span class="pl">(changes: Change[]) {</span></span></div>
-                  <div class="ln"><span class="no">4</span><span class="pl">&nbsp;&nbsp;<span class="kw">const</span> staged = changes.<span class="fn">filter</span>(c =&gt; c.staged)</span></div>
-                  <div class="ln"><span class="no">5</span><span class="pl">&nbsp;&nbsp;<span class="kw">return</span> staged.<span class="fn">map</span>(<span class="fn">summarize</span>)</span></div>
-                  <div class="ln"><span class="no">6</span><span class="pl">}</span></div>
+                  <div class="ln"><span class="no">1</span><span><span class="tk-kw2">import</span> <span class="tk-punc">{</span> <span class="tk-var">useMemo</span> <span class="tk-punc">}</span> <span class="tk-kw2">from</span> <span class="tk-str">"react"</span></span></div>
+                  <div class="ln"><span class="no">2</span><span> </span></div>
+                  <div class="ln"><span class="no">3</span><span><span class="tk-cm">// Nothing ships without a human pass</span></span></div>
+                  <div class="ln"><span class="no">4</span><span><span class="tk-kw2">export function</span> <span class="tk-fn">ReviewPanel</span><span class="tk-punc">({</span> <span class="tk-var">files</span> <span class="tk-punc">}: {</span> <span class="tk-var">files</span><span class="tk-punc">:</span> <span class="tk-type">ChangedFile</span><span class="tk-punc">[] }) {</span></span></div>
+                  <div class="ln"><span class="no">5</span><span>  <span class="tk-kw">const</span> <span class="tk-var">staged</span> <span class="tk-punc">=</span> <span class="tk-fn">useMemo</span><span class="tk-punc">(() =&gt;</span> <span class="tk-var">files</span><span class="tk-punc">.</span><span class="tk-fn">filter</span><span class="tk-punc">(</span><span class="tk-var">f</span> <span class="tk-kw">=&gt;</span> <span class="tk-var">f</span><span class="tk-punc">.</span><span class="tk-var">staged</span><span class="tk-punc">), [</span><span class="tk-var">files</span><span class="tk-punc">])</span></span></div>
+                  <div class="ln"><span class="no">6</span><span>  <span class="tk-kw">return</span> <span class="tk-punc">&lt;</span><span class="tk-tag">DiffList</span> <span class="tk-attr">files</span><span class="tk-punc">={</span><span class="tk-var">staged</span><span class="tk-punc">} /&gt;</span></span></div>
+                  <div class="ln"><span class="no">7</span><span><span class="tk-punc">}</span></span></div>
                 </div>
               </div>
             </div>
-            <div class="app-status"><span class="ok">✓ ready</span><span>main</span><span class="right">Ln 6 · UTF-8</span></div>
+            <div class="sbar">
+              <span class="br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+              <span class="err">⨯ 1</span><span class="warn">⚠ 2</span>
+              <span class="r"><span>Ln 6, Col 20</span><span>Spaces: 2</span><span>TSX</span></span>
+            </div>
           </div>
         </div>
 
-        <!-- chat -->
+        <!-- B · AI chat -->
         <div class="sc-panel" id="p-chat">
           <div class="app">
-            <div class="app-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="t">zense — AI chat</span><span class="branch"><i>●</i> main</span></div>
-            <div class="app-body" style="min-height:380px">
-              <div class="app-main">
-                <div class="chat-h" style="padding:14px 20px">Assistant · <b>bring your own key</b> · OpenAI · Anthropic · Ollama</div>
-                <div class="chat-m" style="padding:18px 20px; gap:14px; font-size:12.5px">
-                  <div class="msg u" style="font-size:12.5px">Where is the auth flow handled in this repo?</div>
-                  <div class="msg a" style="font-size:12.5px">Authentication starts in <b>src/auth/middleware.ts</b> — the request passes through <b>verifyToken()</b>, then <b>src/auth/session.ts</b> hydrates the user. The login handler is at <b>login.tsx:42</b>.<br><span class="chip">✓ 3 files traced · open diff</span></div>
-                  <div class="msg u" style="font-size:12.5px">Add rate limiting to that middleware</div>
-                  <div class="msg a" style="font-size:12.5px">Drafted a change: a sliding-window limiter wraps <b>verifyToken()</b>. Nothing applied yet — <b>review the diff first</b>.<br><span class="chip">+18 −2 · middleware.ts — review</span></div>
+            <div class="tbar">
+              <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+              <span class="name">zense</span><span class="proj">— zense</span>
+              <span class="branch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+            </div>
+            <div class="abody">
+              <div class="rail">
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>
+                <span class="ric on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="13" x="9" y="9" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span>
+                <span class="spacer"></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span>
+              </div>
+              <div class="emain">
+                <div class="etabs">
+                  <span class="etab on"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>middleware.ts <span class="x">✕</span></span>
                 </div>
-                <div class="chat-in" style="margin:0 20px 18px">Ask about this workspace…</div>
+                <div class="crumb">src <span>›</span> auth <span>›</span> <b>middleware.ts</b></div>
+                <div class="code">
+                  <div class="ln"><span class="no">41</span><span><span class="tk-kw2">export async function</span> <span class="tk-fn">verify</span><span class="tk-punc">(</span><span class="tk-var">req</span><span class="tk-punc">:</span> <span class="tk-type">Request</span><span class="tk-punc">) {</span></span></div>
+                  <div class="ln"><span class="no">42</span><span>  <span class="tk-kw">const</span> <span class="tk-var">user</span> <span class="tk-punc">=</span> <span class="tk-kw">await</span> <span class="tk-fn">verifyToken</span><span class="tk-punc">(</span><span class="tk-var">req</span><span class="tk-punc">)</span></span></div>
+                  <div class="ln"><span class="no">43</span><span>  <span class="tk-var">req</span><span class="tk-punc">.</span><span class="tk-var">ctx</span><span class="tk-punc">.</span><span class="tk-var">user</span> <span class="tk-punc">=</span> <span class="tk-var">user</span></span></div>
+                  <div class="ln"><span class="no">44</span><span><span class="tk-punc">}</span></span></div>
+                </div>
+              </div>
+              <div class="rpanel">
+                <div class="ptabs">
+                  <span class="ptab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>CHAT</span>
+                  <span class="ptab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>AI REVIEW</span>
+                  <span class="ptab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/><path d="m15 9-2 4-4 2 2-4 4-2"/></svg>FOCUS</span>
+                  <span class="px">✕</span>
+                </div>
+                <div class="pbody">
+                  <div class="pmsgs">
+                    <div class="mu">Where is the auth flow handled?</div>
+                    <div class="ma">The request passes through <span class="chip">verifyToken()</span> in <span class="chip">middleware.ts</span>, then <span class="chip">session.ts</span> hydrates the user. Login handler: <span class="chip">login.tsx:42</span></div>
+                    <div class="mu">Add rate limiting to that middleware</div>
+                    <div class="ma">Drafted a sliding-window limiter around <span class="chip">verifyToken()</span>. Nothing applied yet — review the diff first.<br><span class="chip">+18 −2 · middleware.ts</span></div>
+                  </div>
+                  <div class="pinput">Ask about your code… <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg></div>
+                </div>
               </div>
             </div>
-            <div class="app-status"><span class="ok">✓ context: 12 files</span><span class="right">BYO key · stored locally</span></div>
+            <div class="sbar">
+              <span class="br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+              <span class="r"><span>BYO key · stored locally</span><span>Ln 1, Col 1</span><span>Spaces: 2</span><span>TSX</span></span>
+            </div>
           </div>
         </div>
 
-        <!-- terminal -->
+        <!-- C · terminal -->
         <div class="sc-panel" id="p-terminal">
           <div class="app">
-            <div class="app-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="t">zense — terminal · zsh</span><span class="branch"><i>●</i> main</span></div>
-            <div class="app-body" style="min-height:380px">
-              <div class="app-main">
-                <div class="term">
-                  <div><span class="p">zense ~/projects/checkout</span> <span class="dim">$</span> <span class="cmd">bun test</span></div>
+            <div class="tbar">
+              <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+              <span class="name">zense</span><span class="proj">— zense</span>
+              <span class="branch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+            </div>
+            <div class="abody">
+              <div class="rail">
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="13" x="9" y="9" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+                <span class="ric on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span>
+                <span class="spacer"></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span>
+              </div>
+              <div class="emain">
+                <div class="ttabs">
+                  <span class="ttab"><span class="gdot2"></span>pi <span class="x">✕</span></span>
+                  <span class="ttab on"><span class="gdot2"></span>Terminal 2 <span class="x">✕</span></span>
+                  <span class="ttabadd">+</span>
+                  <span class="tspacer"></span>
+                  <span class="tic">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                  </span>
+                </div>
+                <div class="tterm">
+                  <div>user@zense-Laptop zense % <span class="cmd">bun test</span></div>
                   <div><span class="ok">✓</span> src/review.spec.ts <span class="dim">(12)</span></div>
                   <div><span class="ok">✓</span> src/diff.spec.ts <span class="dim">(8)</span></div>
                   <div><span class="ok">✓</span> src/stage.spec.ts <span class="dim">(22)</span></div>
                   <div>&nbsp;&nbsp;<span class="ok">42 pass</span> · <span>0 fail</span> · <span class="dim">118ms</span></div>
-                  <div style="margin-top:6px"><span class="p">zense ~/projects/checkout</span> <span class="dim">$</span> <span class="cmd">git commit -m "harden review pipeline"</span></div>
+                  <div style="margin-top:6px">user@zense-Laptop zense % <span class="cmd">git commit -m "harden review pipeline"</span></div>
                   <div><span class="ok">✓</span> 3 files changed, 24 insertions, 6 deletions</div>
-                  <div style="margin-top:6px"><span class="p">zense ~/projects/checkout</span> <span class="dim">$</span> <span class="cursor"></span></div>
+                  <div style="margin-top:6px">user@zense-Laptop zense % <span class="tcursor"></span></div>
+                </div>
+              </div>
+              <div class="rpanel">
+                <div class="ptabs">
+                  <span class="ptab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>CHAT</span>
+                  <span class="ptab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>AI REVIEW</span>
+                  <span class="ptab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/><path d="m15 9-2 4-4 2 2-4 4-2"/></svg>FOCUS</span>
+                  <span class="px">✕</span>
+                </div>
+                <div class="pbody">
+                  <div class="pempty">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    Ask about your code
+                  </div>
+                  <div class="pinput">Ask about your code… <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg></div>
                 </div>
               </div>
             </div>
-            <div class="app-status"><span>zsh · tab 1 of 2</span><span class="right">session survives switches</span></div>
+            <div class="sbar">
+              <span class="br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+              <span class="err">⨯ 1</span><span class="warn">⚠ 2</span>
+              <span class="r"><span class="vic">▣</span><span>Ln 1, Col 1</span><span>Spaces: 2</span><span>HTML</span></span>
+            </div>
           </div>
         </div>
 
-        <!-- git -->
+        <!-- D · git review -->
         <div class="sc-panel" id="p-git">
           <div class="app">
-            <div class="app-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="t">zense — git review</span><span class="branch"><i>●</i> main</span></div>
-            <div class="app-main">
-              <div class="git-h">
-                <span class="file">src/review.ts</span>
-                <span class="add">+12</span><span class="del">−4</span>
-                <span class="badge-st">STAGED ✓</span>
+            <div class="tbar">
+              <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+              <span class="name">zense</span><span class="proj">— zense</span>
+              <span class="branch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+            </div>
+            <div class="abody">
+              <div class="rail">
+                <span class="ric on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="13" x="9" y="9" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span>
+                <span class="spacer"></span>
+                <span class="ric"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span>
               </div>
-              <div class="diff">
-                <div class="dl2 ctx"><span class="sign">&nbsp;</span><span>export function review(changes: Change[]) {</span></div>
-                <div class="dl2 del"><span class="sign">−</span><span>  const staged = changes</span></div>
-                <div class="dl2 del"><span class="sign">−</span><span>  return staged.map(c =&gt; c.summary)</span></div>
-                <div class="dl2 add"><span class="sign">+</span><span>  const staged = changes.filter(c =&gt; c.staged)</span></div>
-                <div class="dl2 add"><span class="sign">+</span><span>  if (!staged.length) return []</span></div>
-                <div class="dl2 add"><span class="sign">+</span><span>  return staged.map(c =&gt; summarize(c))</span></div>
-                <div class="dl2 ctx"><span class="sign">&nbsp;</span><span>}</span></div>
+              <div class="side">
+                <div class="cap">REVIEW</div>
+                <div class="rbranch">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+                  main
+                  <span class="ri">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17V3"/><path d="m6 9 6-6 6 6"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                  </span>
+                </div>
+                <div class="rmsg">Commit message…</div>
+                <div class="rbtns">
+                  <span class="rcommit">✓ Commit</span>
+                  <span class="rai"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg></span>
+                </div>
+                <div class="rairev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>AI Review</div>
+                <div class="rlabel">STAGED · 1</div>
+                <div class="rfile">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                  <span class="fn2">src/ReviewPanel.tsx</span>
+                  <span class="adds">+24</span><span class="dels">−6</span><span class="abadge">M</span>
+                </div>
+                <div class="rlabel">CHANGES · 0</div>
               </div>
-              <div class="git-f">
-                <span>3 files · +24 −6</span><span>·</span><span>AI summary attached</span>
-                <span class="commit">✓ Commit changes</span>
+              <div class="emain">
+                <div class="etabs">
+                  <span class="etab on"><svg class="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>ReviewPanel.tsx <span class="difftag">DIFF</span> <span class="x">✕</span></span>
+                </div>
+                <div class="crumb">src <span>›</span> <b>ReviewPanel.tsx</b></div>
+                <div class="dctl">
+                  <span class="rng">HEAD ← Working Tree</span>
+                  <span class="adds">+24</span><span class="dels">−6</span>
+                  <span class="cnt">1/1</span>
+                  <span class="spacer"></span>
+                  <span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="9" height="18" x="3" y="3" rx="2"/><path d="M15 3h5a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-5"/></svg>Side-by-side</span>
+                  <span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>Reset File</span>
+                  <span class="aisum">✦ AI Summary</span>
+                </div>
+                <div class="code" style="padding:10px 0">
+                  <div class="drow ctx"><span class="g1">3</span><span class="g2">3</span><span class="sg">&nbsp;</span><span>export function ReviewPanel({ files }) {</span></div>
+                  <div class="drow del"><span class="g1">4</span><span class="g2">&nbsp;</span><span class="sg">−</span><span>  const staged = files</span></div>
+                  <div class="drow add"><span class="g1">&nbsp;</span><span class="g2">4</span><span class="sg">+</span><span>  const staged = files.filter(f =&gt; f.staged)</span></div>
+                  <div class="drow add"><span class="g1">&nbsp;</span><span class="g2">5</span><span class="sg">+</span><span>  if (!staged.length) return &lt;Empty /&gt;</span></div>
+                  <div class="drow add"><span class="g1">&nbsp;</span><span class="g2">6</span><span class="sg">+</span><span>  // every hunk is reviewable — never silent</span></div>
+                  <div class="drow ctx"><span class="g1">5</span><span class="g2">7</span><span class="sg">&nbsp;</span><span>  return &lt;DiffList files={staged} /&gt;</span></div>
+                  <div class="drow ctx"><span class="g1">6</span><span class="g2">8</span><span class="sg">&nbsp;</span><span>}</span></div>
+                </div>
               </div>
+              <div class="rpanel">
+                <div class="ptabs">
+                  <span class="ptab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>CHAT</span>
+                  <span class="ptab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>AI REVIEW</span>
+                  <span class="ptab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/><path d="m15 9-2 4-4 2 2-4 4-2"/></svg>FOCUS</span>
+                  <span class="px">✕</span>
+                </div>
+                <div class="pbody">
+                  <div class="pbtns">
+                    <span class="pbtn g">✦ Review ทั้งหมด</span>
+                  </div>
+                  <div class="pmsgs">
+                    <div class="mu">Summarize all changes + review points</div>
+                    <div class="ma">Staged change filters files before rendering. Two things to check: <span class="chip">f.staged</span> flag source, and the early return drops unstaged context.<br><span class="chip">(no critical findings)</span></div>
+                  </div>
+                  <div class="pinput">Ask a follow-up… <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg></div>
+                </div>
+              </div>
+            </div>
+            <div class="sbar">
+              <span class="br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+              <span class="err">⨯ 1</span><span class="warn">⚠ 2</span>
+              <span class="r"><span>Ln 1, Col 1</span><span>Spaces: 2</span><span>TSX</span></span>
             </div>
           </div>
           <div class="sc-note">nothing leaves the machine until you commit it yourself</div>
@@ -784,16 +1092,24 @@
       </div>
       <div class="mani-frame reveal d3">
         <div class="app">
-          <div class="git-h"><span class="file">auth/middleware.ts</span><span class="add">+18</span><span class="del">−2</span><span class="badge-st">STAGED ✓</span></div>
-          <div class="diff">
-            <div class="dl2 ctx"><span class="sign">&nbsp;</span><span>export async function verify(req: Request) {</span></div>
-            <div class="dl2 del"><span class="sign">−</span><span>  const user = await verifyToken(req)</span></div>
-            <div class="dl2 add"><span class="sign">+</span><span>  const user = await limiter.wrap(verifyToken)(req)</span></div>
-            <div class="dl2 add"><span class="sign">+</span><span>  if (!user) throw new Unauthorized()</span></div>
-            <div class="dl2 add"><span class="sign">+</span><span>  req.ctx.user = user</span></div>
-            <div class="dl2 ctx"><span class="sign">&nbsp;</span><span>}</span></div>
+          <div class="dctl" style="border-top:none">
+            <span class="rng">auth/middleware.ts</span>
+            <span class="adds">+18</span><span class="dels">−2</span>
+            <span class="spacer"></span>
+            <span class="aisum">✦ AI Summary</span>
           </div>
-          <div class="git-f"><span>1 file · +18 −2</span><span class="commit">Review changes →</span></div>
+          <div class="code" style="padding:10px 0">
+            <div class="drow ctx"><span class="g1">10</span><span class="g2">10</span><span class="sg">&nbsp;</span><span>export async function verify(req: Request) {</span></div>
+            <div class="drow del"><span class="g1">11</span><span class="g2">&nbsp;</span><span class="sg">−</span><span>  const user = await verifyToken(req)</span></div>
+            <div class="drow add"><span class="g1">&nbsp;</span><span class="g2">11</span><span class="sg">+</span><span>  const user = await limiter.wrap(verifyToken)(req)</span></div>
+            <div class="drow add"><span class="g1">&nbsp;</span><span class="g2">12</span><span class="sg">+</span><span>  if (!user) throw new Unauthorized()</span></div>
+            <div class="drow add"><span class="g1">&nbsp;</span><span class="g2">13</span><span class="sg">+</span><span>  req.ctx.user = user</span></div>
+            <div class="drow ctx"><span class="g1">12</span><span class="g2">14</span><span class="sg">&nbsp;</span><span>}</span></div>
+          </div>
+          <div class="sbar">
+            <span class="br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> main</span>
+            <span class="r"><span>STAGED ✓</span><span>1 file · +18 −2</span></span>
+          </div>
         </div>
         <span class="rev"><i></i> Reviewed by you</span>
       </div>
@@ -821,8 +1137,8 @@
         <div class="n">02</div>
         <h3>AI inside the workspace</h3>
         <div class="tag">Bring your own key</div>
-        <p>Chat with the codebase, generate edits, trace flows. OpenAI, Anthropic, Gemini — or run local models with Ollama.</p>
-        <div class="micro"><span class="acc">▍</span> context engine · call hierarchy · git history</div>
+        <p>Chat, AI Review and Focus sessions sit right next to your editor. OpenAI, Anthropic, Gemini — or local models with Ollama.</p>
+        <div class="micro"><span class="acc">✦</span> chat · ai review · focus</div>
       </div>
       <div class="wcard reveal d3">
         <span class="big">03</span>
@@ -830,14 +1146,14 @@
         <h3>A real terminal</h3>
         <div class="tag">PTY · zsh / bash</div>
         <p>Actual shell tabs inside the workspace. Build, run, test and commit without switching windows — the session stays alive.</p>
-        <div class="micro"><span class="acc">$</span> multiple tabs · shell profiles <span class="cursor"></span></div>
+        <div class="micro"><span class="acc">$</span> multiple tabs · shell profiles <span class="tcursor"></span></div>
       </div>
       <div class="wcard reveal d4">
         <span class="big">04</span>
         <div class="n">04</div>
         <h3>Git review, first-class</h3>
         <div class="tag">Diff · Stage · Commit</div>
-        <p>Status, diffs, staging and history in one panel — with AI commit summaries. The habit the whole app is named after.</p>
+        <p>Status, diffs, staging, history and AI commit summaries in one panel. The habit the whole app is built around.</p>
         <div class="micro"><span class="acc">✓</span> review before you commit</div>
       </div>
     </div>
