@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Check, Download, GitBranch, Loader2, Plus, RefreshCw, Upload, X } from "lucide-react";
 
 import { useGitStore } from "../../store/gitStore";
@@ -22,13 +22,24 @@ interface Feedback {
 }
 
 /**
- * Branch popup in the StatusBar — git fetch / pull / checkout / new-branch
- * for people who don't know the git CLI yet. Every action states what it
- * will do in plain words, and failures come back as friendly messages from
- * gitcmd.rs (no "fatal: ..." jargon). Successful fetch/pull keep the menu
- * open so the result line is visible; switching branch closes it.
+ * Branch popup — git fetch / pull / checkout / new-branch for people who
+ * don't know the git CLI yet. Opened from the StatusBar and from the Review
+ * panel's branch row. Every action states what it will do in plain words,
+ * and failures come back as friendly messages from gitcmd.rs (no "fatal:
+ * ..." jargon). Successful fetch/pull keep the menu open so the result
+ * line is visible; switching branch closes it.
+ *
+ * `anchorStyle` positions the popup inside the fixed overlay — the
+ * StatusBar defaults to just above itself; the Review panel passes the
+ * branch row's rect so the menu drops down from it.
  */
-export function BranchMenu({ onClose }: { onClose: () => void }) {
+export function BranchMenu({
+  onClose,
+  anchorStyle = { bottom: "1.75rem", left: "0.75rem" },
+}: {
+  onClose: () => void;
+  anchorStyle?: CSSProperties;
+}) {
   const [branches, setBranches] = useState<GitBranchEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -173,7 +184,8 @@ export function BranchMenu({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50" onClick={onClose}>
       <div
-        className="absolute bottom-7 left-3 w-72 overflow-hidden rounded-md border border-border bg-panel shadow-2xl"
+        className="absolute w-72 overflow-hidden rounded-md border border-border bg-panel shadow-2xl"
+        style={anchorStyle}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ── Header ── */}

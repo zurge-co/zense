@@ -50,11 +50,11 @@
 - [x] Stage All
 - [x] Commit จริง (`git_commit` — guard empty message + nothing-staged)
 - [x] Branch info จริง (`git_branch_info` — name, detached, ahead/behind)
-- [ ] Branch: switch/create/list (dropdown ที่ branch name)
+- [x] Branch: switch/create/list (dropdown ที่ branch name) — branch rowใน ReviewPanel เปิด BranchMenu เดียวกับ StatusBar (reuse `anchorStyle` prop)
 - [ ] Blame view ใน editor gutter
-- [ ] AI commit message → ส่ง diff เข้า agent (LLM พร้อมแล้ว — เหลือ wiring Review panel)
-- [ ] Stage/unstage ระดับ hunk จาก diff view
-- [ ] AI Summary (diff) (LLM พร้อมแล้ว — เหลือ wiring)
+- [x] AI commit message → ส่ง staged diff เข้า agent (`lib/commitMessage.ts` + ปุ่ม AI ข้าง commit box, wiring จริงแล้ว)
+- [x] Stage/unstage ระดับ hunk จาก diff view — `git_stage_hunk`/`git_unstage_hunk` (git2: patch rebuild + apply เข้า index, stale-content guard, lock ตอน Conflict Mode) + ปุ่ม Stage/Unstage change คู่กับ ◀ ▶ navigator ใน DiffView
+- [x] AI Summary (diff) — `lib/aiReview.ts` + AiReviewPanel (ปุ่ม AI Summary ใน DiffView, AI Review button + right-click per-file ใน ReviewPanel, Explain this change ใน editor)
 
 ## 📜 History
 

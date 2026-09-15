@@ -9,11 +9,13 @@ import {
   Sparkles,
   RotateCcw,
   Loader2,
+  Plus,
+  Minus,
 } from "lucide-react";
 import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { gitDiffFile, gitDiffCommitFile, gitDiscardFile, gitDiscardLines } from "../../lib/git";
+import { gitDiffFile, gitDiffCommitFile, gitDiscardFile, gitDiscardLines, gitStageLines, gitUnstageLines } from "../../lib/git";
 import { explainDiffChange, summarizeFileChange, summarizeCommitFileChange } from "../../lib/aiReview";
 import { findChangeAtLine, extractChunk } from "../../lib/diffChunk";
 import { detectLanguage } from "../../lib/lang";
@@ -25,7 +27,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 export function DiffView({ tab }: { tab: EditorTab }) {
   const editorFontSize = useWorkspaceStore((s) => s.editorFontSize);
   const { diffMode, toggleDiffMode, workspacePath } = useUIStore();
-  const { status, diffSummary } = useGitStore();
+  const { status, diffSummary, mergeInfo } = useGitStore();
   const path = tab.path;
 
   /** commitDiff tabs diff two commits; diff tabs diff the working tree. */
@@ -121,13 +123,14 @@ export function DiffView({ tab }: { tab: EditorTab }) {
     diffRef.current?.getModifiedEditor().revealLineInCenter(line);
   };
 
+  // Monaco encodes an empty range (pure insert/delete) with end = 0;
+  // normalize to 1-based inclusive bounds with end = start - 1 for empty.
+  const toRange = (start: number, end: number): { start: number; end: number } =>
+    end === 0 || end < start ? { start: start + 1, end: start } : { start, end };
+
   const revertCurrentChange = async () => {
     const change = changes[changeIdx];
     if (!content || !change || !workspacePath) return;
-    // Monaco encodes an empty range (pure insert/delete) with end = 0;
-    // normalize to 1-based inclusive bounds with end = start - 1 for empty.
-    const toRange = (start: number, end: number): { start: number; end: number } =>
-      end === 0 || end < start ? { start: start + 1, end: start } : { start, end };
     const work = toRange(change.modifiedStartLineNumber, change.modifiedEndLineNumber);
     const orig = toRange(change.originalStartLineNumber, change.originalEndLineNumber);
     try {
@@ -139,6 +142,48 @@ export function DiffView({ tab }: { tab: EditorTab }) {
         workContent: content.modified,
         baseContent: content.original,
       });
+      await useGitStore.getState().refresh(workspacePath);
+      setReloadNonce((n) => n + 1);
+    } catch (err) {
+      setLoadError(errMessage(err));
+    }
+  };
+
+  /** Stage/unstage just the current change block (the one the ◀ ▶
+   *  navigator is on) — juniors can build clean commits piece by piece
+   *  without learning `git add -p`.
+   *
+   *  On the working-tree diff the index is the *original* side and the
+   *  workdir the *modified* side; on the staged diff the ORIGINAL side is
+   *  HEAD and the MODIFIED side is the index. The backend always wants the
+   *  index side as old_*, so the staged view swaps the two ranges.
+   *  `expectedOld`/`expectedNew` are the exact rendered texts so the
+   *  backend can refuse stale line ranges. */
+  const applyHunkCurrentChange = async (action: "stage" | "unstage") => {
+    const change = changes[changeIdx];
+    if (!content || !change || !workspacePath) return;
+    const mod = toRange(change.modifiedStartLineNumber, change.modifiedEndLineNumber);
+    const orig = toRange(change.originalStartLineNumber, change.originalEndLineNumber);
+    try {
+      if (action === "stage") {
+        await gitStageLines(workspacePath, path, {
+          oldStart: orig.start,
+          oldEnd: orig.end,
+          newStart: mod.start,
+          newEnd: mod.end,
+          expectedOld: content.original,
+          expectedNew: content.modified,
+        });
+      } else {
+        await gitUnstageLines(workspacePath, path, {
+          oldStart: mod.start,
+          oldEnd: mod.end,
+          newStart: orig.start,
+          newEnd: orig.end,
+          expectedOld: content.modified,
+          expectedNew: content.original,
+        });
+      }
       await useGitStore.getState().refresh(workspacePath);
       setReloadNonce((n) => n + 1);
     } catch (err) {
@@ -202,14 +247,47 @@ export function DiffView({ tab }: { tab: EditorTab }) {
         </div>
 
         {!commitMode && !staged && (
+          <>
+            <button
+              title="Revert this change — restore these lines from the staged/HEAD version"
+              onClick={() => void revertCurrentChange()}
+              disabled={changes.length === 0}
+              className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <RotateCcw size={13} />
+              Revert change
+            </button>
+            <button
+              title={
+                mergeInfo.inProgress
+                  ? "Conflict Mode is on — resolve the conflicts first (staging is locked for safety)"
+                  : "Stage just this change — use ◀ ▶ to pick a change, then press this (like 'git add -p' without the terminal)"
+              }
+              onClick={() => void applyHunkCurrentChange("stage")}
+              disabled={changes.length === 0 || mergeInfo.inProgress}
+              data-testid="stage-change"
+              className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <Plus size={13} />
+              Stage change
+            </button>
+          </>
+        )}
+
+        {!commitMode && staged && (
           <button
-            title="Revert this change — restore these lines from the staged/HEAD version"
-            onClick={() => void revertCurrentChange()}
-            disabled={changes.length === 0}
+            title={
+              mergeInfo.inProgress
+                ? "Conflict Mode is on — resolve the conflicts first (unstaging is locked for safety)"
+                : "Unstage just this change — move only these lines back out of the next commit"
+            }
+            onClick={() => void applyHunkCurrentChange("unstage")}
+            disabled={changes.length === 0 || mergeInfo.inProgress}
+            data-testid="unstage-change"
             className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent"
           >
-            <RotateCcw size={13} />
-            Revert change
+            <Minus size={13} />
+            Unstage change
           </button>
         )}
 

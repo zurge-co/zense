@@ -4,7 +4,7 @@
  * auto-save, revert, real StatusBar, tab shortcuts, split editor, quick open.
  * Structural source verification (project pattern) + store behavior tests.
  */
-import { describe, test, expect, beforeAll, beforeEach } from "bun:test";
+import { describe, test, expect, beforeAll } from "bun:test";
 import { useUIStore, tabKey } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 

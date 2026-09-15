@@ -896,6 +896,294 @@ pub fn git_discard_lines(
 }
 
 // ---------------------------------------------------------------------------
+// Commands: git_stage_lines / git_unstage_lines
+// ---------------------------------------------------------------------------
+
+/// Which way the hunk apply moves: `index→workdir` hunks into the index
+/// (stage) or `index→HEAD` hunks into the index (unstage).
+enum HunkDirection {
+  Stage,
+  Unstage,
+}
+
+/// Interval overlap with ±1 line tolerance — Monaco line-changes and git
+/// hunks don't align 1:1, so a click on a context-line edge should still
+/// pick the intended hunk.
+fn ranges_touch(s1: usize, e1: usize, s2: usize, e2: usize) -> bool {
+  s1.saturating_sub(1) <= e2.saturating_add(1) && s2.saturating_sub(1) <= e1.saturating_add(1)
+}
+
+/// True when a diff hunk overlaps the selected range on either side.
+/// An empty side is encoded `end = start - 1` and treated as an insertion
+/// point at `start`; the same goes for zero-length hunk sides.
+fn hunk_matches(
+  sel_old_start: usize,
+  sel_old_end: usize,
+  sel_new_start: usize,
+  sel_new_end: usize,
+  h_old_start: u32,
+  h_old_lines: u32,
+  h_new_start: u32,
+  h_new_lines: u32,
+) -> bool {
+  let overlaps = |sel_s: usize, sel_e: usize, h_s: u32, h_lines: u32| {
+    let hs = h_s as usize;
+    let he = hs + (h_lines as usize).saturating_sub(1);
+    let (ss, se) = if sel_e < sel_s { (sel_s, sel_s) } else { (sel_s, sel_e) };
+    ranges_touch(ss, se, hs, he)
+  };
+  overlaps(sel_old_start, sel_old_end, h_old_start, h_old_lines)
+    || overlaps(sel_new_start, sel_new_end, h_new_start, h_new_lines)
+}
+
+/// Rebuild a unified patch that keeps only the hunks of `diff` overlapping
+/// the selected range. Returns the patch text and how many hunks were kept.
+fn build_patch_for_range(
+  diff: &git2::Diff<'_>,
+  sel_old_start: usize,
+  sel_old_end: usize,
+  sel_new_start: usize,
+  sel_new_end: usize,
+) -> Result<(String, u32), String> {
+  let mut out = String::new();
+  let mut hits: u32 = 0;
+  let mut include_hunk = false;
+  diff
+    .print(git2::DiffFormat::Patch, |_delta, hunk, line| {
+      // Note: for content lines git2's DiffLine::content() does NOT carry
+      // the origin character (' ', '+', '-') back — patch text must
+      // re-add it. File/hunk headers arrive complete.
+      let text = std::str::from_utf8(line.content()).unwrap_or("");
+      match line.origin() {
+        'F' => {
+          // File header (diff --git, ---/+++ paths) — always needed so the
+          // rebuilt patch parses.
+          out.push_str(text);
+        }
+        'H' => {
+          if let Some(h) = hunk {
+            include_hunk = hunk_matches(
+              sel_old_start, sel_old_end, sel_new_start, sel_new_end,
+              h.old_start(), h.old_lines(), h.new_start(), h.new_lines(),
+            );
+            if include_hunk {
+              hits += 1;
+              out.push_str(text);
+            }
+          } else {
+            include_hunk = false;
+          }
+        }
+        // "\ No newline at end of file" markers (origin '>', '<', '=')
+        // follow a content line that lacked its final newline.
+        '>' | '<' | '=' => {
+          if include_hunk {
+            out.push_str("\\ No newline at end of file\n");
+          }
+        }
+        ' ' | '+' | '-' => {
+          if include_hunk {
+            out.push(line.origin());
+            out.push_str(text);
+            if !text.ends_with('\n') {
+              out.push('\n');
+            }
+          }
+        }
+        _ => {}
+      }
+      true
+    })
+    .map_err(|e| e.to_string())?;
+  Ok((out, hits))
+}
+
+/// Shared body of `git_stage_lines` / `git_unstage_lines`.
+///
+/// The selected hunk(s) are extracted from the real diff (index→workdir for
+/// stage, index→HEAD for unstage), rebuilt into a patch, and applied to the
+/// index only — pure git2, same idea as `git apply --cached`.
+///
+/// `expected_old` is the index-side text the diff view rendered and
+/// `expected_new` the other side (workdir for stage, HEAD for unstage). If
+/// either has moved since the diff was loaded, the command refuses — stale
+/// line ranges would otherwise patch the wrong lines.
+/// Returns how many hunks were applied.
+fn apply_hunk_range(
+  root: &str,
+  path: &str,
+  old_start: usize,
+  old_end: usize,
+  new_start: usize,
+  new_end: usize,
+  expected_old: &str,
+  expected_new: &str,
+  direction: HunkDirection,
+) -> Result<u32, String> {
+  let repo = open_repo_or_err(root)?;
+  validate_repo_path(path)?;
+  let path_norm = path.replace('\\', "/");
+  let mut index = repo.index().map_err(|e| e.to_string())?;
+
+  // Never surgically touch the index while it has unresolved conflicts.
+  if index.has_conflicts() {
+    return Err(
+      "Conflict Mode is on — resolve the conflicts first, then stage changes"
+        .to_string(),
+    );
+  }
+  if old_start == 0 || new_start == 0 {
+    return Err("invalid line range".to_string());
+  }
+
+  // Freshness: the index is the side the patch applies against in both
+  // directions; the other side depends on direction.
+  let current_index = read_index_blob(&repo, &path_norm)?;
+  if current_index != expected_old {
+    return Err(
+      "staged content changed since the diff was loaded — reload the diff and try again"
+        .to_string(),
+    );
+  }
+  match direction {
+    HunkDirection::Stage => {
+      let workdir = repo
+        .workdir()
+        .ok_or("repository has no working directory")?;
+      let current_work = match fs::read(workdir.join(&path_norm)) {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(_) => return Err(format!("permission denied: {path_norm}")),
+      };
+      if current_work != expected_new {
+        return Err(
+          "file changed since the diff was loaded — reload the diff and try again"
+            .to_string(),
+        );
+      }
+    }
+    HunkDirection::Unstage => {
+      if !has_head(&repo) {
+        return Err(
+          "nothing committed yet — unstage the whole file instead".to_string(),
+        );
+      }
+      let current_head = read_head_blob(&repo, &path_norm)?;
+      if current_head != expected_new {
+        return Err(
+          "HEAD moved since the diff was loaded — reload the diff and try again"
+            .to_string(),
+        );
+      }
+    }
+  }
+
+  // The diff the hunks come from. Both directions must leave the *index
+  // content* on the patch's old side, because the patch is applied to the
+  // index.
+  let diff = match direction {
+    HunkDirection::Stage => {
+      let mut opts = DiffOptions::new();
+      opts.pathspec(&path_norm);
+      repo
+        .diff_index_to_workdir(Some(&index), Some(&mut opts))
+        .map_err(|e| e.to_string())?
+    }
+    HunkDirection::Unstage => {
+      let head_tree = repo
+        .head()
+        .and_then(|h| h.peel_to_tree())
+        .map_err(|e| e.to_string())?;
+      // Snapshot the index as a tree so we can diff index→HEAD — that puts
+      // the current index content on the patch's old side.
+      let index_tree_id = index.write_tree().map_err(|e| e.to_string())?;
+      let index_tree = repo.find_tree(index_tree_id).map_err(|e| e.to_string())?;
+      let mut opts = DiffOptions::new();
+      opts.pathspec(&path_norm);
+      repo
+        .diff_tree_to_tree(Some(&index_tree), Some(&head_tree), Some(&mut opts))
+        .map_err(|e| e.to_string())?
+    }
+  };
+
+  let (patch_text, hits) = build_patch_for_range(
+    &diff, old_start, old_end, new_start, new_end,
+  )?;
+  if hits == 0 {
+    return Err(
+      "Couldn't find that change anymore — reload the diff and try again"
+        .to_string(),
+    );
+  }
+
+  let patch = git2::Diff::from_buffer(patch_text.as_bytes())
+    .map_err(|e| format!("failed to rebuild the change: {e}"))?;
+  repo
+    .apply(&patch, git2::ApplyLocation::Index, None)
+    .map_err(|e| {
+      if e.message().contains("does not apply") {
+        "The change doesn't line up with the current file anymore — reload the diff and try again"
+          .to_string()
+      } else {
+        format!("Couldn't apply the change: {e}")
+      }
+    })?;
+  Ok(hits)
+}
+
+/// Stage the hunk(s) overlapping a selected change of `path` — the diff
+/// view's per-change "Stage change".
+///
+/// `old_start`/`old_end` are 1-based inclusive bounds on the staged (index)
+/// side, `new_start`/`new_end` the same on the working-tree side; an empty
+/// range is encoded as `end == start - 1`. `expected_old`/`expected_new`
+/// are the exact texts the diff view rendered (index side / workdir side)
+/// and guard against stale ranges.
+#[tauri::command]
+pub fn git_stage_lines(
+  root: String,
+  path: String,
+  old_start: usize,
+  old_end: usize,
+  new_start: usize,
+  new_end: usize,
+  expected_old: String,
+  expected_new: String,
+) -> Result<u32, String> {
+  apply_hunk_range(
+    &root, &path,
+    old_start, old_end, new_start, new_end,
+    &expected_old, &expected_new,
+    HunkDirection::Stage,
+  )
+}
+
+/// Unstage the hunk(s) overlapping a selected change of `path` — the diff
+/// view's per-change "Unstage change" on the staged (HEAD→index) diff.
+///
+/// On the staged diff view the *original* side is HEAD and the *modified*
+/// side is the index — callers therefore pass the index-side range as
+/// `old_*` bounds and the HEAD-side range as `new_*` bounds.
+#[tauri::command]
+pub fn git_unstage_lines(
+  root: String,
+  path: String,
+  old_start: usize,
+  old_end: usize,
+  new_start: usize,
+  new_end: usize,
+  expected_old: String,
+  expected_new: String,
+) -> Result<u32, String> {
+  apply_hunk_range(
+    &root, &path,
+    old_start, old_end, new_start, new_end,
+    &expected_old, &expected_new,
+    HunkDirection::Unstage,
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Command 7: git_commit
 // ---------------------------------------------------------------------------
 
@@ -4009,6 +4297,227 @@ mod tests {
     assert!(err.contains("range"));
 
     fs::remove_dir_all(&dir).ok();
+  }
+
+  // -- git_stage_lines / git_unstage_lines tests ------------------------------
+
+  /// A committed 20-line file with two far-apart working-tree edits (line 2
+  /// and line 18), so the diff has two separate hunks.
+  fn two_hunk_repo() -> (PathBuf, String, String, String) {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    let base: String = (1..=20).map(|n| format!("{n}\n")).collect();
+    fs::write(dir.join("f.txt"), &base).unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    let mut work = base.clone();
+    work = work.replacen("2\n", "TWO\n", 1);
+    work = work.replacen("18\n", "EIGHTEEN\n", 1);
+    fs::write(dir.join("f.txt"), &work).unwrap();
+    (dir, root, base, work)
+  }
+
+  #[test]
+  fn test_git_stage_lines_stages_one_of_two_changes() {
+    let (dir, root, base, work) = two_hunk_repo();
+
+    // Stage only the first change (workdir/original region around line 2).
+    let hits = git_stage_lines(
+      root.clone(), "f.txt".into(),
+      1, 4, 1, 4,
+      base.clone(), work.clone(),
+    ).unwrap();
+    assert_eq!(hits, 1);
+
+    // The file now has BOTH staged and unstaged modifications.
+    let status = git_status(root.clone()).unwrap();
+    let f = status.files.iter().find(|f| f.path == "f.txt").unwrap();
+    assert!(f.staged.is_some());
+    assert!(f.unstaged.is_some());
+
+    // Index got "TWO" but not "EIGHTEEN"; workdir still has both.
+    let repo = git2::Repository::open(&dir).unwrap();
+    let idx = read_index_blob(&repo, "f.txt").unwrap();
+    assert!(idx.contains("TWO"));
+    assert!(!idx.contains("EIGHTEEN"));
+    assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), work);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_unstage_lines_roundtrip() {
+    let (dir, root, base, work) = two_hunk_repo();
+
+    // Stage both hunks (whole overlap), then unstage only the first.
+    git_stage_lines(
+      root.clone(), "f.txt".into(),
+      1, 20, 1, 20,
+      base.clone(), work.clone(),
+    ).unwrap();
+    let repo = git2::Repository::open(&dir).unwrap();
+    let staged_view_modi = read_index_blob(&repo, "f.txt").unwrap();
+    assert_eq!(staged_view_modi, work);
+    drop(repo);
+
+    let status = git_status(root.clone()).unwrap();
+    let f = status.files.iter().find(|f| f.path == "f.txt").unwrap();
+    assert!(f.staged.is_some());
+    assert!(f.unstaged.is_none());
+
+    // On the staged diff view: *modified* (index) side as old_*, *original*
+    // (HEAD) side as new_* bounds.
+    let hits = git_unstage_lines(
+      root.clone(), "f.txt".into(),
+      1, 4, 1, 4,
+      work.clone(), base.clone(),
+    ).unwrap();
+    assert_eq!(hits, 1);
+
+    let status = git_status(root.clone()).unwrap();
+    let f = status.files.iter().find(|f| f.path == "f.txt").unwrap();
+    assert!(f.staged.is_some());
+    assert!(f.unstaged.is_some());
+    let repo = git2::Repository::open(&dir).unwrap();
+    let idx = read_index_blob(&repo, "f.txt").unwrap();
+    assert!(!idx.contains("TWO"));
+    assert!(idx.contains("EIGHTEEN"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_stage_lines_pure_insertion_with_empty_original_range() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    fs::write(dir.join("f.txt"), "a\nd\n").unwrap();
+    stage_file(&repo, "f.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    let work = "a\nb\nc\nd\n".to_string();
+    fs::write(dir.join("f.txt"), &work).unwrap();
+
+    // Empty original range (oe == os - 1): "inserted after line 1".
+    let hits = git_stage_lines(
+      root.clone(), "f.txt".into(),
+      2, 1, 2, 3,
+      "a\nd\n".into(), work.clone(),
+    ).unwrap();
+    assert_eq!(hits, 1);
+
+    let status = git_status(root.clone()).unwrap();
+    let f = status.files.iter().find(|f| f.path == "f.txt").unwrap();
+    assert!(f.staged.is_some());
+    assert!(f.unstaged.is_none());
+    let repo = git2::Repository::open(&dir).unwrap();
+    assert_eq!(read_index_blob(&repo, "f.txt").unwrap(), work);
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_stage_lines_stale_workdir_content_rejected() {
+    let (dir, root, base, _work) = two_hunk_repo();
+    // Lie about the workdir text → stale-range guard must refuse.
+    let err = git_stage_lines(
+      root.clone(), "f.txt".into(),
+      1, 4, 1, 4,
+      base, "tampered\n".into(),
+    ).unwrap_err();
+    assert!(err.contains("changed since the diff was loaded"));
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_stage_lines_no_overlap_rejected() {
+    let (dir, root, base, work) = two_hunk_repo();
+    // Pick a line range in untouched middle territory (lines 8-12).
+    let err = git_stage_lines(
+      root.clone(), "f.txt".into(),
+      8, 12, 8, 12,
+      base, work,
+    ).unwrap_err();
+    assert!(err.contains("Couldn't find"));
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_stage_lines_locked_during_conflict() {
+    let (dir, root) = make_conflict_repo();
+    let err = git_stage_lines(
+      root.clone(), "conflict.txt".into(),
+      1, 1, 1, 1,
+      "main side\n".into(), "main side\n".into(),
+    ).unwrap_err();
+    assert!(err.contains("Conflict Mode"));
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  #[test]
+  fn test_git_stage_lines_stale_index_content_rejected() {
+    let (dir, root, _base, work) = two_hunk_repo();
+    // Lie about the index-side text → stale-range guard must refuse.
+    let err = git_stage_lines(
+      root.clone(), "f.txt".into(),
+      1, 4, 1, 4,
+      "tampered\n".into(), work,
+    ).unwrap_err();
+    assert!(err.contains("staged content changed since the diff was loaded"));
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_unstage_lines_stale_head_content_rejected() {
+    let (dir, root, base, work) = two_hunk_repo();
+    git_stage_lines(
+      root.clone(), "f.txt".into(),
+      1, 20, 1, 20,
+      base.clone(), work.clone(),
+    ).unwrap();
+    // Lie about the HEAD-side text → stale-range guard must refuse.
+    let err = git_unstage_lines(
+      root.clone(), "f.txt".into(),
+      1, 4, 1, 4,
+      work, "tampered\n".into(),
+    ).unwrap_err();
+    assert!(err.contains("HEAD moved since the diff was loaded"));
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_stage_lines_matches_exact_overlap() {
+    // Exact overlap on the old side.
+    assert!(hunk_matches(2, 4, 9, 9, 1, 5, 1, 5));
+    // ...and on the new side only.
+    assert!(hunk_matches(9, 8, 2, 4, 1, 5, 1, 5));
+  }
+
+  #[test]
+  fn test_git_stage_lines_matches_empty_selection_point() {
+    // Empty selection (insertion point, end = start - 1) inside the hunk.
+    assert!(hunk_matches(3, 2, 9, 8, 1, 5, 1, 5));
+  }
+
+  #[test]
+  fn test_git_stage_lines_matches_edge_tolerance() {
+    // Just outside both ranges still matches (each range widens by ±1, so
+    // the effective gap threshold is two lines).
+    assert!(hunk_matches(6, 6, 9, 8, 1, 5, 1, 5));
+    assert!(hunk_matches(7, 7, 9, 8, 1, 5, 1, 5));
+  }
+
+  #[test]
+  fn test_git_stage_lines_rejects_far_range() {
+    // Three lines outside the hunk does not match.
+    assert!(!hunk_matches(8, 8, 9, 8, 1, 5, 1, 5));
+  }
+
+  #[test]
+  fn test_git_stage_lines_matches_insertion_hunk() {
+    // Pure-insertion hunk (old side zero-length) matches a nearby point.
+    assert!(hunk_matches(2, 1, 3, 4, 2, 0, 3, 2));
   }
 
   // -- Conflict primitives (Git Experience Chunk 1) ------------------------

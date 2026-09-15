@@ -223,6 +223,38 @@ export async function gitDiscardLines(root: string, path: string, args: DiscardL
   });
 }
 
+export interface HunkRangeArgs {
+  /** 1-based inclusive bounds on the INDEX side (empty range: end = start - 1). */
+  oldStart: number;
+  oldEnd: number;
+  /** 1-based inclusive bounds on the OTHER side — workdir when staging,
+   *  HEAD when unstaging (empty range: end = start - 1). */
+  newStart: number;
+  newEnd: number;
+  /** Exact texts the diff view rendered — index side / other side. The
+   *  backend refuses stale content instead of patching wrong lines. */
+  expectedOld: string;
+  expectedNew: string;
+}
+
+/** Stage the hunk(s) overlapping one change block of the working-tree diff
+ *  (`git apply --cached` equivalent, pure git2). Returns hunks applied.
+ *  Pass the diff view's ranges: old_* = original (index) side, new_* =
+ *  modified (workdir) side. Browser dev: mock success. */
+export async function gitStageLines(root: string, path: string, args: HunkRangeArgs): Promise<number> {
+  if (!isTauri()) return 1;
+  return invoke<number>("git_stage_lines", { root, path, ...args });
+}
+
+/** Unstage the hunk(s) overlapping one change block of the staged
+ *  (HEAD→index) diff. On the staged diff view the original side is HEAD and
+ *  the modified side is the index — pass the MODIFIED-side range as old_*
+ *  and the ORIGINAL-side range as new_*. Browser dev: mock success. */
+export async function gitUnstageLines(root: string, path: string, args: HunkRangeArgs): Promise<number> {
+  if (!isTauri()) return 1;
+  return invoke<number>("git_unstage_lines", { root, path, ...args });
+}
+
 export async function gitCommit(root: string, message: string): Promise<string> {
   if (!isTauri()) return "0123456789abcdef0123456789abcdef01234567";
   return invoke<string>("git_commit", { root, message });

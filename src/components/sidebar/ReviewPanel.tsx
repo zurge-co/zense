@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { GitBranch, Sparkles, Bug, Check, CheckCircle2, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw, AlertTriangle, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { GitBranch, Sparkles, Bug, Check, CheckCircle2, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw, AlertTriangle, Upload, ChevronDown } from "lucide-react";
 import { gitPush } from "../../lib/git";
 import { errMessage } from "../../lib/errors";
 import { generateCommitMessage } from "../../lib/commitMessage";
@@ -9,6 +9,7 @@ import { useUIStore } from "../../store/uiStore";
 import { statusColor } from "../../lib/statusColor";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
+import { BranchMenu } from "../layout/BranchMenu";
 
 export function ReviewPanel() {
   const { openDiff, openFile, workspacePath } = useUIStore();
@@ -25,6 +26,9 @@ export function ReviewPanel() {
   /** Push-from-Review state: in-flight push + last result (ok = accent, err = danger). */
   const [pushing, setPushing] = useState(false);
   const [pushFeedback, setPushFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+  /** Branch dropdown: the branch name is a button; the menu is anchored to it. */
+  const branchRef = useRef<HTMLButtonElement>(null);
+  const [branchMenu, setBranchMenu] = useState<{ top: number; left: number } | null>(null);
 
   /** Push without leaving the panel — same friendly GitOpResult as the BranchMenu. */
   const doPush = async () => {
@@ -96,7 +100,20 @@ export function ReviewPanel() {
   return (
     <div className="flex flex-col gap-2 p-2">
       <div className="flex items-center justify-between rounded border border-border bg-base px-2 py-1.5">
-        <span className="flex items-center gap-1.5 text-[12.5px] text-fg">
+        <button
+          ref={branchRef}
+          disabled={status.notARepo}
+          title={
+            status.notARepo
+              ? undefined
+              : "Git branches — fetch, pull, switch branch, or create a new one (no terminal needed)"
+          }
+          onClick={() => {
+            const rect = branchRef.current?.getBoundingClientRect();
+            if (rect) setBranchMenu({ top: rect.bottom + 4, left: rect.left });
+          }}
+          className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
+        >
           <GitBranch size={13} className="text-fg-muted" />
           {branchInfo.branch ?? (branchInfo.detached ? "detached HEAD" : "main")}
           {(branchInfo.ahead > 0 || branchInfo.behind > 0) && (
@@ -105,7 +122,8 @@ export function ReviewPanel() {
               {branchInfo.behind > 0 && ` ↓${branchInfo.behind}`}
             </span>
           )}
-        </span>
+          {!status.notARepo && <ChevronDown size={12} className="text-fg-muted" />}
+        </button>
         <span className="flex items-center gap-0.5">
           {!status.notARepo && (
             <button
@@ -425,6 +443,10 @@ export function ReviewPanel() {
 
       {menu && (
         <ContextMenu items={menu.items} position={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)} />
+      )}
+
+      {branchMenu && (
+        <BranchMenu onClose={() => setBranchMenu(null)} anchorStyle={{ top: branchMenu.top, left: branchMenu.left }} />
       )}
 
       {resetTarget && (
