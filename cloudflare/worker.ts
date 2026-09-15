@@ -3,7 +3,7 @@
  * Zense desktop app, all served by one worker in front of one R2 bucket.
  *
  * Routes:
- *   GET /                  → landing page (roadmap + install + release notes),
+ *   GET /                  → landing page (showcase + install + changelog),
  *                            served from the R2 object "landing.html"
  *                            (built by scripts/build-landing.mjs, uploaded by
  *                             scripts/publish-update.mjs on every release)
@@ -21,8 +21,8 @@
  * refresh it — new roadmap/notes — without redeploying the worker:
  *   node scripts/build-landing.mjs   # render cloudflare/landing.html + RELEASE_NOTES.md
  *   bunx wrangler r2 object put zense-releases/landing.html --file target-update/landing.html
- * Landing-page theme mirrors the app itself — see design.md (base #0d0d0d,
- * panel #1a1a1a, accent #00c55a, gradient #00c55a→#6cdd25→#facd04).
+ * Landing-page theme mirrors the app itself — see design.md (base #09090B,
+ * panel #141418, accent #00c55a, gradient #00c55a→#6cdd25→#facd04).
  */
 
 export interface Env {
@@ -100,7 +100,7 @@ export default {
       return new Response("Method not allowed", { status: 405 });
     }
 
-    // Landing page — built per release (roadmap + install + release notes).
+    // Landing page — built per release (showcase + install + changelog).
     if (path === "/" || path === "") {
       return serveObject(env, "landing.html", "public, max-age=300", false);
     }
