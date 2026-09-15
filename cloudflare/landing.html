@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zense — เครื่องมือคุมโค้ดสำหรับยุคที่ AI เป็นคนเขียน</title>
+<meta name="description" content="Zense ให้คนที่ไม่ใช่โปรแกรมเมอร์ ดูแลงานที่ AI เขียนให้ได้อย่างมั่นใจ — ดูประวัติ รีวิว และปล่อยงาน ครบในที่เดียว ดาวน์โหลดฟรีสำหรับ macOS">
+<meta property="og:title" content="Zense — แดชบอร์ดคุมโค้ดของคุณในยุคที่ AI เป็นคนเขียน">
+<meta property="og:description" content="จัดการเวอร์ชัน รีวิวก่อนส่งมอบ และเชื่อม AI ทุกตัว ในภาษาที่อ่านรู้เรื่อง">
+<meta property="og:image" content="https://zense.zurge.co/shots/workspace.png">
+<link rel="icon" href="{{FAVICON}}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --base:#0d0d0d; --panel:#1a1a1a; --fg:#e8e8e8; --fg-muted:#888888;
+    --accent:#00c55a; --lime:#6cdd25; --gold:#facd04;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --brand:linear-gradient(135deg,#00c55a 0%,#6cdd25 55%,#facd04 100%);
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{font-family:"Noto Sans Thai",system-ui,-apple-system,sans-serif;background:var(--base);color:var(--fg);
+    line-height:1.8;font-weight:400;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  ::selection{background:rgba(0,197,90,.3)}
+
+  #progress{position:fixed;top:0;left:0;height:2px;width:0%;background:var(--brand);z-index:100}
+
+  nav{position:fixed;inset:0 0 auto 0;z-index:50;background:rgba(13,13,13,.8);
+    backdrop-filter:saturate(1.4) blur(20px);border-bottom:1px solid var(--border)}
+  .nav-inner{max-width:980px;margin:0 auto;display:flex;align-items:center;height:52px;padding:0 24px;gap:32px}
+  .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--fg)}
+  .brand svg{height:20px;width:20px;display:block}
+  .brand span{font-size:14px;font-weight:600;letter-spacing:.01em}
+  .nav-links{margin-left:auto;display:flex;gap:26px;align-items:center}
+  .nav-links a{font-size:12.5px;color:var(--fg-muted);text-decoration:none;transition:color .2s}
+  .nav-links a:hover{color:var(--fg)}
+  .nav-links a.cta-mini{color:#031208;background:var(--accent);border-radius:99px;padding:5px 14px;font-weight:600}
+  .nav-links a.cta-mini:hover{filter:brightness(1.1);color:#031208}
+  @media(max-width:720px){.nav-links a:not(.cta-mini){display:none}}
+
+  main{max-width:980px;margin:0 auto;padding:0 24px}
+
+  .hero{padding:160px 0 88px;border-bottom:1px solid var(--border)}
+  .eyebrow{font-size:13px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+    background:var(--brand);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero h1{font-size:clamp(38px,6.4vw,72px);font-weight:700;line-height:1.14;letter-spacing:-.02em;margin-top:18px}
+  .hero .lede{font-size:clamp(16px,2vw,19px);color:var(--fg-muted);max-width:620px;margin-top:22px;font-weight:300}
+  .hero-cta{display:flex;gap:12px;margin-top:36px;flex-wrap:wrap}
+  .btn{display:inline-block;padding:13px 24px;border-radius:12px;font-size:15px;font-weight:600;text-decoration:none;transition:.2s}
+  .btn-primary{background:var(--accent);color:#031208}
+  .btn-primary:hover{filter:brightness(1.12)}
+  .btn-outline{border:1px solid var(--border-strong);color:var(--fg);background:var(--panel)}
+  .btn-outline:hover{border-color:rgba(255,255,255,.25)}
+  .ver-line{color:var(--fg-muted);font-size:12.5px;margin-top:16px}
+  .ver-line code{font-family:var(--mono);color:var(--accent);font-size:12px}
+  .hero-meta{display:flex;margin-top:56px;border-top:1px solid var(--border)}
+  .hero-meta div{flex:1;padding:20px 0;border-right:1px solid var(--border)}
+  .hero-meta div+div{padding-left:24px}
+  .hero-meta div:last-child{border-right:none}
+  .hero-meta b{display:block;font-size:30px;font-weight:600;letter-spacing:-.01em}
+  .hero-meta span{font-size:12.5px;color:var(--fg-muted)}
+  @media(max-width:640px){.hero-meta{flex-direction:column}.hero-meta div{border-right:none;border-bottom:1px solid var(--border);padding-left:0!important}}
+
+  section{padding:96px 0;border-bottom:1px solid var(--border)}
+  .sec-label{font-size:13px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--fg-muted)}
+  .sec-label .n{color:var(--accent)}
+  h2{font-size:clamp(26px,4vw,40px);font-weight:700;letter-spacing:-.015em;line-height:1.25;margin-top:10px}
+  .sec-sub{color:var(--fg-muted);max-width:560px;margin-top:12px;font-size:15.5px;font-weight:300}
+
+  /* ── install ── */
+  .install-steps{margin-top:56px}
+  .istep{display:flex;gap:24px;padding:30px 0;border-top:1px solid var(--border)}
+  .istep:last-child{border-bottom:1px solid var(--border)}
+  .istep .n{font-size:26px;font-weight:300;color:var(--accent);font-variant-numeric:tabular-nums;flex-shrink:0;width:34px}
+  .istep h3{font-size:17px;font-weight:600}
+  .istep p{font-size:14px;color:var(--fg-muted);margin-top:4px;font-weight:300;max-width:640px}
+  .istep .btns{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+  .istep .btns .btn{padding:10px 18px;font-size:14px}
+  .cmdline{margin-top:12px;background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;font-family:var(--mono);font-size:13px;overflow-x:auto;white-space:nowrap;max-width:640px}
+  .note{margin-top:26px;padding:18px 20px;border:1px solid var(--border-strong);border-radius:12px;
+    font-size:13.5px;color:var(--fg-muted);max-width:640px;font-weight:300}
+  .note b{color:var(--fg);font-weight:500}
+
+  /* ── release notes ── */
+  .rel-list{margin-top:56px}
+  .rel{padding:28px 0;border-top:1px solid var(--border)}
+  .rel:last-child{border-bottom:1px solid var(--border)}
+  .rel h3{font-size:17px;font-weight:600;display:flex;align-items:center;gap:12px}
+  .rel h3 .tag{font-size:11.5px;font-weight:600;color:#031208;background:var(--accent);border-radius:99px;padding:2px 10px;letter-spacing:.04em}
+  .rel ul{margin-top:12px;padding-left:20px}
+  .rel li{font-size:14px;color:var(--fg-muted);font-weight:300;margin-bottom:8px;max-width:720px}
+  .rel li b,.rel li strong{color:var(--fg);font-weight:500}
+  .rel li code{font-family:var(--mono);font-size:12px;background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:1px 6px}
+  details.rel summary{cursor:pointer;list-style:none}
+  details.rel summary::-webkit-details-marker{display:none}
+  details.rel summary h3{display:inline-flex}
+  details.rel summary .hint{font-size:12.5px;color:var(--fg-muted);margin-left:auto}
+  details.rel[open] summary .hint::after{content:" · หุบ"}
+
+  .lane-list{margin-top:56px;display:grid;grid-template-columns:1fr 1fr;column-gap:56px}
+  .lane-item{display:flex;gap:20px;padding:26px 0;border-top:1px solid var(--border)}
+  .lane-item .idx{font-size:13px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums;padding-top:3px;flex-shrink:0}
+  .lane-item h3{font-size:17px;font-weight:600}
+  .lane-item p{font-size:14px;color:var(--fg-muted);margin-top:4px;font-weight:300}
+  @media(max-width:640px){.lane-list{grid-template-columns:1fr}.lane-item:last-child{border-bottom:1px solid var(--border)}}
+
+  .principle{margin-top:64px;padding:36px 0 0;border-top:1px solid var(--border)}
+  .principle p.big{font-size:clamp(19px,2.6vw,24px);font-weight:600;letter-spacing:-.01em;line-height:1.5;max-width:760px}
+  .principle p.big em{font-style:normal;background:var(--brand);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .principle p.small{color:var(--fg-muted);font-size:14.5px;margin-top:14px;max-width:640px;font-weight:300}
+
+  .tl{margin-top:64px;position:relative;padding-left:40px}
+  .tl::before{content:"";position:absolute;left:6px;top:10px;bottom:10px;width:1px;background:var(--border-strong)}
+  .wave{position:relative;padding:0 0 64px}
+  .wave:last-child{padding-bottom:0}
+  .wave .dot{position:absolute;left:-40px;top:8px;width:13px;height:13px;border-radius:50%;
+    background:var(--base);border:2px solid var(--pc,#6cdd25)}
+  .wave .dot::after{content:"";position:absolute;inset:2.5px;border-radius:50%;background:var(--pc,#6cdd25)}
+  .w-kicker{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .w-num{font-size:12.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--pc,#6cdd25);font-variant-numeric:tabular-nums}
+  .w-flag{font-size:12px;color:var(--fg-muted);border:1px solid var(--border-strong);border-radius:99px;padding:2px 10px}
+  .w-flag.key{color:var(--gold);border-color:rgba(250,205,4,.3)}
+  .wave h3{font-size:clamp(19px,2.4vw,23px);font-weight:600;letter-spacing:-.01em;margin-top:10px;line-height:1.45}
+  .wave p{color:var(--fg-muted);font-size:15px;margin-top:10px;max-width:640px;font-weight:300}
+  .wave p b{color:var(--fg);font-weight:500}
+  .w-detail{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  .w-detail span{font-size:12.5px;color:var(--fg-muted);background:var(--panel);border:1px solid var(--border);border-radius:99px;padding:4px 12px}
+  .wave.hl .dot{border-color:var(--gold)}
+  .wave.hl .dot::after{background:var(--gold)}
+  .wave.hl{background:linear-gradient(180deg,rgba(250,205,4,.05),rgba(250,205,4,0));margin-left:-40px;padding-left:40px;border-radius:8px}
+  @media(min-width:720px){.wave.hl{margin-left:-64px;padding-left:64px}}
+
+  .no-list{margin-top:56px}
+  .no-item{display:flex;gap:20px;padding:22px 0;border-top:1px solid var(--border)}
+  .no-item:last-child{border-bottom:1px solid var(--border)}
+  .no-item .x{color:var(--fg-muted);font-weight:300;flex-shrink:0;padding-top:2px}
+  .no-item h3{font-size:15.5px;font-weight:500;color:var(--fg)}
+  .no-item p{font-size:13.5px;color:var(--fg-muted);margin-top:2px;font-weight:300}
+
+  .outro{padding:120px 0;text-align:center;border-bottom:1px solid var(--border)}
+  .outro h2{font-size:clamp(28px,4.6vw,44px);font-weight:700;letter-spacing:-.02em;line-height:1.3}
+  .outro h2 em{font-style:normal;background:var(--brand);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .outro p{color:var(--fg-muted);font-size:15px;margin-top:18px;font-weight:300}
+  .outro .btn{margin-top:32px}
+
+  footer{padding:32px 0 48px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  footer .fbrand{display:flex;align-items:center;gap:9px;color:var(--fg-muted);font-size:13px;text-decoration:none}
+  footer svg{height:16px;width:16px;opacity:.8}
+  footer small{color:#555;font-size:12.5px}
+  footer small a{color:var(--fg-muted)}
+
+  .rv{opacity:0;transform:translateY(12px);transition:opacity .8s ease,transform .8s ease}
+  .rv.in{opacity:1;transform:none}
+  @media(prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+
+<nav>
+  <div class="nav-inner">
+    <a class="brand" href="#top">{{LOGO}}<span>Zense</span></a>
+    <div class="nav-links">
+      <a href="#whats-new">มีอะไรใหม่</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#scope">ขอบเขต</a>
+      <a href="https://zurge.co">zurge.co</a>
+      <a class="cta-mini" href="#install">ติดตั้งฟรี</a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+
+  <!-- ═══════ HERO ═══════ -->
+  <header class="hero">
+    <div class="eyebrow rv">ฟรีสำหรับ macOS · Local-first</div>
+    <h1 class="rv">เครื่องมือคุมโค้ด<br>สำหรับยุคที่ AI เป็นคนเขียน</h1>
+    <p class="lede rv">Zense ให้คนที่ไม่ใช่โปรแกรมเมอร์ ดูแลงานที่ AI เขียนให้ได้อย่างมั่นใจ — ดูประวัติ รีวิว และปล่อยงาน ครบในที่เดียว โดยไม่ต้องพิมพ์คำสั่ง</p>
+    <div class="hero-cta rv">
+      <a class="btn btn-primary" href="/dl/macos-arm64">ดาวน์โหลดสำหรับ Apple&nbsp;Silicon</a>
+      <a class="btn btn-outline" href="/dl/macos-intel">ดาวน์โหลดสำหรับ Intel</a>
+      <a class="btn btn-outline" href="#install">วิธีติดตั้ง</a>
+    </div>
+    <p class="ver-line rv">เวอร์ชันล่าสุด <code>v{{VERSION}}</code> · อัปเดตอัตโนมัติในแอพ</p>
+    <div class="hero-meta rv">
+      <div><b>15</b><span>Waves ในแผนงาน</span></div>
+      <div><b>4</b><span>ระยะ</span></div>
+      <div><b>0</b><span>สิ่งที่ผู้ใช้ต้องตั้งค่าเอง</span></div>
+    </div>
+  </header>
+
+  <!-- ═══════ WHAT'S NEW ═══════ -->
+  <section id="whats-new">
+    <div class="sec-label rv">อัปเดตล่าสุด</div>
+    <h2 class="rv">มีอะไรใหม่</h2>
+    <p class="sec-sub rv">สรุปจาก RELEASE_NOTES.md ทุกครั้งที่ปล่อยเวอร์ชัน — อ่านรู้เรื่องเหมือนกันทั้งในแอพและบนเว็บ</p>
+    <!--RELEASE-NOTES-->
+  </section>
+
+  <!-- ═══════ INSTALL ═══════ -->
+  <section id="install">
+    <div class="sec-label rv">เริ่มใช้งาน</div>
+    <h2 class="rv">ติดตั้งใน 3 ขั้นตอน</h2>
+    <p class="sec-sub rv">แอพ native สำหรับ macOS 12 ขึ้นไป · อัปเดตตัวเองอัตโนมัติ ไม่ต้องมีบัญชี ไม่ผ่าน App Store</p>
+    <div class="install-steps rv">
+      <div class="istep">
+        <span class="n">1</span>
+        <div>
+          <h3>ดาวน์โหลดตามชิปของเครื่อง</h3>
+          <p>ไม่แน่ใจว่าเครื่องใช้ชิปอะไร → เปิดเมนู <b> &gt; About This Mac</b> ถ้าเห็นคำว่า "Chip: Apple M…" คือ Apple&nbsp;Silicon ถ้าเห็น "Processor: Intel" คือ Intel</p>
+          <div class="btns">
+            <a class="btn btn-primary" href="/dl/macos-arm64">Apple&nbsp;Silicon (M1/M2/M3/M4)</a>
+            <a class="btn btn-outline" href="/dl/macos-intel">Intel</a>
+          </div>
+        </div>
+      </div>
+      <div class="istep">
+        <span class="n">2</span>
+        <div>
+          <h3>เปิดไฟล์แล้วลากเข้า Applications</h3>
+          <p>ดับเบิลคลิกไฟล์ .dmg ที่โหลดมา แล้วลากไอคอน Zense ไปวางในโฟลเดอร์ Applications — ถ้าใช้ terminal ถนัด ติดตั้งครบในคำสั่งเดียว:</p>
+          <div class="cmdline">curl -fsSL https://zense.zurge.co/install.sh | bash</div>
+        </div>
+      </div>
+      <div class="istep">
+        <span class="n">3</span>
+        <div>
+          <h3>เปิดใช้งานได้เลย</h3>
+          <p>เลือกโฟลเดอร์โปรเจกต์ของคุณ แล้วเริ่มดูประวัติ รีวิว และสั่งงานได้ทันที แอพจะอัปเดตตัวเองให้เวอร์ชันใหม่อยู่เสมอ</p>
+        </div>
+      </div>
+    </div>
+    <div class="note rv">
+      <b>ครั้งแรก macOS อาจเตือนว่า "เปิดไม่ได้"</b> เพราะแอพยังไม่ได้ลงทะเบียนกับ Apple — ให้คลิกขวาที่ไอคอนแอพแล้วเลือก <b>Open</b> อีกครั้งเท่านั้น (หรือใช้คำสั่ง curl ด้านบนซึ่งจัดการจุดนี้ให้เอง) การอัปเดตครั้งต่อๆ ไปจะไม่โดนเตือนอีก
+    </div>
+  </section>
+
+  <!-- ═══════ LANE ═══════ -->
+  <section id="lane">
+    <div class="sec-label rv">Positioning</div>
+    <h2 class="rv">Zense ทำอะไรให้</h2>
+    <p class="sec-sub rv">Zense ไม่ใช่ที่สั่งงาน AI — ทุกคนใช้ AI ของตัวเองตามที่ถนัด ส่วน Zense ดูแล 6 เรื่องนี้ให้ ซึ่งเป็นสิ่งที่ไม่มีเครื่องมือไหนทำให้คนทั่วไป</p>
+    <div class="lane-list rv">
+      <div class="lane-item"><span class="idx">01</span><div><h3>จัดการเวอร์ชันของงาน</h3><p>บันทึก ย้อนกลับ รวมงาน โดยไม่ต้องพิมพ์คำสั่งใดๆ</p></div></div>
+      <div class="lane-item"><span class="idx">02</span><div><h3>แก้ไขงานเล็กๆ น้อยๆ</h3><p>เปิดไฟล์ แก้ไข และบันทึกได้ทันที</p></div></div>
+      <div class="lane-item"><span class="idx">03</span><div><h3>ตรวจงานก่อนส่งมอบ</h3><p>เช็คทุกจุดเสี่ยงอธิบายเป็นภาษาคน ก่อนปล่อยงานจริง</p></div></div>
+      <div class="lane-item"><span class="idx">04</span><div><h3>จัดการไฟล์และโฟลเดอร์</h3><p>ลากวาง ย้ายของ ได้เหมือนแอพจัดไฟล์ทั่วไป</p></div></div>
+      <div class="lane-item"><span class="idx">05</span><div><h3>ศูนย์กลางเครื่องมือให้ AI</h3><p>AI ตัวไหนก็มาขอใช้ความสามารถของ Zense ได้ อย่างปลอดภัย</p></div></div>
+      <div class="lane-item"><span class="idx">06</span><div><h3>จดจำเจตนาของทุกงาน</h3><p>รู้ย้อนหลังว่าแต่ละงานเริ่มจากอะไร โดยไม่ต้องจดเอง</p></div></div>
+    </div>
+    <div class="principle rv">
+      <p class="big">หลักการเดียวที่อยู่เหนือทุกฟีเจอร์ — <em>เปิดมาแล้วใช้ได้เลย ไม่ต้องตั้งค่าอะไรเลย</em></p>
+      <p class="small">Zense สังเกตสิ่งที่เกิดขึ้นอยู่แล้ว แล้วช่วยเหลืออัตโนมัติ ผู้ใช้ไม่ต้องแก้ไฟล์ตั้งค่า ไม่ต้องเปลี่ยนวิธีทำงาน และไม่ต้องรู้จักคำศัพท์เทคนิค</p>
+    </div>
+  </section>
+
+  <!-- ═══════ ROADMAP ═══════ -->
+  <span id="roadmap"></span>
+  <section id="p1">
+    <div class="sec-label rv">Roadmap · ระยะที่ 1 · <span class="n">Wave 1–4</span></div>
+    <h2 class="rv">ทำระบบเวอร์ชัน<br>ให้ใช้ได้จริงทุกวัน</h2>
+    <p class="sec-sub rv">รากฐานที่คนไม่เคยแตะคำสั่ง git ก็พึ่งพาได้ 100%</p>
+    <div class="tl">
+      <div class="wave rv" style="--pc:#00c55a">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 01</span><span class="w-flag key">เริ่มที่นี่</span></div>
+        <h3>แก้ปัญหางานชนกัน (Conflict) จบในแอพ</h3>
+        <p>เมื่อโค้ดสองส่วนถูกแก้ทับกัน Zense พาไล่แก้ทีละจุดด้วยปุ่มเลือกฝั่งที่ชัดเจน และตรวจซ้ำก่อนยืนยัน — <b>โดยไม่ต้องเปิดโปรแกรมอื่น</b></p>
+        <div class="w-detail"><span>เลือกฝั่งทีละจุด</span><span>นับความคืบหน้า</span><span>ตรวจก่อนรวมงาน</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#2fd05f">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 02</span></div>
+        <h3>ปุ่ม Sync ปุ่มเดียวจบ</h3>
+        <p>ดึงงานล่าสุดลงมา แล้วส่งงานของตัวเองขึ้นไป ครบในคลิกเดียว พร้อมเผยแพร่ branch ใหม่อัตโนมัติ <b>ทุกข้อผิดพลาดอธิบายเป็นภาษาคน</b></p>
+        <div class="w-detail"><span>Fetch → Pull → Push</span><span>Publish branch</span><span>Merge ผ่านเมนู</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#4fda63">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 03</span></div>
+        <h3>พักงานไว้ก่อน และย้อนกลับได้เสมอ</h3>
+        <p>ทำค้างไว้กลางทางก็พักเก็บไว้ชั่วคราวแล้วสลับงานได้ ทำพลาดก็<b>กดย้อนกลับทีละขั้น</b> พร้อมคำอธิบายว่าแต่ละขั้นหมายถึงอะไร</p>
+        <div class="w-detail"><span>Stash</span><span>Undo ทีละขั้น</span><span>แก้งานล่าสุด</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#6cdd25">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 04</span></div>
+        <h3>เห็นประวัติทั้งโปรเจกต์เป็นภาพ</h3>
+        <p>เส้นทางการเปลี่ยนแปลงทั้งหมดวาดเป็นแผนผังสีอ่านง่าย และดูได้ทุกบรรทัดว่า<b>มาจากงานชิ้นไหน เมื่อไหร่</b></p>
+        <div class="w-detail"><span>แผนผัง commit</span><span>ใครเขียนบรรทัดไหน</span><span>ประวัติรายไฟล์</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p2">
+    <div class="sec-label rv">ระยะที่ 2 · <span class="n">Wave 5–7</span></div>
+    <h2 class="rv">แอพสมบูรณ์<br>และพูดภาษาคน</h2>
+    <p class="sec-sub rv">ทุกหน้าจอเป็นข้อมูลจริง จำสถานะให้ครบ และสื่อสารในภาษาที่ทุกคนอ่านรู้เรื่อง</p>
+    <div class="tl">
+      <div class="wave rv" style="--pc:#8fd63a">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 05</span></div>
+        <h3>ทุกอย่างบนหน้าจอเป็นของจริง</h3>
+        <p>ตัวเลขข้อผิดพลาด ตำแหน่งเคอร์เซอร์ แผนผังโค้ด — ไม่มีข้อมูลแกล้งทำเหลืออยู่ และ<b>ลากวางย้ายไฟล์หรือโฟลเดอร์</b>ได้เหมือนแอพจัดไฟล์ทั่วไป</p>
+        <div class="w-detail"><span>Drag &amp; Drop</span><span>แยกหน้าจอแก้ไข</span><span>รู้ทันทีเมื่อไฟล์เปลี่ยน</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#b4d94b">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 06</span></div>
+        <h3>เปิดกลับมา เจอทุกอย่างเหมือนเดิม</h3>
+        <p>หน้าต่าง แท็บ เทอร์มินัล การจัดวาง ทุกอย่างถูกจำไว้ พร้อมระบบตรวจคุณภาพอัตโนมัติเบื้องหลัง<b>กันของพังตั้งแต่ต้นทาง</b></p>
+        <div class="w-detail"><span>จำ session</span><span>ธีมสี</span><span>ระบบทดสอบอัตโนมัติ</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#d9db5c">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 07</span></div>
+        <h3>ทั้งแอพพูดภาษาคน</h3>
+        <p>ประวัติงานสรุปเป็นประโยคที่อ่านรู้เรื่อง ทุกการกระทำอธิบายผลลัพธ์ และมี<b>ช่องสั่งงานด้วยคำพูดธรรมดา</b> เช่น "ส่งงานขึ้น" หรือ "ย้อนของเมื่อวาน"</p>
+        <div class="w-detail"><span>รองรับภาษาไทยเต็มรูปแบบ</span><span>สั่งงานด้วยคำพูด</span><span>จับเวลาทำงานให้เอง</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p3">
+    <div class="sec-label rv">ระยะที่ 3 · <span class="n">Wave 8–12</span></div>
+    <h2 class="rv">จากแอพ<br>สู่ศูนย์กลางที่ AI เชื่อมเข้ามา</h2>
+    <p class="sec-sub rv">เปิดให้ขยายความสามารถ และให้ AI ทุกตัวใช้เครื่องมือของ Zense ได้ — ภายใต้การอนุญาตของผู้ใช้เท่านั้น</p>
+    <div class="tl">
+      <div class="wave rv" style="--pc:#e3d94f">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 08</span></div>
+        <h3>รากฐานระบบเสริมความสามารถ</h3>
+        <p>ติดตั้งความสามารถเพิ่มได้ในอนาคต ทุกชิ้นทำงานใน<b>กรอบนิรภัย</b> แตะข้อมูลได้เฉพาะที่ผู้ใช้อนุญาต — เห็นได้ชัดเจนว่าใครขอสิทธิ์อะไร</p>
+        <div class="w-detail"><span>Extension sandbox</span><span>ระบบขออนุญาต</span><span>เปิด-ปิดได้ทุกเมื่อ</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#edd744">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 09</span></div>
+        <h3>แอพเข้าใจโค้ดลึกขึ้น</h3>
+        <p>เตือนจุดผิดก่อนรัน ช่วยเติมคำสั่ง กระโดดไปดูนิยาม — <b>รองรับภาษาโปรแกรมใดก็ได้</b> ผู้ใช้ติดตั้งเฉพาะภาษาที่ตัวเองใช้</p>
+        <div class="w-detail"><span>ติดตั้งตามภาษาที่ใช้</span><span>เตือนจุดผิดทันที</span><span>ค้นหาเชิงความหมาย</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#f6d538">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 10</span></div>
+        <h3>เปิดเครื่องมือให้ AI ภายนอกใช้</h3>
+        <p>AI ตัวโปรดของผู้ใช้มาขอใช้ความสามารถของ Zense ได้อย่างปลอดภัย — ผู้ใช้<b>เลือกเองว่าอนุญาตอะไร และเห็นตลอดว่าใครทำอะไร</b> ปิดสิทธิ์ได้ทันที</p>
+        <div class="w-detail"><span>ทำงานในเครื่องเท่านั้น</span><span>บันทึกทุกการใช้งาน</span><span>ดูว่า AI กำลังทำอะไร</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#facd04">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 11</span></div>
+        <h3>จดเจตนาของทุกงาน อัตโนมัติ</h3>
+        <p>Zense สังเกตเงียบๆ ว่าแต่ละงานเริ่มจากคำสั่งอะไร ไปแก้ไฟล์ไหน จบตรงไหน — <b>ผู้ใช้ไม่ต้องจด ไม่ต้องตั้งค่า</b> และข้อมูลไม่ออกจากเครื่อง</p>
+        <div class="w-detail"><span>ไม่ต้องตั้งค่า</span><span>ข้อมูลอยู่ในเครื่อง</span><span>นิ่งเงียบ ไม่รบกวน</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#f8bc0d">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 12</span></div>
+        <h3>จุดเชื่อมเดียวสำหรับทุกเครื่องมือ</h3>
+        <p>AI เชื่อมเข้า Zense จุดเดียว แต่ใช้เครื่องมือจากหลายแหล่งได้หมด การอนุญาตทั้งหมดรวมอยู่หน้าเดียว — <b>ไม่ต้องไล่แก้ไฟล์ตั้งค่าของแต่ละ AI</b></p>
+        <div class="w-detail"><span>เชื่อมจุดเดียว</span><span>อนุญาตรวมศูนย์</span><span>เห็นสถานะทุกบริการ</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p4">
+    <div class="sec-label rv">ระยะที่ 4 · <span class="n">Wave 13–15</span></div>
+    <h2 class="rv">AI เขียน<br>มนุษย์ตัดสินใจ</h2>
+    <p class="sec-sub rv">จุดสุดยอดของแผน — ตรวจสอบทุกอย่างด้วยข้อมูลครบมือ ก่อนปล่อยงานจริง</p>
+    <div class="tl">
+      <div class="wave rv" style="--pc:#eeae1e">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 13</span></div>
+        <h3>AI ช่วยอธิบายงานที่ชนกัน</h3>
+        <p>อธิบายทีละจุดว่าเกิดอะไรขึ้น ใครเปลี่ยนฝั่งไหน และ<b>เสนอทางแก้ให้มนุษย์เลือกเท่านั้น</b> — ไม่มีการแก้แทนโดยไม่ได้รับอนุญาต</p>
+        <div class="w-detail"><span>อธิบายทีละจุด</span><span>โชว์ที่มาทั้งสองฝั่ง</span><span>มนุษย์อนุมัติเสมอ</span></div>
+      </div>
+      <div class="wave hl rv" style="--pc:#facd04">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num" style="color:#facd04">Wave 14</span><span class="w-flag key">จุดขายหลัก</span></div>
+        <h3>ปุ่มเดียว: "พร้อมส่งมอบไหม?"</h3>
+        <p>ก่อนปล่อยงาน กดปุ่มเดียวให้ Zense ตรวจทุกจุดเสี่ยง เทียบกับสิ่งที่ตั้งใจไว้ตั้งแต่แรก แล้วตอบเป็นภาษาคนพร้อมพาไปยังจุดที่ต้องแก้ — <b>และออกสรุปการเปลี่ยนแปลงให้คนอื่นอ่านเข้าใจทันที</b> สิ่งที่ยังไม่มีเครื่องมือไหนทำให้คนทั่วไปได้</p>
+        <div class="w-detail"><span>ตรวจครบทุกจุดเสี่ยง</span><span>เทียบกับเจตนาเดิม</span><span>สรุปผลภาษาคน</span><span>ส่งต่อให้ AI แก้ได้</span></div>
+      </div>
+      <div class="wave rv" style="--pc:#d99e2b">
+        <span class="dot"></span>
+        <div class="w-kicker"><span class="w-num">Wave 15</span></div>
+        <h3>งานจุกจิก และเชื่อม GitHub</h3>
+        <p>หยิบบางงานข้าม branch ติดป้ายชื่อเวอร์ชัน ดาวน์โหลดโปรเจกต์ใหม่ เปิด Pull Request — <b>ครบทุกอย่างโดยไม่ต้องแตะบรรทัดคำสั่ง</b></p>
+        <div class="w-detail"><span>Cherry-pick</span><span>ป้ายเวอร์ชัน</span><span>Pull Request</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════ OUT OF SCOPE ═══════ -->
+  <section id="scope">
+    <div class="sec-label rv">Focus</div>
+    <h2 class="rv">และสิ่งที่ตั้งใจไม่ทำ</h2>
+    <p class="sec-sub rv">โฟกัสคือคุณลักษณะ — ตัดสินใจไว้ชัดเจนแล้วว่าอะไรอยู่นอกขอบเขต</p>
+    <div class="no-list rv">
+      <div class="no-item"><span class="x">✕</span><div><h3>ไม่พรีวิวเว็บหรือแอพภายใน Zense</h3><p>ใหญ่เกินไป — จะทำให้หลุดจากการเป็นเครื่องมือคุมโค้ด</p></div></div>
+      <div class="no-item"><span class="x">✕</span><div><h3>ไม่ยืนแทรกกลางระหว่างผู้ใช้กับ AI</h3><p>ทุกคนใช้ agent และ workflow ที่ถนัดของตัวเองได้เต็มที่</p></div></div>
+      <div class="no-item"><span class="x">✕</span><div><h3>ไม่สร้างระบบกันพังที่ซับซ้อน</h3><p>ปุ่มย้อนกลับธรรมดาเพียงพอ — ของเยอะเกินทำให้ใช้ยาก</p></div></div>
+      <div class="no-item"><span class="x">✕</span><div><h3>ไม่เขียนเทสต์หรือเอกสารแทน AI</h3><p>นั่นคืองานของ coding agent — Zense ทำหน้าที่ตรวจสอบ</p></div></div>
+      <div class="no-item"><span class="x">✕</span><div><h3>ไม่ให้ผู้ใช้ต้องตั้งค่าอะไรเลย</h3><p>ทุกข้อมูลเก็บจากการสังเกตอัตโนมัติ ไม่มีไฟล์ config ให้แกะ</p></div></div>
+    </div>
+  </section>
+
+  <!-- ═══════ OUTRO ═══════ -->
+  <section class="outro">
+    <h2 class="rv">AI เขียนโค้ด<br><em>Zense ดูแลให้คุณคุมมันได้</em></h2>
+    <p class="rv">ดาวน์โหลดฟรีวันนี้ สำหรับ macOS</p>
+    <a class="btn btn-primary rv" href="#install">ติดตั้ง Zense</a>
+  </section>
+
+  <footer>
+    <a class="fbrand" href="https://zurge.co">
+      <svg viewBox="0 0 1059.13 1059.13" aria-hidden="true">
+        <rect x="525.577" y="183.834" width="171.446" height="691.462" rx="85.723" ry="85.723" transform="translate(553.504 -277.148) rotate(45)" fill="url(#zg)"/>
+        <circle cx="264.125" cy="548.115" r="85.787" fill="#00c55a"/>
+      </svg>
+      Zense · zurge
+    </a>
+    <small>Local-first · ไม่มีบัญชีผู้ใช้ · ข้อมูลอยู่ในเครื่องของคุณ</small>
+  </footer>
+</main>
+
+<script>
+  addEventListener('scroll',function(){
+    var h=document.documentElement;
+    document.getElementById('progress').style.width=
+      (h.scrollTop/(h.scrollHeight-h.clientHeight)*100)+'%';
+  },{passive:true});
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){
+    if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}
+  })},{threshold:.15});
+  document.querySelectorAll('.rv').forEach(function(el){io.observe(el)});
+</script>
+</body>
+</html>

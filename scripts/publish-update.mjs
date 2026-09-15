@@ -7,8 +7,10 @@
  * What it does:
  *   1. bun tauri build  (signs updater artifacts with the minisign key)
  *   2. Generates latest.json for the Tauri updater
- *   3. Uploads {latest.json, *.app.tar.gz, *.app.tar.gz.sig, *.dmg, install.sh}
- *      to the R2 bucket via wrangler
+ *   3. Builds landing.html (roadmap + release notes via scripts/build-landing.mjs)
+ *   4. Uploads {latest.json, *.app.tar.gz, *.app.tar.gz.sig, *.dmg, install.sh,
+ *      landing.html} to the R2 bucket via wrangler — เว็บ zense.zurge.co
+ *      อัปเดตตัวตาม release ทุกครั้ง (roadmap + โน้ตล่าสุดขึ้นเว็บในตัว)
  *
  * Environment (all optional — sensible defaults are derived from repo config):
  *   ZENSE_DOWNLOAD_URL              public origin of the download worker
@@ -142,6 +144,14 @@ uploads.push(
   [join(outDir, "install.sh"), "install.sh"],
 );
 
+// ── 3.5 Landing page (roadmap + release notes) ────────────────────────────
+console.log(`→ Building landing page (cloudflare/landing.html + RELEASE_NOTES.md)…`);
+execFileSync("node", [join(ROOT, "scripts/build-landing.mjs")], {
+  cwd: ROOT,
+  stdio: "inherit",
+});
+uploads.push([join(outDir, "landing.html"), "landing.html"]);
+
 // ── 4. Upload to R2 ──────────────────────────────────────────────────────
 if (DRY_RUN) {
   console.log("→ --dry-run: would upload:");
@@ -162,3 +172,4 @@ for (const [file, key] of uploads) {
 console.log(`\n✓ Published zense v${version}`);
 console.log(`  Manifest: ${BASE_URL}/latest.json`);
 console.log(`  Install:  curl -fsSL ${BASE_URL}/install.sh | bash`);
+console.log(`  Landing:  ${BASE_URL}/ (roadmap + notes อัปเดตแล้ว)`);

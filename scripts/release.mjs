@@ -17,7 +17,8 @@
  *   5. git tag -a v<version> (message = tag + release notes)
  *   6. git push origin <branch> + the new tag
  *   7. node scripts/publish-update.mjs  (tauri build → latest.json → R2,
- *      NOTES env = release notes)
+ *      NOTES env = release notes) + build-landing.mjs → landing.html
+ *      (roadmap + release notes) ขึ้น R2 → zense.zurge.co อัปเดตตัวอัตโนมัติ
  *
  * Options:
  *   --dry-run        print the plan, change nothing (publish is NOT run)
