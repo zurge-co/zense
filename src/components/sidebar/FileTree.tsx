@@ -13,13 +13,15 @@ import {
   ClipboardPaste,
   Eye,
   Files,
+  Globe,
   Link,
   RefreshCw,
 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { type FileNode } from "../../lib/mockData";
 import { writeClipboardText } from "../../lib/clipboard";
-import { isPreviewablePath } from "../../lib/preview";
+import { isHtmlPath, isPreviewablePath } from "../../lib/preview";
+import { openInBrowser } from "../../lib/fsx";
 import { isTauri } from "../../lib/workspace";
 import { useUIStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
@@ -483,6 +485,23 @@ function TreeNode({
                 label: "Open Preview",
                 icon: Eye,
                 onClick: () => openPreview(menu.node.path),
+              } satisfies ContextMenuItem,
+            ]
+          : []),
+        // .html/.htm additionally get "Open in Browser" — hands the file to
+        // the OS default browser (file://) instead of the in-app preview.
+        ...(menu.node.type === "file" && isHtmlPath(menu.node.path)
+          ? [
+              {
+                id: "open-in-browser",
+                label: "Open in Browser",
+                icon: Globe,
+                onClick: () => {
+                  if (workspacePath) {
+                    openInBrowser(workspacePath, menu.node.path).catch((err) =>
+                      console.error("open in browser failed:", err));
+                  }
+                },
               } satisfies ContextMenuItem,
             ]
           : []),

@@ -15,3 +15,11 @@ export async function readFileRange(
   if (!isTauri()) return getSnippet(path, start, end);
   return invoke<string>("read_file_range", { root, path, start, end });
 }
+
+/** Open a workspace file (e.g. .html) in the system default browser (file://).
+ *  Used by the file-tree right-click "Open in Browser" action. The browser
+ *  dev fallback cannot reach the local filesystem, so no-op. */
+export async function openInBrowser(root: string, path: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("open_in_browser", { root, path });
+}

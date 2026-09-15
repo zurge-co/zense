@@ -176,6 +176,7 @@ pub fn run() {
       fscmd::copy_entry,
       fscmd::import_entries,
       fscmd::move_entries,
+      fscmd::open_in_browser,
       gitcmd::git_status,
       gitcmd::git_branch_info,
       gitcmd::git_diff_summary,

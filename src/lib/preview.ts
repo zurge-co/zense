@@ -28,3 +28,9 @@ export function previewKind(path: string): PreviewKind | null {
 export function isPreviewablePath(path: string): boolean {
   return previewKind(path) !== null;
 }
+
+/** Whether a path is an HTML file — used for the file-tree right-click
+ *  "Open in Browser" action (.html/.htm per KIND_BY_EXT). */
+export function isHtmlPath(path: string): boolean {
+  return previewKind(path) === "html";
+}

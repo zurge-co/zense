@@ -1214,6 +1214,45 @@ pub fn move_entries(
   Ok(moved)
 }
 
+/// Open a workspace file in the system default browser (file:// URL). Used by
+/// the file-tree right-click "Open in Browser" action for .html/.htm files —
+/// the in-app preview stays on "Open Preview". Same `resolve_inside` guard as
+/// the other fs commands, so only files inside the workspace can be handed to
+/// the OS. Spawns detached (fire-and-forget) so the UI never blocks; a missing
+/// opener binary surfaces as an error immediately.
+#[tauri::command]
+pub fn open_in_browser(root: String, path: String) -> Result<(), String> {
+  let full = resolve_inside(&root, &path)?;
+  open_default(&full)
+}
+
+#[cfg(target_os = "macos")]
+fn open_default(full: &std::path::Path) -> Result<(), String> {
+  std::process::Command::new("open")
+    .arg(full)
+    .spawn()
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn open_default(full: &std::path::Path) -> Result<(), String> {
+  std::process::Command::new("cmd")
+    .args(["/C", "start", "", &full.to_string_lossy()])
+    .spawn()
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_default(full: &std::path::Path) -> Result<(), String> {
+  std::process::Command::new("xdg-open")
+    .arg(full)
+    .spawn()
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1887,6 +1926,15 @@ mod tests {
     let dir = temp_ws();
     let root = dir.to_string_lossy().into_owned();
     assert!(append_file(root, "../../etc/zense-test-append".into(), "x".into()).is_err());
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn open_in_browser_rejects_traversal() {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    // Escaping paths must be refused before anything is handed to the OS.
+    assert!(open_in_browser(root.clone(), "../../etc/x.html".into()).is_err());
     fs::remove_dir_all(&dir).ok();
   }
 
