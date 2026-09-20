@@ -33,6 +33,7 @@ import { ConfirmDialog, type ConfirmDialogProps } from "../ConfirmDialog";
 export function SearchPanel() {
   const workspacePath = useUIStore((s) => s.workspacePath);
   const searchFocusNonce = useUIStore((s) => s.searchFocusNonce);
+  const setEditorPanelMode = useUIStore((s) => s.setEditorPanelMode);
   const showHiddenFiles = useWorkspaceStore((s) => s.showHiddenFiles);
 
   const [query, setQuery] = useState("");
@@ -168,7 +169,16 @@ export function SearchPanel() {
   const canReplace = !searching && matches.length > 0;
 
   return (
-    <div className="flex flex-col gap-2 p-2">
+    <div
+      className="flex flex-col gap-2 p-2"
+      // Escape anywhere inside the panel (search/replace/filter inputs,
+      // toggle buttons) leaves search mode — same as clicking the Files tab.
+      // While the replace-all confirm is open, Escape belongs to the dialog
+      // (it cancels the replace), so don't steal it here.
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !confirmReplaceAll) setEditorPanelMode("files");
+      }}
+    >
       {/* Search input + option toggles */}
       <div className="flex items-center gap-1 rounded border border-border bg-base px-2 py-1 focus-within:border-accent">
         <input
