@@ -15,14 +15,40 @@ use tauri::{AppHandle, Emitter, State, Window};
 
 pub const EVT_FS_CHANGED: &str = "fs://changed";
 
-/// Directory segments never reported to the UI.
+/// Git metadata changed (checkout/commit/pull/rebase) — the frontend
+/// refreshes branch info, status and history on this event.
+pub const EVT_GIT_CHANGED: &str = "git://changed";
+
+/// Directory segments never reported to the UI via `fs://changed`. `.git`
+/// stays ignored there; git metadata goes out on `git://changed` instead.
 const IGNORED_DIRS: [&str; 6] = [".git", "node_modules", "target", ".swarm", ".pi", "dist"];
 
-/// Debounce window for batching raw OS events into one `fs://changed`.
+/// Debounce window for batching raw OS events into one `fs://changed` /
+/// `git://changed`.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
 struct WatchEntry {
-  _watcher: RecommendedWatcher, // kept alive for the lifetime of the entry
+  _watcher: RecommendedWatcher,
+  /// Second, narrower watcher on `.git` — None for non-git workspaces and
+  /// gitfile-based worktrees/submodules (a `.git` FILE, kept alive when Some).
+  _git_watcher: Option<RecommendedWatcher>,
+}
+
+/// The `.git` directory to watch for this root, if any. Plain repos have a
+/// `.git` directory; linked worktrees and submodules have a `.git` *file*
+/// (a gitdir pointer), which we deliberately do NOT follow — watching the
+/// real gitdir would leak events from other worktrees sharing it.
+fn git_dir_to_watch(root: &Path) -> Option<std::path::PathBuf> {
+  let d = root.join(".git");
+  d.is_dir().then_some(d)
+}
+
+/// A batched change from one of the two watchers feeding a window.
+enum Batch {
+  /// Workspace files — emitted as `fs://changed`.
+  Fs(Vec<String>),
+  /// Paths under `.git` — emitted as `git://changed`.
+  Git(Vec<String>),
 }
 
 #[derive(Default)]
@@ -48,8 +74,9 @@ pub fn watch_workspace(
     return Err(format!("workspace root is not a directory: {root}"));
   }
 
-  let (tx, rx) = channel::<Vec<String>>();
+  let (tx, rx) = channel::<Batch>();
   let root_for_events = root.clone();
+  let tx_fs = tx.clone();
   let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
     let Ok(event) = res else { return };
     let paths: Vec<String> = event
@@ -66,7 +93,7 @@ pub fn watch_workspace(
       })
       .collect();
     if !paths.is_empty() {
-      tx.send(paths).ok();
+      tx_fs.send(Batch::Fs(paths)).ok();
     }
   })
   .map_err(|e| format!("create watcher: {e}"))?;
@@ -75,28 +102,75 @@ pub fn watch_workspace(
     .watch(&root_path, RecursiveMode::Recursive)
     .map_err(|e| format!("watch workspace: {e}"))?;
 
+  // Second watcher: git metadata only. The main watcher ignores `.git`, so
+  // an external/terminal `git checkout`, commit, pull or rebase otherwise
+  // never reaches the UI and the branch label goes stale. Missing `.git`
+  // (non-git workspace) and gitfile-based worktrees are skipped silently.
+  let git_watcher = match git_dir_to_watch(&root_path) {
+    Some(git_dir) => {
+      let git_root = git_dir.clone();
+      let tx_git = tx.clone();
+      let mut gw = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let Ok(event) = res else { return };
+        let paths: Vec<String> = event
+          .paths
+          .iter()
+          .filter_map(|p| p.strip_prefix(&git_root).ok())
+          .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+          .filter(|rel| !rel.is_empty())
+          .collect();
+        if !paths.is_empty() {
+          tx_git.send(Batch::Git(paths)).ok();
+        }
+      })
+      .map_err(|e| format!("create git watcher: {e}"))?;
+      gw.watch(&git_dir, RecursiveMode::Recursive)
+        .map_err(|e| format!("watch .git: {e}"))?;
+      Some(gw)
+    }
+    None => None,
+  };
+
   {
     let mut guard = mgr.0.lock().map_err(|e| e.to_string())?;
-    guard.insert(label.clone(), WatchEntry { _watcher: watcher });
+    guard.insert(
+      label.clone(),
+      WatchEntry {
+        _watcher: watcher,
+        _git_watcher: git_watcher,
+      },
+    );
   }
 
-  // Debounce thread: batch raw batches into a deduped path list per window.
+  // Debounce thread: batch raw batches into a deduped path list per window,
+  // one pending list per event channel.
   std::thread::spawn(move || {
-    let mut pending: Vec<String> = Vec::new();
+    let mut pending_fs: Vec<String> = Vec::new();
+    let mut pending_git: Vec<String> = Vec::new();
     loop {
       match rx.recv_timeout(DEBOUNCE) {
-        Ok(batch) => pending.extend(batch),
+        Ok(batch) => match batch {
+          Batch::Fs(paths) => pending_fs.extend(paths),
+          Batch::Git(paths) => pending_git.extend(paths),
+        },
         Err(RecvTimeoutError::Timeout) => {
-          if pending.is_empty() {
-            continue;
-          }
-          pending.sort();
-          pending.dedup();
-          let payload = std::mem::take(&mut pending);
-          // A closed window fails emit; stop the thread (entry is dropped
+          // A closed window fails emit; stop the thread (entries are dropped
           // by stop_watch / app teardown).
-          if app.emit_to(&label, EVT_FS_CHANGED, payload).is_err() {
-            break;
+          if !pending_fs.is_empty() {
+            pending_fs.sort();
+            pending_fs.dedup();
+            let payload = std::mem::take(&mut pending_fs);
+            if app.emit_to(&label, EVT_FS_CHANGED, payload).is_err() {
+              break;
+            }
+          }
+          if !pending_git.is_empty() {
+            pending_git.sort();
+            pending_git.dedup();
+            let payload = std::mem::take(&mut pending_git);
+            if app.emit_to(&label, EVT_GIT_CHANGED, payload).is_err() {
+              break;
+            }
           }
         }
         Err(RecvTimeoutError::Disconnected) => break,
@@ -113,4 +187,56 @@ pub fn stop_watch(window: Window, mgr: State<'_, WatchManager>) -> Result<(), St
   let mut guard = mgr.0.lock().map_err(|e| e.to_string())?;
   guard.remove(window.label());
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::fs;
+
+  /// Unique temp root per test (no tempfile dep in this crate).
+  fn temp_root(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+      "zense-watcher-test-{name}-{}-{}",
+      std::process::id(),
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    dir
+  }
+
+  #[test]
+  fn git_dir_watched_when_git_is_a_directory() {
+    let root = temp_root("gitdir");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    assert_eq!(git_dir_to_watch(&root), Some(root.join(".git")));
+    fs::remove_dir_all(&root).ok();
+  }
+
+  #[test]
+  fn git_dir_skipped_when_git_is_a_gitfile() {
+    // Linked worktrees / submodules: .git is a file ("gitdir: ...").
+    // Following it would leak events from other worktrees — skip silently.
+    let root = temp_root("gitfile");
+    fs::write(root.join(".git"), "gitdir: /elsewhere/real/.git").unwrap();
+    assert_eq!(git_dir_to_watch(&root), None);
+    fs::remove_dir_all(&root).ok();
+  }
+
+  #[test]
+  fn git_dir_skipped_when_absent() {
+    let root = temp_root("nogit");
+    assert_eq!(git_dir_to_watch(&root), None);
+    fs::remove_dir_all(&root).ok();
+  }
+
+  #[test]
+  fn is_ignored_still_covers_git_for_fs_events() {
+    assert!(is_ignored(".git"));
+    assert!(is_ignored(".git/HEAD"));
+    assert!(!is_ignored("src/main.rs"));
+  }
 }

@@ -1,7 +1,9 @@
 import { create } from "zustand";
+import { listen } from "@tauri-apps/api/event";
 import { appendZenseTrailer } from "../lib/commitTrailer";
 import { errMessage } from "../lib/errors";
 import { useWorkspaceStore } from "./workspaceStore";
+import { isTauri } from "../lib/workspace";
 import {
   gitStatus,
   gitBranchInfo,
@@ -75,6 +77,11 @@ interface GitState {
 
   /** Full refresh after open/stage/unstage/commit/file save. */
   refresh: (root: string) => Promise<void>;
+  /** Subscribe to the backend's git://changed event (idempotent): checkout,
+   *  commit, pull or rebase done in ANY terminal refreshes branch info,
+   *  status and history — e.g. the branch label in the StatusBar follows
+   *  `git checkout` without a manual refresh. */
+  initExternalWatch: () => void;
   /** Append next 50 commits (infinite scroll). */
   loadMoreCommits: () => Promise<void>;
   stageFile: (path: string) => Promise<void>;
@@ -88,6 +95,14 @@ interface GitState {
 
 /** Incremented per refresh(); stale responses are discarded. */
 let refreshNonce = 0;
+
+/** True once the app-level git://changed listener is attached. */
+let externalWatchSubscribed = false;
+/** Pending debounced refresh triggered by a git://changed burst. */
+let externalRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+/** The backend already debounces watcher events; this extra window collapses
+ *  the multi-burst firework of a big checkout into one refresh. */
+const EXTERNAL_REFRESH_DEBOUNCE_MS = 400;
 
 export const useGitStore = create<GitState>((set, get) => ({
   status: mockGitStatus,
@@ -172,6 +187,25 @@ export const useGitStore = create<GitState>((set, get) => ({
     } finally {
       if (nonce === refreshNonce) set({ loading: false });
     }
+  },
+
+  initExternalWatch: () => {
+    if (!isTauri() || externalWatchSubscribed) return;
+    externalWatchSubscribed = true;
+    void listen<string[]>("git://changed", () => {
+      // Debounce bursts (a checkout touches .git/HEAD, refs, index, …) into
+      // one refresh. Read currentRoot at fire time — a workspace switch
+      // must refresh the NEW workspace, not the one the event started on.
+      if (externalRefreshTimer) clearTimeout(externalRefreshTimer);
+      externalRefreshTimer = setTimeout(() => {
+        externalRefreshTimer = null;
+        const root = get().currentRoot;
+        if (root) void get().refresh(root);
+      }, EXTERNAL_REFRESH_DEBOUNCE_MS);
+    }).catch(() => {
+      // Never let a listener failure kill git watching entirely.
+      externalWatchSubscribed = false;
+    });
   },
 
   loadMoreCommits: async () => {

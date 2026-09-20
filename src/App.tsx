@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useUIStore, tabKey } from "./store/uiStore";
 import { useTerminalStore } from "./store/terminalStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
+import { useGitStore } from "./store/gitStore";
 import { useFocusStore } from "./store/focusStore";
 import { isTauri, openFolderFlow } from "./lib/workspace";
 import { isUntitledPath, openUntitledTab, saveUntitledAs, untitledLabel } from "./lib/untitled";
@@ -96,6 +97,11 @@ function WorkspaceLayout() {
     if (workspacePath) {
       void useWorkspaceStore.getState().loadWorkspace(workspacePath);
       void useFocusStore.getState().load(workspacePath);
+      // Real branch/status/history (not the mock bootstrap) from the start,
+      // then keep following git://changed so a checkout in ANY terminal
+      // updates the branch label without a manual refresh.
+      void useGitStore.getState().refresh(workspacePath);
+      useGitStore.getState().initExternalWatch();
     }
   }, [workspacePath]);
 
