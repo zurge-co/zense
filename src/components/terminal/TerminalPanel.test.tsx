@@ -151,9 +151,14 @@ describe("TerminalPanel.tsx — structural verification (multi-tab)", () => {
     expect(src.includes('display: s.id === activeId ? undefined : "none"')).toBe(true);
   });
 
-  test("restarts the active shell in place (kill backend id + respawn, same tab)", () => {
-    expect(src.includes("restartActive")).toBe(true);
-    expect(src.includes('setActivity("editor")')).toBe(true);
+  test("no top-right restart/back-to-editor buttons (removed from the tab bar)", () => {
+    expect(src.includes("restartActive")).toBe(false);
+    expect(src.includes("RotateCw")).toBe(false);
+    expect(src.includes('title="Restart active shell"')).toBe(false);
+    expect(src.includes('title="Back to editor (⌘`)"')).toBe(false);
+    // Leaving the terminal view still happens via ⌘` / the activity bar
+    // (App.tsx), never via a button inside the panel.
+    expect(src.includes('setActivity("editor")')).toBe(false);
   });
 
   test("workspace switch tears down all sessions and resets to one fresh tab", () => {

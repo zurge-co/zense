@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Plus, RotateCw, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 import { useUIStore } from "../../store/uiStore";
@@ -351,21 +351,6 @@ export function TerminalPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Kill the active session's shell (if any) and spawn a new one in place. */
-  const restartActive = () => {
-    const st = useTerminalStore.getState();
-    const ws = useUIStore.getState().workspacePath;
-    const sid = st.activeId;
-    if (!sid || !ws) return;
-    const ctx = ctxsRef.current.get(sid);
-    if (!ctx || !ctx.backendId) return;
-    const backendId = ctx.backendId;
-    void invoke("pty_kill", { id: backendId }).catch(() => {});
-    backendToSessionRef.current.delete(backendId);
-    ctx.backendId = null;
-    spawnSession(sid, ctx, ws);
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-base">
       {/* ── Tab bar ── */}
@@ -403,22 +388,6 @@ export function TerminalPanel() {
             className="rounded p-1 text-fg-muted transition-colors hover:text-fg"
           >
             <Plus size={12} strokeWidth={1.7} />
-          </button>
-        </div>
-        <div className="flex shrink-0 items-center gap-1 px-2">
-          <button
-            title="Restart active shell"
-            onClick={restartActive}
-            className="rounded p-1 text-fg-muted transition-colors hover:text-fg"
-          >
-            <RotateCw size={12} strokeWidth={1.7} />
-          </button>
-          <button
-            title="Back to editor (⌘`)"
-            onClick={() => useUIStore.getState().setActivity("editor")}
-            className="rounded p-1 text-fg-muted transition-colors hover:text-fg"
-          >
-            <X size={13} strokeWidth={1.7} />
           </button>
         </div>
       </div>
