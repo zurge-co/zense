@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { X, File, FileImage, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle, RotateCcw, Eye } from "lucide-react";
 import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
@@ -15,7 +15,17 @@ import { CompareView } from "./CompareView";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { ConfirmDialog } from "../ConfirmDialog";
 
-export function EditorArea() {
+/** Shown when no tab is open. Caller-overridable: the Review page reuses
+ *  EditorArea as its diff pane and needs diff wording, not "open a file". */
+const DEFAULT_EMPTY_PLACEHOLDER = (
+  <div className="flex flex-1 flex-col items-center justify-center gap-2 text-fg-muted">
+    <Sparkles size={28} strokeWidth={1.2} />
+    <p className="text-sm">Open a file to start exploring</p>
+    <p className="text-[11.5px]">or press ⌘P to quick-open a file</p>
+  </div>
+);
+
+export function EditorArea({ emptyPlaceholder }: { emptyPlaceholder?: ReactNode }) {
   const { openTabs, activeTabKey, setActiveTab, closeTab, closeOtherTabs, closeAllTabs, toggleSplit, closeSplit } = useUIStore();
   const splitTabKey = useUIStore((s) => s.splitTabKey);
   const closeNonce = useUIStore((s) => s.closeActiveTabNonce);
@@ -276,11 +286,7 @@ export function EditorArea() {
           {activeTab ? (
             <TabContent tab={activeTab} showBreadcrumb />
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-fg-muted">
-              <Sparkles size={28} strokeWidth={1.2} />
-              <p className="text-sm">Open a file to start exploring</p>
-              <p className="text-[11.5px]">or press ⌘P to quick-open a file</p>
-            </div>
+            (emptyPlaceholder ?? DEFAULT_EMPTY_PLACEHOLDER)
           )}
         </div>
         {splitTab && (

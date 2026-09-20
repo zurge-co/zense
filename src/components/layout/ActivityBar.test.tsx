@@ -614,4 +614,19 @@ describe("Task 1.3 integration — ActivityBar → SideBar → ReviewPanel", () 
     expect(reviewPanelSrc).toContain("export function ReviewPanel");
     expect(reviewPanelSrc.includes("GitPanel")).toBe(false);
   });
+
+  test("Review page diff pane has its OWN empty placeholder (not the editor's)", () => {
+    const reviewViewSrc = readSrc("src/components/review/ReviewView.tsx");
+    // Overridden empty state with diff wording + diff icon.
+    expect(reviewViewSrc).toContain("emptyPlaceholder");
+    expect(reviewViewSrc).toContain("GitCompareArrows");
+    expect(reviewViewSrc).toContain("Select a changed file to view its diff");
+    // The editor's "open a file" hint must never leak into the review pane.
+    expect(reviewViewSrc.includes("Open a file to start exploring")).toBe(false);
+
+    // EditorArea accepts the override and keeps its editor default intact.
+    const editorAreaSrc = readSrc("src/components/editor/EditorArea.tsx");
+    expect(editorAreaSrc).toContain("emptyPlaceholder");
+    expect(editorAreaSrc).toContain("Open a file to start exploring");
+  });
 });

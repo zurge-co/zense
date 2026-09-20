@@ -1,3 +1,4 @@
+import { GitCompareArrows } from "lucide-react";
 import { ReviewPanel } from "../sidebar/ReviewPanel";
 import { EditorArea } from "../editor/EditorArea";
 import { AiReviewPanel } from "../aiReview/AiReviewPanel";
@@ -16,7 +17,17 @@ export function ReviewView() {
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="min-h-0 flex-1">
-          <EditorArea />
+          {/* The center pane IS a diff viewer here — its empty state must
+              say so, not "open a file to start exploring". */}
+          <EditorArea
+            emptyPlaceholder={
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-fg-muted">
+                <GitCompareArrows size={28} strokeWidth={1.2} />
+                <p className="text-sm">Select a changed file to view its diff</p>
+                <p className="text-[11.5px]">pick a file from the changes list on the left</p>
+              </div>
+            }
+          />
         </div>
         <div className="flex h-64 shrink-0 flex-col border-t border-border bg-panel">
           <AiReviewPanel />
