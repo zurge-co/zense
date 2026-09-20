@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { checkForUpdate, installUpdate } from "../lib/updater";
 import { errMessage } from "../lib/errors";
+import { MarkdownView } from "./MarkdownView";
 
 type Phase = "idle" | "available" | "downloading" | "error";
 
@@ -52,7 +53,7 @@ export function UpdateDialog() {
       onClick={phase === "downloading" ? undefined : () => setPhase("idle")}
     >
       <div
-        className="w-[420px] overflow-hidden rounded-lg border border-border bg-panel shadow-2xl"
+        className="w-[640px] max-w-[calc(100vw-64px)] overflow-hidden rounded-lg border border-border bg-panel shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="border-b border-border px-4 py-3 text-[13px] font-medium text-fg">
@@ -60,7 +61,7 @@ export function UpdateDialog() {
             ? "Update failed"
             : `Update available: v${update.version}`}
         </div>
-        <div className="max-h-56 overflow-y-auto px-4 py-4 text-[12.5px] leading-relaxed text-fg-muted">
+        <div className="max-h-[60vh] overflow-y-auto px-4 py-4 text-[12.5px] leading-relaxed text-fg-muted">
           {phase === "downloading" ? (
             <div>
               <div className="mb-2">Downloading update… {progress}%</div>
@@ -77,7 +78,11 @@ export function UpdateDialog() {
           ) : phase === "error" ? (
             error
           ) : (
-            (update.body ?? "A new version of Zense is ready to install.")
+            <MarkdownView
+              source={
+                update.body ?? "A new version of Zense is ready to install."
+              }
+            />
           )}
         </div>
         {phase !== "downloading" && (
