@@ -101,7 +101,8 @@ function WorkspaceLayout() {
 
   // Lazily mount the terminal on its first visit, then keep it mounted so
   // the PTY session survives activity swaps — unmounting kills the shell
-  // (pty_kill in TerminalPanel's unmount cleanup). While another activity is
+  // (pty_kill in TerminalPanel's unmount cleanup). It renders OUTSIDE the
+  // review/editor branch below: while another activity (incl. review) is
   // selected it is concealed via CSS (absolute + invisible), and its
   // ResizeObserver refits xterm when it becomes visible again.
   const terminalMountedRef = useRef(false);
@@ -115,29 +116,35 @@ function WorkspaceLayout() {
       <ConflictBanner />
       <div className="flex min-h-0 flex-1">
         <ActivityBar />
-        {activity === "review" ? (
-          // Review is a full main-area page (spec v3): changes column +
-          // center diff + bottom findings panel — no sidebar, no chat dock.
-          <ReviewView />
-        ) : (
-          <>
-            {sidebarVisible && <SideBar />}
-            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-              {activity !== "terminal" && <EditorArea />}
-              {terminalMountedRef.current && (
-                <div
-                  className={
-                    activity === "terminal"
-                      ? "flex min-h-0 min-w-0 flex-1 flex-col"
-                      : "invisible absolute inset-0 flex flex-col"
-                  }
-                >
-                  <TerminalPanel />
-                </div>
-              )}
+        {/* SideBar self-hides (returns null) for the terminal/review
+            activities, so no activity gate is needed here. */}
+        {sidebarVisible && <SideBar />}
+        {/* Review and editor views swap inside this one main-area container;
+            the terminal stays mounted at a STABLE position below them for
+            every activity — swapping activities only flips its CSS between
+            visible (flex-1) and concealed (absolute + invisible), so the PTY
+            sessions survive. Mounting it inside an activity branch instead
+            would unmount it on swap and pty_kill_all would kill the shells. */}
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          {activity === "review" ? (
+            // Review is a full main-area page (spec v3): changes column +
+            // center diff + bottom findings panel — no sidebar, no chat dock.
+            <ReviewView />
+          ) : (
+            activity !== "terminal" && <EditorArea />
+          )}
+          {terminalMountedRef.current && (
+            <div
+              className={
+                activity === "terminal"
+                  ? "flex min-h-0 min-w-0 flex-1 flex-col"
+                  : "invisible absolute inset-0 flex flex-col"
+              }
+            >
+              <TerminalPanel />
             </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
       <StatusBar />
       <SettingsModal />
