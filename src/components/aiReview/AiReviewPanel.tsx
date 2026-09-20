@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
-import { Bug, Loader2, ShieldAlert, Sparkles, UserCheck, ChevronDown, ChevronRight } from "lucide-react";
+import { Bug, Loader2, RefreshCw, ShieldAlert, Sparkles, UserCheck, X, ChevronDown, ChevronRight } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
 import { useAiReviewStore, type Finding } from "../../store/aiReviewStore";
+import { useGitStore } from "../../store/gitStore";
 import { useLlmConfigStore } from "../../store/llmConfigStore";
+import { MAX_AUTO_REVIEW_CHUNKS, TooManyChunksError, runAutoReview } from "../../lib/aiReview";
+import { errMessage } from "../../lib/errors";
 import type { FindingCategory } from "../../lib/aiReviewPrompts";
 import { MarkdownView, ThinkingIndicator } from "../MarkdownView";
+import { ConfirmDialog } from "../ConfirmDialog";
 
 const GROUPS: { key: FindingCategory; label: string; icon: typeof Bug }[] = [
   { key: "bug", label: "Bug", icon: Bug },
@@ -21,8 +25,23 @@ const GROUPS: { key: FindingCategory; label: string; icon: typeof Bug }[] = [
  */
 export function AiReviewPanel() {
   const openSettings = useUIStore((s) => s.openSettings);
-  const { findings, running, phase, error, toggleDone } = useAiReviewStore();
+  const workspacePath = useUIStore((s) => s.workspacePath);
+  const { findings, running, phase, error, toggleDone, cancel } = useAiReviewStore();
   const { config, configLoaded, loadConfig } = useLlmConfigStore();
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  /** Over-cap chunk count awaiting the user's confirmation (null = no dialog). */
+  const [tooManyChunks, setTooManyChunks] = useState<number | null>(null);
+
+  const run = async (allowManyChunks = false) => {
+    if (!workspacePath || useAiReviewStore.getState().running) return;
+    setReviewError(null);
+    try {
+      await runAutoReview(workspacePath, { allowManyChunks });
+    } catch (err) {
+      if (err instanceof TooManyChunksError) setTooManyChunks(err.chunks);
+      else setReviewError(errMessage(err));
+    }
+  };
 
   useEffect(() => {
     if (!configLoaded) void loadConfig();
@@ -62,11 +81,35 @@ export function AiReviewPanel() {
             </span>
           )
         )}
+        {running ? (
+          <button
+            title="Stop the review — findings collected so far are kept"
+            onClick={cancel}
+            className="ml-auto flex items-center gap-1 rounded px-1 py-0.5 font-normal normal-case tracking-normal text-fg-muted hover:bg-hover hover:text-fg"
+          >
+            <X size={11} />
+            cancel
+          </button>
+        ) : (
+          <button
+            title="Re-run Auto Review on the staged diff"
+            onClick={() => void run()}
+            className="ml-auto flex items-center gap-1 rounded px-1 py-0.5 font-normal normal-case tracking-normal text-fg-muted hover:bg-hover hover:text-fg"
+          >
+            <RefreshCw size={11} />
+            re-run
+          </button>
+        )}
       </div>
 
       {error && (
         <div className="border-b border-danger/20 bg-danger/5 px-3 py-1.5 text-[11.5px] text-danger">
           {error}
+        </div>
+      )}
+      {reviewError && (
+        <div className="border-b border-danger/20 bg-danger/5 px-3 py-1.5 text-[11.5px] text-danger">
+          {reviewError}
         </div>
       )}
 
@@ -91,6 +134,19 @@ export function AiReviewPanel() {
           />
         ))}
       </div>
+
+      {tooManyChunks !== null && (
+        <ConfirmDialog
+          title="Large staged diff"
+          message={`This staged diff needs ${tooManyChunks} AI review chunks (the safety cap is ${MAX_AUTO_REVIEW_CHUNKS}) — each chunk is a separate model request. Review anyway?`}
+          confirmLabel="Review anyway"
+          onConfirm={() => {
+            setTooManyChunks(null);
+            void run(true);
+          }}
+          onCancel={() => setTooManyChunks(null)}
+        />
+      )}
     </div>
   );
 }
@@ -146,6 +202,17 @@ function ClosedSection({
 }
 
 function FindingRow({ finding, onToggle }: { finding: Finding; onToggle: (id: string) => void }) {
+  const openDiff = useUIStore((s) => s.openDiff);
+  const openFile = useUIStore((s) => s.openFile);
+  const changedPaths = useGitStore((s) => s.status.files);
+  // Findings usually point at a changed file → land on its diff; cross-file
+  // references to untouched files open the plain editor instead.
+  const inChanged = !!finding.file && changedPaths.some((f) => f.path === finding.file);
+  const openReference = () => {
+    if (!finding.file) return;
+    if (inChanged) openDiff(finding.file);
+    else openFile(finding.file);
+  };
   return (
     <div className={`mb-1 rounded border border-border bg-base px-2 py-1.5 ${finding.done ? "opacity-60" : ""}`}>
       <label className="flex cursor-pointer items-start gap-2">
@@ -159,14 +226,18 @@ function FindingRow({ finding, onToggle }: { finding: Finding; onToggle: (id: st
           <span className={`block text-[12.5px] leading-snug text-fg ${finding.done ? "line-through" : ""}`}>
             {finding.title}
           </span>
-          {(finding.file || finding.line !== undefined) && (
-            <span className="mt-0.5 block font-mono text-[10.5px] text-fg-muted">
-              {finding.file}
-              {finding.line !== undefined ? `:${finding.line}` : ""}
-            </span>
-          )}
         </span>
       </label>
+      {(finding.file || finding.line !== undefined) && (
+        <button
+          title={inChanged ? "Open the diff for this file" : "Open this file"}
+          onClick={openReference}
+          className="ml-6 mt-0.5 block font-mono text-[10.5px] text-fg-muted hover:text-accent hover:underline"
+        >
+          {finding.file}
+          {finding.line !== undefined ? `:${finding.line}` : ""}
+        </button>
+      )}
       {finding.detail && (
         <div className="ml-6 mt-1 text-[12px] text-fg-muted [&_.md-content]:text-[12px]">
           <MarkdownView source={finding.detail} />

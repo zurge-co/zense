@@ -36,6 +36,9 @@ interface AiReviewState {
    *  the list is being rewritten, ticking mid-run is not preserved. */
   replaceFindings: (session: number, list: RawFinding[]) => void;
   finish: (session: number, error?: string | null) => void;
+  /** Stop the in-flight run silently: findings collected so far survive, and
+   *  the session bump makes the runner's stale guard drop the rest of it. */
+  cancel: () => void;
   toggleDone: (id: string) => void;
 }
 
@@ -78,6 +81,9 @@ export const useAiReviewStore = create<AiReviewState>((set, get) => ({
     if (!get().isCurrent(session)) return;
     set({ running: false, phase: null, error });
   },
+
+  cancel: () =>
+    set((s) => ({ running: false, phase: null, error: null, session: s.session + 1 })),
 
   toggleDone: (id) =>
     set((s) => ({

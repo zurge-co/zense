@@ -21,14 +21,39 @@ import {
   buildCriticPrompt,
   buildRetryInstruction,
   buildSynthesisPrompt,
+  dedupeFindings,
   parseFindingsJson,
   parseFindingsMarkdownFallback,
   type RawFinding,
 } from "./aiReviewPrompts";
-import { chunkDiff, splitDiffByFile } from "./diffChunk";
+import { changedNewLines, chunkDiff, snapLine, splitDiffByFile } from "./diffChunk";
 
 /** Max format-error retries per LLM call (2 retries → up to 3 attempts). */
 const MAX_FORMAT_RETRIES = 2;
+
+/** Safety cap on chunks per run — each chunk is a billed model request. */
+export const MAX_AUTO_REVIEW_CHUNKS = 20;
+
+/** Staged diff needs more chunks than the cap; the UI confirms and retries
+ *  with the allow-many flag. Thrown before the session begins so existing
+ *  findings are untouched. */
+export class TooManyChunksError extends Error {
+  readonly chunks: number;
+  constructor(chunks: number) {
+    super(
+      `This staged diff splits into ${chunks} AI review chunks (cap: ${MAX_AUTO_REVIEW_CHUNKS}) — roughly ${chunks + 2} model requests. Re-run from the findings panel to confirm and review anyway.`,
+    );
+    this.name = "TooManyChunksError";
+    this.chunks = chunks;
+  }
+}
+
+/** Over-cap chunk counts abort unless the user explicitly allowed many. */
+export function assertChunkCount(chunks: number, allowManyChunks = false): void {
+  if (chunks > MAX_AUTO_REVIEW_CHUNKS && !allowManyChunks) {
+    throw new TooManyChunksError(chunks);
+  }
+}
 
 type SendFn = (
   config: LlmConfig,
@@ -61,7 +86,10 @@ export async function askFindingsJson(
       if (!(err instanceof FormatError)) throw err;
       lastError = err;
       messages.push({ role: "assistant", content: lastReply });
-      messages.push({ role: "user", content: buildRetryInstruction(err.message) });
+      messages.push({
+        role: "user",
+        content: buildRetryInstruction(err.message, attempt === MAX_FORMAT_RETRIES - 1),
+      });
     }
   }
   // Last resort: keep whatever the model said as markdown findings instead
@@ -80,7 +108,10 @@ const NO_TOOLS = {
  * for setup problems (nothing staged, provider not configured); pipeline
  * errors land on the store so partial findings survive a late failure.
  */
-export async function runAutoReview(root: string): Promise<void> {
+export async function runAutoReview(
+  root: string,
+  opts?: { allowManyChunks?: boolean },
+): Promise<void> {
   const llmStore = useLlmConfigStore.getState();
   if (!llmStore.configLoaded) await llmStore.loadConfig();
   const config = useLlmConfigStore.getState().config;
@@ -99,11 +130,22 @@ export async function runAutoReview(root: string): Promise<void> {
   const sysPrompt = systemPrompt(root, config.preferredLanguage);
   const files = splitDiffByFile(diff).map((f) => f.path);
   const chunks = chunkDiff(diff);
+  assertChunkCount(chunks.length, opts?.allowManyChunks);
 
   const store = useAiReviewStore.getState();
   const session = store.begin();
   const stale = () => !useAiReviewStore.getState().isCurrent(session);
   const send = chatSend as SendFn;
+
+  // Snap model-reported lines onto lines the staged diff actually changed —
+  // the model's line numbers are routinely a few rows off.
+  const changed = changedNewLines(diff);
+  const snapLines = (list: RawFinding[]): RawFinding[] =>
+    list.map((f) =>
+      f.line === undefined || !f.file
+        ? f
+        : { ...f, line: snapLine(changed.get(f.file), f.line) },
+    );
 
   try {
     for (let i = 0; i < chunks.length; i++) {
@@ -125,7 +167,7 @@ export async function runAutoReview(root: string): Promise<void> {
         }),
       );
       if (stale()) return;
-      useAiReviewStore.getState().addFindings(session, findings);
+      useAiReviewStore.getState().addFindings(session, dedupeFindings(snapLines(findings)));
     }
 
     const compact = (): RawFinding[] =>
@@ -139,10 +181,10 @@ export async function runAutoReview(root: string): Promise<void> {
         toolFree,
         sysPrompt,
         root,
-        buildCriticPrompt(compact()),
+        buildCriticPrompt(dedupeFindings(compact())),
       );
       if (stale()) return;
-      useAiReviewStore.getState().replaceFindings(session, critiqued);
+      useAiReviewStore.getState().replaceFindings(session, dedupeFindings(snapLines(critiqued)));
 
       if (stale()) return;
       store.setPhase("cross-file synthesis");
@@ -154,7 +196,7 @@ export async function runAutoReview(root: string): Promise<void> {
         buildSynthesisPrompt(compact(), files),
       );
       if (stale()) return;
-      useAiReviewStore.getState().replaceFindings(session, synthesized);
+      useAiReviewStore.getState().replaceFindings(session, dedupeFindings(snapLines(synthesized)));
     }
 
     useAiReviewStore.getState().finish(session);

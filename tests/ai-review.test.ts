@@ -13,17 +13,25 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import * as fs from "fs";
 import * as path from "path";
-import { chunkDiff, splitDiffByFile } from "../src/lib/diffChunk";
+import { changedNewLines, chunkDiff, snapLine, splitDiffByFile } from "../src/lib/diffChunk";
 import {
   FormatError,
   buildChunkReviewPrompt,
   buildCriticPrompt,
   buildRetryInstruction,
   buildSynthesisPrompt,
+  classifyFindingLine,
+  dedupeFindings,
   parseFindingsJson,
   parseFindingsMarkdownFallback,
 } from "../src/lib/aiReviewPrompts";
-import { askFindingsJson, runAutoReview } from "../src/lib/aiReview";
+import {
+  MAX_AUTO_REVIEW_CHUNKS,
+  TooManyChunksError,
+  askFindingsJson,
+  assertChunkCount,
+  runAutoReview,
+} from "../src/lib/aiReview";
 import { useAiReviewStore } from "../src/store/aiReviewStore";
 import type { IpcMessage, LlmConfig } from "../src/lib/llm";
 
@@ -181,24 +189,150 @@ describe("parseFindingsJson", () => {
   });
 });
 
+describe("classifyFindingLine", () => {
+  test("structural tags win, case-insensitively", () => {
+    expect(classifyFindingLine("[bug] Null deref")).toBe("bug");
+    expect(classifyFindingLine("[RISK] race")).toBe("risk");
+    expect(classifyFindingLine("[review] decide this")).toBe("human-review");
+    expect(classifyFindingLine("Bug: null deref")).toBe("bug");
+    expect(classifyFindingLine("risk: might break")).toBe("risk");
+    expect(classifyFindingLine("Review: naming choice")).toBe("human-review");
+  });
+
+  test("untagged lines in any language default to human-review", () => {
+    expect(classifyFindingLine("ตรวจสอบค่าคงที่นี้ด้วย")).toBe("human-review");
+    expect(classifyFindingLine("mentions [bug] only mid-sentence")).toBe("human-review");
+    expect(classifyFindingLine("some plain English finding")).toBe("human-review");
+  });
+});
+
 describe("parseFindingsMarkdownFallback", () => {
-  test("salvages bullet lines and keyword-maps categories", () => {
+  test("salvages lines by structural tag and strips the tag from titles", () => {
     const raw = [
       "Findings:",
-      "- Bug: null check missing in parser",
-      "- Risk: race condition when two saves overlap",
-      "- Decide whether the timeout value is right",
+      "- [bug] Null check missing in parser",
+      "- [Risk] Race condition when two saves overlap",
+      "- [review] ตัดสินใจว่าค่า timeout เหมาะสมไหม",
+      "- Decide whether the retry order is right",
+      "[bug] bare tagged line without a bullet",
     ].join("\n");
     const out = parseFindingsMarkdownFallback(raw);
-    expect(out.map((f) => f.category)).toEqual(["bug", "risk", "human-review"]);
+    expect(out.map((f) => f.category)).toEqual([
+      "bug",
+      "risk",
+      "human-review",
+      "human-review",
+      "bug",
+    ]);
+    expect(out[0].title).toBe("Null check missing in parser");
+    expect(out[2].title).toBe("ตัดสินใจว่าค่า timeout เหมาะสมไหม");
   });
 
   test("ignores headings and short lines", () => {
-    expect(parseFindingsMarkdownFallback("# Summary\n- ok")).toEqual([]);
+    expect(parseFindingsMarkdownFallback("# Summary\n- ok\n- [bug] x")).toEqual([]);
   });
 
   test("returns empty for prose without bullets", () => {
     expect(parseFindingsMarkdownFallback("All good, nothing to report.")).toEqual([]);
+  });
+});
+
+describe("dedupeFindings", () => {
+  test("drops exact and normalized duplicates, keeps the first", () => {
+    const out = dedupeFindings([
+      { category: "bug", title: "Null deref in save", file: "a.ts", line: 3 },
+      { category: "bug", title: "Null deref in save", file: "a.ts", line: 3 },
+      { category: "bug", title: "null deref in save!", file: "a.ts", line: 3 },
+      { category: "bug", title: "Null deref in save", file: "a.ts", line: 4 },
+      { category: "bug", title: "Null deref in save", file: "b.ts", line: 3 },
+      { category: "risk", title: "Other issue" },
+    ]);
+    expect(out).toHaveLength(4);
+    expect(out.map((f) => `${f.file}:${f.line}`)).toEqual(["a.ts:3", "a.ts:4", "b.ts:3", "undefined:undefined"]);
+  });
+
+  test("findings without file/line dedupe on title alone", () => {
+    const out = dedupeFindings([
+      { category: "bug", title: "Duplicate concern" },
+      { category: "risk", title: "duplicate concern" },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].category).toBe("bug");
+  });
+});
+
+describe("changedNewLines", () => {
+  test("collects added new-side line numbers per file", () => {
+    const changed = changedNewLines(TWO_FILE_PATCH);
+    expect([...(changed.get("src/a.ts") ?? [])]).toEqual([2]);
+    expect([...(changed.get("src/b.ts") ?? [])]).toEqual([6]);
+  });
+
+  test("deleted files yield an empty set; new files count every added line", () => {
+    const patch = [
+      "diff --git a/src/gone.ts b/src/gone.ts",
+      "deleted file mode 100644",
+      "--- a/src/gone.ts",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-bye",
+      "diff --git a/src/new.ts b/src/new.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/src/new.ts",
+      "@@ -0,0 +1,2 @@",
+      "+a",
+      "+b",
+    ].join("\n");
+    const changed = changedNewLines(patch);
+    expect(changed.get("src/gone.ts")?.size).toBe(0);
+    expect([...(changed.get("src/new.ts") ?? [])]).toEqual([1, 2]);
+  });
+});
+
+describe("snapLine", () => {
+  const changed = new Set([2, 6]);
+
+  test("exact hits stay; misses snap to the nearest changed line", () => {
+    expect(snapLine(changed, 2)).toBe(2);
+    expect(snapLine(changed, 5)).toBe(6);
+    expect(snapLine(changed, 20)).toBe(6);
+    expect(snapLine(changed, 1)).toBe(2);
+  });
+
+  test("ties resolve to the earlier line; empty/unknown sets pass through", () => {
+    expect(snapLine(changed, 4)).toBe(2);
+    expect(snapLine(new Set(), 9)).toBe(9);
+    expect(snapLine(undefined, 9)).toBe(9);
+  });
+});
+
+describe("chunk count guard", () => {
+  test("MAX_AUTO_REVIEW_CHUNKS is a sane positive cap", () => {
+    expect(MAX_AUTO_REVIEW_CHUNKS).toBeGreaterThan(1);
+    expect(Number.isInteger(MAX_AUTO_REVIEW_CHUNKS)).toBe(true);
+  });
+
+  test("assertChunkCount throws TooManyChunksError over the cap unless allowed", () => {
+    expect(() => assertChunkCount(MAX_AUTO_REVIEW_CHUNKS)).not.toThrow();
+    expect(() => assertChunkCount(MAX_AUTO_REVIEW_CHUNKS + 1)).toThrow(TooManyChunksError);
+    expect(() => assertChunkCount(MAX_AUTO_REVIEW_CHUNKS + 1, true)).not.toThrow();
+    try {
+      assertChunkCount(MAX_AUTO_REVIEW_CHUNKS + 3);
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(TooManyChunksError);
+      expect((err as TooManyChunksError).chunks).toBe(MAX_AUTO_REVIEW_CHUNKS + 3);
+    }
+  });
+
+  // The mock staged diff is a single chunk, so the guard's position inside
+  // the pipeline is verified structurally (same pattern as Tauri wiring).
+  test("runAutoReview checks the cap before a session begins", () => {
+    const src = readSrc("src/lib/aiReview.ts");
+    expect(src).toContain("assertChunkCount");
+    expect(src).toContain("allowManyChunks");
+    expect(src.indexOf("assertChunkCount")).toBeLessThan(src.indexOf(".begin()"));
   });
 });
 
@@ -293,6 +427,15 @@ describe("prompt builders", () => {
     expect(buildRetryInstruction("boom")).toContain("boom");
   });
 
+  test("the final retry demands tagged one-finding-per-line salvage", () => {
+    const first = buildRetryInstruction("boom");
+    const last = buildRetryInstruction("boom", true);
+    expect(first).not.toContain("[bug]");
+    expect(last).toContain("[bug]");
+    expect(last).toContain("[risk]");
+    expect(last).toContain("[review]");
+  });
+
   test("critic and synthesis prompts carry the findings JSON", () => {
     const findings = parseFindingsJson(VALID);
     expect(buildCriticPrompt(findings)).toContain("Null deref in save");
@@ -368,6 +511,24 @@ describe("aiReviewStore", () => {
     expect(s.phase).toBeNull();
     expect(s.error).toBe("boom");
   });
+
+  test("cancel keeps partial findings and invalidates the session", () => {
+    const session = useAiReviewStore.getState().begin();
+    useAiReviewStore.getState().addFindings(session, [raw("a"), raw("b", "risk")]);
+    useAiReviewStore.getState().setPhase("chunk 2 of 5");
+    useAiReviewStore.getState().cancel();
+    const s = useAiReviewStore.getState();
+    expect(s.running).toBe(false);
+    expect(s.phase).toBeNull();
+    expect(s.findings).toHaveLength(2);
+    expect(s.isCurrent(session)).toBe(false);
+    // The stale runner must not append or finish after the cancel.
+    s.addFindings(session, [raw("late finding")]);
+    s.finish(session, "late error");
+    const after = useAiReviewStore.getState();
+    expect(after.findings).toHaveLength(2);
+    expect(after.error).toBeNull();
+  });
 });
 
 // ── runAutoReview guards (no Tauri here, so the pipeline itself can't run) ──
@@ -414,6 +575,22 @@ describe("Auto Review structural wiring", () => {
     expect(panel).toContain("Human Review");
     expect(panel).toContain("Closed");
     expect(panel).toContain("toggleDone");
+  });
+
+  test("findings panel wires clickable refs, re-run, cancel and over-cap confirm", () => {
+    const panel = readSrc("src/components/aiReview/AiReviewPanel.tsx");
+    expect(panel).toContain("openDiff");
+    expect(panel).toContain("openFile");
+    expect(panel).toContain("runAutoReview");
+    expect(panel).toContain("cancel");
+    expect(panel).toContain("TooManyChunksError");
+  });
+
+  test("the pipeline dedupes and line-snaps streamed findings", () => {
+    const src = readSrc("src/lib/aiReview.ts");
+    expect(src).toContain("changedNewLines");
+    expect(src).toContain("snapLine");
+    expect(src).toContain("dedupeFindings");
   });
 
   test("prompts and parse harness are English-only (language-independent parser)", () => {

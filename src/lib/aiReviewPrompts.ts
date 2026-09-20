@@ -84,9 +84,17 @@ ${SCHEMA}
 ${RULES}`;
 }
 
-/** Follow-up message when the model's reply was not parseable JSON. */
-export function buildRetryInstruction(parseError: string): string {
-  return `Your reply could not be parsed (${parseError}). Reply with ONLY the JSON object described above — no markdown fences, no commentary, nothing else.`;
+/**
+ * Follow-up message when the model's reply was not parseable JSON. The final
+ * retry additionally offers the tagged one-finding-per-line format — tags are
+ * structural English (`[bug]`/`[risk]`/`[review]`) even when the answer
+ * language is not, so the salvage parser can classify them without any
+ * per-language keyword lists.
+ */
+export function buildRetryInstruction(parseError: string, finalRetry = false): string {
+  const base = `Your reply could not be parsed (${parseError}). Reply with ONLY the JSON object described above — no markdown fences, no commentary, nothing else.`;
+  if (!finalRetry) return base;
+  return `${base}\n\nIf you still cannot produce valid JSON, reply with one finding per line instead, each line starting with a structural tag — [bug], [risk], or [review] — followed by the finding title. Use these English tags even when your answer language is not English.`;
 }
 
 /** Critic pass: prune duplicates and unsupported findings. */
@@ -182,27 +190,60 @@ export function parseFindingsJson(raw: string): RawFinding[] {
   return (parsed as { findings: unknown[] }).findings.map(toFinding);
 }
 
+/** Structural English tag the model is told to prefix salvage lines with. */
+const STRUCTURAL_TAG = /^\s*(?:\[\s*(bug|risk|review)\s*\]|(bug|risk|review)\s*:)\s*/i;
+
 /**
- * Last resort after all format retries fail: salvage bullet/heading lines
- * from the raw markdown reply instead of discarding the run. Keyword map
- * stays English — the model is instructed to keep structure English, and a
- * wrong guess lands safely in "human-review".
+ * Classify a salvaged line by its structural tag — [bug]/[risk]/[review] or
+ * a bare 'bug:'-style prefix. Language-agnostic on purpose: anything
+ * untagged lands in "human-review" rather than guessing from translated
+ * keywords (a wrong guess there hides real bugs).
+ */
+export function classifyFindingLine(title: string): FindingCategory {
+  const m = title.match(STRUCTURAL_TAG);
+  if (!m) return "human-review";
+  const tag = (m[1] ?? m[2]).toLowerCase();
+  return tag === "bug" ? "bug" : tag === "risk" ? "risk" : "human-review";
+}
+
+/** Drop exact duplicates across chunks/critic passes: same file, line, and
+ *  normalized title (case/punctuation/whitespace-insensitive) count once. */
+export function dedupeFindings(list: RawFinding[]): RawFinding[] {
+  const normalize = (title: string) =>
+    title
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const seen = new Set<string>();
+  const out: RawFinding[] = [];
+  for (const f of list) {
+    const key = `${f.file ?? ""}|${f.line ?? ""}|${normalize(f.title)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+  return out;
+}
+
+/**
+ * Last resort after all format retries fail: salvage bullet lines (and bare
+ * tagged lines) from the raw markdown reply instead of discarding the run.
+ * Categorization is structural only (see classifyFindingLine) — untagged
+ * lines in ANY language safely land in "human-review".
  */
 export function parseFindingsMarkdownFallback(raw: string): RawFinding[] {
   const findings: RawFinding[] = [];
   for (const line of raw.split("\n")) {
-    const m = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(\S.*)$/);
+    const m =
+      line.match(/^\s*(?:[-*•]|\d+[.)])\s+(\S.*)$/) ??
+      line.match(/^\s*(\[[a-z]+\]\s+\S.*)$/i);
     if (!m) continue;
     let title = m[1].trim();
-    if (title.length < 8 || /^(#{1,6}\s*)?(findings?|summary|notes?)\b/i.test(title)) continue;
-    title = title.replace(/^#{1,6}\s*/, "");
+    const category = classifyFindingLine(title);
+    title = title.replace(/^#{1,6}\s*/, "").replace(STRUCTURAL_TAG, "").trim();
+    if (title.length < 8 || /^(findings?|summary|notes?)\b/i.test(title)) continue;
     if (title.length > 200) title = `${title.slice(0, 197)}…`;
-    let category: FindingCategory = "human-review";
-    if (/\b(bug|error|crash|broken|incorrect|wrong|null|undefined|overflow)\b/i.test(title)) {
-      category = "bug";
-    } else if (/\b(risk|warning|edge case|might|could break|race)\b/i.test(title)) {
-      category = "risk";
-    }
     findings.push({ category, title });
     if (findings.length >= 50) break; // a wall of bullets is not findings
   }

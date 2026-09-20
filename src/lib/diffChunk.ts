@@ -93,3 +93,52 @@ export function chunkDiff(
   }
   return chunks;
 }
+
+/**
+ * New-side line numbers actually changed by each file (the `+` rows of every
+ * hunk; context rows don't count). Findings are snapped onto these so a
+ * model-reported line that points at untouched code lands on the nearest
+ * line that really changed.
+ */
+export function changedNewLines(patch: string): Map<string, Set<number>> {
+  const result = new Map<string, Set<number>>();
+  for (const file of splitDiffByFile(patch)) {
+    const lines = new Set<number>();
+    for (const hunk of file.hunks) {
+      const start = hunk.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (!start) continue;
+      let newLine = Number(start[1]);
+      for (const row of hunk.split("\n").slice(1)) {
+        if (row.startsWith("+")) {
+          lines.add(newLine);
+          newLine++;
+        } else if (row.startsWith(" ")) {
+          newLine++;
+        }
+        // "-" rows and "\\ No newline" markers consume no new-side line.
+      }
+    }
+    result.set(file.path, lines);
+  }
+  return result;
+}
+
+/**
+ * Snap a model-reported line onto the nearest new-side line that actually
+ * changed — LLMs routinely report line numbers a few rows off. Unknown or
+ * empty change sets return the line untouched; ties resolve to the earlier
+ * line.
+ */
+export function snapLine(changed: Set<number> | undefined, line: number): number {
+  if (!changed || changed.size === 0) return line;
+  let best = line;
+  let bestDist = Infinity;
+  for (const candidate of changed) {
+    const dist = Math.abs(candidate - line);
+    if (dist < bestDist || (dist === bestDist && candidate < best)) {
+      best = candidate;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
