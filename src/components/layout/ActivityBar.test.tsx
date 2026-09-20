@@ -623,6 +623,10 @@ describe("Task 1.3 integration — ActivityBar → SideBar → ReviewPanel", () 
     expect(reviewViewSrc).toContain("Select a changed file to view its diff");
     // The editor's "open a file" hint must never leak into the review pane.
     expect(reviewViewSrc.includes("Open a file to start exploring")).toBe(false);
+    // The wrapper must be a flex column so EditorArea stretches to the full
+    // pane height — a plain block div collapsed it and the placeholder sat
+    // clipped at the top instead of vertically centered.
+    expect(reviewViewSrc).toContain('className="flex min-h-0 flex-1 flex-col"');
 
     // EditorArea accepts the override and keeps its editor default intact.
     const editorAreaSrc = readSrc("src/components/editor/EditorArea.tsx");

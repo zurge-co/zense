@@ -16,7 +16,10 @@ export function ReviewView() {
         <ReviewPanel />
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1">
+        {/* flex-col so EditorArea (a flex-1 child) stretches to the full
+            pane height — with a plain block wrapper it collapsed to content
+            height and the empty placeholder sat clipped at the top. */}
+        <div className="flex min-h-0 flex-1 flex-col">
           {/* The center pane IS a diff viewer here — its empty state must
               say so, not "open a file to start exploring". */}
           <EditorArea
