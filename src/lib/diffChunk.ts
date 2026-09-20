@@ -1,81 +1,95 @@
 /**
- * Diff-chunk extraction for the "Explain this change with AI" context action
- * in the diff view. Pure functions over Monaco's ILineChange so tests can
- * exercise them without mounting a DiffEditor.
+ * Staged-diff chunking for Auto Review: splits a unified diff into
+ * LLM-sized chunks — first by file, then by hunk when a single file's diff
+ * would blow the per-request budget. Pure functions so tests can exercise
+ * them without a workspace, git, or LLM.
  */
-import type * as monaco from "monaco-editor";
 
-export interface ChangeChunk {
-  /** Lines removed from the original side ("" for pure insertions). */
-  removed: string;
-  /** Lines added on the modified side ("" for pure deletions). */
-  added: string;
-  /** 1-based inclusive bounds on the modified side. */
-  startLine: number;
-  endLine: number;
+export interface FileSection {
+  /** New-side path (b/<path>) — the file as it will exist after commit. */
+  path: string;
+  /** Everything before the first @@ hunk (diff --git, index, ---/+++). */
+  header: string;
+  /** Hunks with their @@ line, in file order. */
+  hunks: string[];
+  /** The full untouched section text. */
+  text: string;
+}
+
+export interface DiffChunk {
+  path: string;
+  /** 1-based index of this chunk within its file. */
+  part: number;
+  /** Total chunks this file was split into. */
+  parts: number;
+  /** Header + hunk group, ready to embed in a prompt. */
+  patch: string;
+}
+
+/** Default per-chunk budget; generous but safely inside small-context models. */
+export const DEFAULT_CHUNK_BUDGET = 12_000;
+
+/** b/<path> from the +++ line; `/dev/null` (deletion) falls back to the
+ *  a/<path> side of the diff --git header. */
+function sectionPath(section: string): string {
+  const plus = section.match(/^\+\+\+ b\/(.+)$/m)?.[1];
+  if (plus) return plus;
+  const git = section.match(/^diff --git a\/(.+?) b\//m)?.[1];
+  return git ?? "unknown";
+}
+
+/** Split a unified diff into per-file sections (renames count as one). */
+export function splitDiffByFile(patch: string): FileSection[] {
+  if (!patch.trim()) return [];
+  const rawSections = patch.split(/(?=^diff --git )/m).filter((s) => s.trim());
+  return rawSections.map((text) => {
+    const trimmed = text.trimEnd();
+    const hunkStart = trimmed.search(/^@@ /m);
+    return {
+      path: sectionPath(trimmed),
+      header: hunkStart === -1 ? trimmed : trimmed.slice(0, hunkStart).trimEnd(),
+      hunks:
+        hunkStart === -1
+          ? []
+          : trimmed
+              .slice(hunkStart)
+              .split(/(?=^@@ )/m)
+              .filter((h) => h.trim()),
+      text: trimmed,
+    };
+  });
 }
 
 /**
- * Monaco encodes an empty range (pure insert/delete) with end = 0 (or
- * end < start). Normalize to 1-based inclusive bounds, where an empty range
- * is start..start-1 — mirroring the revert-change logic in DiffView.
+ * Group a file's hunks into prompt-sized chunks. The header rides with
+ * every group so each chunk is self-describing. A hunk larger than the
+ * budget becomes its own chunk unsplit — cutting mid-hunk would produce a
+ * patch the model can't read, so the overflow is intentional.
  */
-export function toInclusiveRange(start: number, end: number): { start: number; end: number } {
-  return end === 0 || end < start ? { start: start + 1, end: start } : { start, end };
-}
-
-/**
- * The change under `line` (line number on `side` — the modified side by
- * default, or the original side when the user right-clicks the left/old
- * pane). Pure deletions/insertions cover a single context line on the side
- * where their range is empty. When no change contains the line, return the
- * nearest one so a right-click slightly off a chunk still explains
- * something useful; undefined only when there are no changes.
- */
-export function findChangeAtLine(
-  changes: readonly monaco.editor.ILineChange[],
-  line: number,
-  side: "modified" | "original" = "modified",
-): monaco.editor.ILineChange | undefined {
-  let best: monaco.editor.ILineChange | undefined;
-  let bestDist = Infinity;
-  for (const ch of changes) {
-    const rawStart =
-      side === "modified" ? ch.modifiedStartLineNumber : ch.originalStartLineNumber;
-    const rawEnd =
-      side === "modified" ? ch.modifiedEndLineNumber : ch.originalEndLineNumber;
-    const range = toInclusiveRange(rawStart, rawEnd);
-    // An empty range still "covers" its insertion point (start-1) — the
-    // line the cursor sits on when viewing a pure add/delete.
-    const coverStart = Math.min(range.start, rawStart);
-    const coverEnd = Math.max(range.end, rawStart);
-    if (line >= coverStart && line <= coverEnd) return ch;
-    const dist = line < coverStart ? coverStart - line : line - coverEnd;
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = ch;
+export function chunkDiff(
+  patch: string,
+  budget: number = DEFAULT_CHUNK_BUDGET,
+): DiffChunk[] {
+  const chunks: DiffChunk[] = [];
+  for (const file of splitDiffByFile(patch)) {
+    if (file.text.length <= budget) {
+      chunks.push({ path: file.path, part: 1, parts: 1, patch: file.text });
+      continue;
     }
+    const groups: string[] = [];
+    let current = file.header;
+    for (const hunk of file.hunks.length ? file.hunks : [file.text]) {
+      const candidate = `${current}\n${hunk}`;
+      if (current !== file.header && candidate.length > budget) {
+        groups.push(current);
+        current = file.header;
+      }
+      current = `${current}\n${hunk}`;
+    }
+    groups.push(current);
+    groups.forEach((group, i) => {
+      chunks.push({ path: file.path, part: i + 1, parts: groups.length, patch: group });
+    });
   }
-  return best;
-}
-
-function sliceLines(text: string, start: number, end: number): string {
-  if (end < start) return "";
-  return text.split("\n").slice(start - 1, end).join("\n");
-}
-
-/** Pull the removed/added text of one change out of the full file contents. */
-export function extractChunk(
-  change: monaco.editor.ILineChange,
-  original: string,
-  modified: string,
-): ChangeChunk {
-  const orig = toInclusiveRange(change.originalStartLineNumber, change.originalEndLineNumber);
-  const work = toInclusiveRange(change.modifiedStartLineNumber, change.modifiedEndLineNumber);
-  return {
-    removed: sliceLines(original, orig.start, orig.end),
-    added: sliceLines(modified, work.start, work.end),
-    startLine: work.start,
-    endLine: work.end,
-  };
+  return chunks;
 }

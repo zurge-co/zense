@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { GitBranch, Sparkles, Bug, Check, CheckCircle2, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw, AlertTriangle, Upload, ChevronDown } from "lucide-react";
+import { GitBranch, Sparkles, Check, CheckCircle2, RefreshCw, FileDiff, Plus, Minus, Loader2, RotateCcw, AlertTriangle, Upload, ChevronDown } from "lucide-react";
 import { gitPush } from "../../lib/git";
 import { errMessage } from "../../lib/errors";
 import { generateCommitMessage } from "../../lib/commitMessage";
-import { summarizeFileChange, reviewAllChanges, findBugsInChanges } from "../../lib/aiReview";
+import { runAutoReview } from "../../lib/aiReview";
 import { useGitStore } from "../../store/gitStore";
+import { useAiReviewStore } from "../../store/aiReviewStore";
 import { useUIStore } from "../../store/uiStore";
 import { statusColor } from "../../lib/statusColor";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -55,27 +56,13 @@ export function ReviewPanel() {
     }
   };
 
-  /** Right-click on a change row → per-file AI review actions. */
-  const openFileMenu = (e: React.MouseEvent, path: string, staged: boolean) => {
+  /** Right-click on a change row → open its diff. */
+  const openFileMenu = (e: React.MouseEvent, path: string) => {
     e.preventDefault();
-    if (!workspacePath) return;
-    const root = workspacePath;
     setMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
-        {
-          id: "ai-summarize",
-          label: "Summarize with AI",
-          icon: Sparkles,
-          onClick: () => void runAi(() => summarizeFileChange(root, path, staged, "Summarize with AI")),
-        },
-        {
-          id: "ai-find-bugs",
-          label: "Find bugs with AI",
-          icon: Bug,
-          onClick: () => void runAi(() => findBugsInChanges(root, path, staged, "Find bugs with AI")),
-        },
         {
           id: "open-diff",
           label: "Open diff",
@@ -91,6 +78,7 @@ export function ReviewPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath]);
 
+  const reviewRunning = useAiReviewStore((s) => s.running);
   const stagedStats = new Map(diffSummary.staged.map((e) => [e.path, e]));
   const unstagedStats = new Map(diffSummary.unstaged.map((e) => [e.path, e]));
 
@@ -226,6 +214,147 @@ export function ReviewPanel() {
             </section>
           )}
 
+          {/* Auto Review — the staged diff is reviewed chunk by chunk by
+              the configured LLM; findings land in the bottom panel grouped
+              as Bug / Risk / Human Review (re-run starts a fresh session). */}
+          <button
+            disabled={reviewRunning || stagedFiles.length === 0}
+            title={
+              stagedFiles.length === 0
+                ? "Stage changes first — Auto Review reads the staged diff"
+                : "Review the staged diff with AI and list the findings below"
+            }
+            onClick={() => {
+              if (!workspacePath) return;
+              void runAi(() => runAutoReview(workspacePath));
+            }}
+            className="flex w-full items-center justify-center gap-1.5 rounded border border-accent/30 bg-accent/10 py-1.5 text-[12px] text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {reviewRunning ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+            Auto Review
+          </button>
+
+          {reviewError && <div className="text-[11px] text-danger">{reviewError}</div>}
+          {pushFeedback && (
+            <div className={`whitespace-pre-line text-[11px] ${pushFeedback.ok ? "text-accent" : "text-danger"}`}>
+              {pushFeedback.message}
+            </div>
+          )}
+
+          {stagedFiles.length > 0 && (
+            <>
+              <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+                Staged · {stagedFiles.length}
+              </div>
+              {stagedFiles.map((f) => {
+                const stats = stagedStats.get(f.path);
+                return (
+                  <div
+                    key={`staged-${f.path}`}
+                    onClick={() => openDiff(f.path)}
+                    onContextMenu={(e) => openFileMenu(e, f.path)}
+                    title={`Compare ${f.path} with HEAD — right-click for AI review`}
+                    className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg-muted hover:bg-hover hover:text-fg"
+                  >
+                    <FileDiff size={13} className="shrink-0 text-fg-muted" />
+                    <span className="flex-1 truncate text-left">{f.path}</span>
+                    {stats && (
+                      <span className="font-mono text-[10px]">
+                        <span className="text-green">+{stats.additions}</span>{" "}
+                        <span className="text-danger">−{stats.deletions}</span>
+                      </span>
+                    )}
+                    <span className={`font-mono text-[11px] font-semibold ${statusColor[f.staged!]}`}>
+                      {f.staged}
+                    </span>
+                    <button
+                      title="Reset — discard this file's changes back to HEAD"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setResetTarget({ path: f.path, isNew: f.staged === "A" });
+                      }}
+                      className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                    <button
+                      title="Unstage"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void unstageFile(f.path);
+                      }}
+                      className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                    >
+                      <Minus size={12} />
+                    </button>
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          <div className="flex items-center justify-between">
+            <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+              Changes · {unstagedFiles.length}
+            </div>
+            {unstagedFiles.length > 0 && (
+              <button onClick={() => void stageAll()} className="text-[11px] text-accent hover:opacity-80">
+                Stage All
+              </button>
+            )}
+          </div>
+
+          {unstagedFiles.map((f) => {
+            const stats = unstagedStats.get(f.path);
+            return (
+              <div
+                key={`unstaged-${f.path}`}
+                onClick={() => openDiff(f.path)}
+                onContextMenu={(e) => openFileMenu(e, f.path)}
+                title={`Compare ${f.path} with HEAD — right-click for AI review`}
+                className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg-muted hover:bg-hover hover:text-fg"
+              >
+                <FileDiff size={13} className="shrink-0 text-fg-muted" />
+                <span className="flex-1 truncate text-left">{f.path}</span>
+                {stats && (
+                  <span className="font-mono text-[10px]">
+                    <span className="text-green">+{stats.additions}</span>{" "}
+                    <span className="text-danger">−{stats.deletions}</span>
+                  </span>
+                )}
+                <span className={`font-mono text-[11px] font-semibold ${statusColor[f.unstaged!]}`}>
+                  {f.unstaged}
+                </span>
+                <button
+                  title="Stage"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void stageFile(f.path);
+                  }}
+                  className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                >
+                  <Plus size={12} />
+                </button>
+                <button
+                  title="Reset — discard this file's changes back to HEAD"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setResetTarget({ path: f.path, isNew: !f.staged && f.unstaged === "A" });
+                  }}
+                  className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                >
+                  <RotateCcw size={12} />
+                </button>
+              </div>
+            );
+          })}
+
+          {stagedFiles.length === 0 && unstagedFiles.length === 0 && (
+            <div className="text-[12.5px] text-fg-muted">No changes</div>
+          )}
+
+          {/* Commit box last — the workflow is review the changes, then
+              write the message and commit. */}
           <textarea
             rows={3}
             placeholder="Commit message…"
@@ -285,159 +414,7 @@ export function ReviewPanel() {
             </button>
           </div>
 
-          {/* AI Review — summarize every change + what a human must check,
-              or scan all changes for bugs */}
-          <button
-            disabled={status.notARepo || (stagedFiles.length === 0 && unstagedFiles.length === 0)}
-            title="Let AI summarize all changes and flag what a human must review"
-            onClick={(e) => {
-              if (!workspacePath) return;
-              const root = workspacePath;
-              const rect = e.currentTarget.getBoundingClientRect();
-              setMenu({
-                x: rect.left,
-                y: rect.bottom + 4,
-                items: [
-                  {
-                    id: "ai-review-all",
-                    label: "Summarize all changes + review points",
-                    icon: Sparkles,
-                    onClick: () => void runAi(() => reviewAllChanges(root, "Summarize all changes + review points")),
-                  },
-                  {
-                    id: "ai-bugs-all",
-                    label: "Find bugs in all changes",
-                    icon: Bug,
-                    onClick: () => void runAi(() => findBugsInChanges(root, undefined, false, "Find bugs in all changes")),
-                  },
-                ],
-              });
-            }}
-            className="flex w-full items-center justify-center gap-1.5 rounded border border-accent/30 bg-accent/10 py-1.5 text-[12px] text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Sparkles size={12} />
-            AI Review
-          </button>
-
           {commitError && <div className="text-[11px] text-danger">{commitError}</div>}
-          {reviewError && <div className="text-[11px] text-danger">{reviewError}</div>}
-          {pushFeedback && (
-            <div className={`whitespace-pre-line text-[11px] ${pushFeedback.ok ? "text-accent" : "text-danger"}`}>
-              {pushFeedback.message}
-            </div>
-          )}
-
-          {stagedFiles.length > 0 && (
-            <>
-              <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
-                Staged · {stagedFiles.length}
-              </div>
-              {stagedFiles.map((f) => {
-                const stats = stagedStats.get(f.path);
-                return (
-                  <div
-                    key={`staged-${f.path}`}
-                    onClick={() => openDiff(f.path)}
-                    onContextMenu={(e) => openFileMenu(e, f.path, true)}
-                    title={`Compare ${f.path} with HEAD — right-click for AI review`}
-                    className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg-muted hover:bg-hover hover:text-fg"
-                  >
-                    <FileDiff size={13} className="shrink-0 text-fg-muted" />
-                    <span className="flex-1 truncate text-left">{f.path}</span>
-                    {stats && (
-                      <span className="font-mono text-[10px]">
-                        <span className="text-green">+{stats.additions}</span>{" "}
-                        <span className="text-danger">−{stats.deletions}</span>
-                      </span>
-                    )}
-                    <span className={`font-mono text-[11px] font-semibold ${statusColor[f.staged!]}`}>
-                      {f.staged}
-                    </span>
-                    <button
-                      title="Reset — discard this file's changes back to HEAD"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setResetTarget({ path: f.path, isNew: f.staged === "A" });
-                      }}
-                      className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
-                    >
-                      <RotateCcw size={12} />
-                    </button>
-                    <button
-                      title="Unstage"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void unstageFile(f.path);
-                      }}
-                      className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
-                    >
-                      <Minus size={12} />
-                    </button>
-                  </div>
-                );
-              })}
-            </>
-          )}
-
-          <div className="flex items-center justify-between">
-            <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
-              Changes · {unstagedFiles.length}
-            </div>
-            {unstagedFiles.length > 0 && (
-              <button onClick={() => void stageAll()} className="text-[11px] text-accent hover:opacity-80">
-                Stage All
-              </button>
-            )}
-          </div>
-
-          {unstagedFiles.map((f) => {
-            const stats = unstagedStats.get(f.path);
-            return (
-              <div
-                key={`unstaged-${f.path}`}
-                onClick={() => openDiff(f.path)}
-                onContextMenu={(e) => openFileMenu(e, f.path, false)}
-                title={`Compare ${f.path} with HEAD — right-click for AI review`}
-                className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg-muted hover:bg-hover hover:text-fg"
-              >
-                <FileDiff size={13} className="shrink-0 text-fg-muted" />
-                <span className="flex-1 truncate text-left">{f.path}</span>
-                {stats && (
-                  <span className="font-mono text-[10px]">
-                    <span className="text-green">+{stats.additions}</span>{" "}
-                    <span className="text-danger">−{stats.deletions}</span>
-                  </span>
-                )}
-                <span className={`font-mono text-[11px] font-semibold ${statusColor[f.unstaged!]}`}>
-                  {f.unstaged}
-                </span>
-                <button
-                  title="Stage"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void stageFile(f.path);
-                  }}
-                  className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
-                >
-                  <Plus size={12} />
-                </button>
-                <button
-                  title="Reset — discard this file's changes back to HEAD"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setResetTarget({ path: f.path, isNew: !f.staged && f.unstaged === "A" });
-                  }}
-                  className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
-                >
-                  <RotateCcw size={12} />
-                </button>
-              </div>
-            );
-          })}
-
-          {stagedFiles.length === 0 && unstagedFiles.length === 0 && (
-            <div className="text-[12.5px] text-fg-muted">No changes</div>
-          )}
         </>
       )}
 

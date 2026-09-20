@@ -14,7 +14,7 @@ import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { SideBar } from "./components/sidebar/SideBar";
 import { EditorArea } from "./components/editor/EditorArea";
-import { ChatPanel } from "./components/chat/ChatPanel";
+import { ReviewView } from "./components/review/ReviewView";
 import { TerminalPanel } from "./components/terminal/TerminalPanel";
 import { QuickOpen } from "./components/QuickOpen";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -89,7 +89,7 @@ function ConflictSaveDialog() {
 }
 
 function WorkspaceLayout() {
-  const { sidebarVisible, chatVisible, workspacePath, activity } = useUIStore();
+  const { sidebarVisible, workspacePath, activity } = useUIStore();
 
   // Load the real file tree + index whenever the workspace changes.
   useEffect(() => {
@@ -115,22 +115,29 @@ function WorkspaceLayout() {
       <ConflictBanner />
       <div className="flex min-h-0 flex-1">
         <ActivityBar />
-        {sidebarVisible && <SideBar />}
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {activity !== "terminal" && <EditorArea />}
-          {terminalMountedRef.current && (
-            <div
-              className={
-                activity === "terminal"
-                  ? "flex min-h-0 min-w-0 flex-1 flex-col"
-                  : "invisible absolute inset-0 flex flex-col"
-              }
-            >
-              <TerminalPanel />
+        {activity === "review" ? (
+          // Review is a full main-area page (spec v3): changes column +
+          // center diff + bottom findings panel — no sidebar, no chat dock.
+          <ReviewView />
+        ) : (
+          <>
+            {sidebarVisible && <SideBar />}
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+              {activity !== "terminal" && <EditorArea />}
+              {terminalMountedRef.current && (
+                <div
+                  className={
+                    activity === "terminal"
+                      ? "flex min-h-0 min-w-0 flex-1 flex-col"
+                      : "invisible absolute inset-0 flex flex-col"
+                  }
+                >
+                  <TerminalPanel />
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        {chatVisible && <ChatPanel />}
+          </>
+        )}
       </div>
       <StatusBar />
       <SettingsModal />
@@ -313,9 +320,6 @@ function useMenuEvents() {
         case "toggle_sidebar":
           ui.toggleSidebar();
           break;
-        case "toggle_chat":
-          ui.toggleChat();
-          break;
         case "toggle_diff_mode":
           ui.toggleDiffMode();
           break;
@@ -324,9 +328,6 @@ function useMenuEvents() {
           break;
         case "toggle_terminal":
           ui.toggleTerminal();
-          break;
-        case "search":
-          ui.openSearch();
           break;
         case "review":
           ui.setActivity("review");
@@ -361,7 +362,7 @@ function newTerminalSession() {
 }
 
 function useKeyboardShortcuts() {
-  const { toggleSidebar, toggleChat, closeSettings, openSettings, openSearch, toggleTerminal } =
+  const { toggleSidebar, closeSettings, openSettings, openSearch, toggleTerminal } =
     useUIStore();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -414,9 +415,6 @@ function useKeyboardShortcuts() {
         } else if (e.key === ",") {
           e.preventDefault();
           openSettings();
-        } else if (e.shiftKey && (e.key === "C" || e.key === "c")) {
-          e.preventDefault();
-          toggleChat();
         } else if (e.shiftKey && (e.key === "F" || e.key === "f")) {
           e.preventDefault();
           openSearch();
@@ -525,7 +523,7 @@ function useKeyboardShortcuts() {
       window.removeEventListener("keydown", onTreeKey);
       window.removeEventListener("keydown", onEsc);
     };
-  }, [toggleSidebar, toggleChat, closeSettings, openSettings, openSearch, toggleTerminal]);
+  }, [toggleSidebar, closeSettings, openSettings, openSearch, toggleTerminal]);
 }
 
 /** True when the user is typing in an input, textarea, or Monaco editor. */

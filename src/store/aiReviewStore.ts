@@ -1,231 +1,86 @@
 /**
- * AI Review store — unlike chatStore's single conversation, every review
- * trigger (summarize change, review all, bug hunt, explain chunk) opens its
- * own thread so results stay separated and each thread supports follow-up
- * questions. Streaming/state machinery mirrors chatStore: per-thread
- * generation ids guard against stale stream events; stop() keeps the
- * partial streamed text as a message.
+ * Auto Review findings store — one review session at a time (unlike the old
+ * thread-per-trigger chat). Re-running Auto Review starts a fresh session:
+ * findings are cleared and the session id bumped so a still-in-flight run
+ * can't resurrect stale results.
+ *
+ * The store holds no LLM config — that lives in llmConfigStore (moved out
+ * of the deleted chatStore). Async orchestration lives in lib/aiReview.ts;
+ * this is the plain state container the panel renders.
  */
 import { create } from "zustand";
-import { errMessage } from "../lib/errors";
-import {
-  chatSend,
-  loadLlmConfig,
-  type LlmConfig,
-  type IpcMessage,
-  type StreamEvent,
-} from "../lib/llm";
-import { systemPrompt } from "../lib/systemPrompt";
-import { userBubbleLabel, type AiReviewKind } from "../lib/aiReviewPrompts";
+import type { RawFinding } from "../lib/aiReviewPrompts";
 
-export interface ReviewToolCall {
+export interface Finding extends RawFinding {
   id: string;
-  name: string;
+  /** Ticked by the human — moves into the category's Closed section. */
   done: boolean;
-  preview?: string;
-}
-
-export interface AiReviewThread {
-  id: string;
-  kind: AiReviewKind;
-  /** Short title shown on the thread chip. */
-  title: string;
-  /** Short user-facing bubble (the full prompt is message[0].content). */
-  bubble: string;
-  messages: IpcMessage[];
-  streaming: boolean;
-  streamingText: string;
-  activeTools: ReviewToolCall[];
-  error: string | null;
 }
 
 interface AiReviewState {
-  threads: AiReviewThread[];
-  activeThreadId: string | null;
-  config: LlmConfig | null;
-  configLoaded: boolean;
+  findings: Finding[];
+  running: boolean;
+  /** Human-readable phase shown in the panel (e.g. "chunk 2 of 5", "critic"). */
+  phase: string | null;
+  error: string | null;
+  /** Monotonic run id; captured by the runner to detect stale completion. */
+  session: number;
 
-  loadConfig: () => Promise<void>;
-  /** Create a thread, kick off the agent run, return the thread id. */
-  startReview: (args: {
-    kind: AiReviewKind;
-    title: string;
-    bubble?: string;
-    prompt: string;
-    root: string;
-  }) => string;
-  /** Follow-up question inside an existing thread. No-op while streaming. */
-  followUp: (threadId: string, text: string, root: string) => void;
-  /** Stop the in-flight run; partial text is kept as an assistant message. */
-  stop: (threadId: string) => void;
-  closeThread: (threadId: string) => void;
-  isConfigured: () => boolean;
+  /** Clear findings and start a fresh session. Returns the new session id. */
+  begin: () => number;
+  setPhase: (phase: string | null) => void;
+  isCurrent: (session: number) => boolean;
+  /** Stream parsed findings in as each chunk completes (no-op when stale). */
+  addFindings: (session: number, list: RawFinding[]) => void;
+  /** Critic/synthesis replace the whole list; done flags reset by design —
+   *  the list is being rewritten, ticking mid-run is not preserved. */
+  replaceFindings: (session: number, list: RawFinding[]) => void;
+  finish: (session: number, error?: string | null) => void;
+  toggleDone: (id: string) => void;
 }
 
-/** Monotonic generation id per thread; bump to invalidate in-flight runs. */
-const gens = new Map<string, number>();
-let nextThread = 0;
+let nextFinding = 0;
 
-function bumpGen(threadId: string): number {
-  const next = (gens.get(threadId) ?? 0) + 1;
-  gens.set(threadId, next);
-  return next;
-}
-
-export const useAiReviewStore = create<AiReviewState>((set, get) => {
-  const patchThread = (id: string, patch: Partial<AiReviewThread>) =>
-    set((s) => ({
-      threads: s.threads.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-    }));
-
-  const patchThreadFn = (id: string, fn: (t: AiReviewThread) => Partial<AiReviewThread>) =>
-    set((s) => ({
-      threads: s.threads.map((t) => (t.id === id ? { ...t, ...fn(t) } : t)),
-    }));
-
-  /** Shared agent run for the first prompt and for follow-ups. */
-  const runAgent = async (threadId: string, root: string) => {
-    const { config } = get();
-    if (!config) return;
-
-    const gen = bumpGen(threadId);
-    const stale = () => gens.get(threadId) !== gen;
-
-    patchThread(threadId, {
-      streaming: true,
-      error: null,
-      streamingText: "",
-      activeTools: [],
-    });
-
-    const onEvent = (e: StreamEvent) => {
-      if (stale()) return;
-      switch (e.type) {
-        case "textDelta":
-          patchThreadFn(threadId, (t) => ({ streamingText: t.streamingText + e.text }));
-          break;
-        case "toolCallStart":
-          patchThreadFn(threadId, (t) => ({
-            activeTools: [...t.activeTools, { id: e.id, name: e.name, done: false }],
-          }));
-          break;
-        case "toolCallEnd":
-          patchThreadFn(threadId, (t) => ({
-            activeTools: t.activeTools.map((tool) =>
-              tool.id === e.id ? { ...tool, done: true, preview: e.preview } : tool,
-            ),
-          }));
-          break;
-        case "error":
-          patchThread(threadId, { error: e.message });
-          break;
-        case "done":
-          break;
-      }
-    };
-
-    try {
-      const thread = get().threads.find((t) => t.id === threadId);
-      if (!thread) return;
-      const finalText = await chatSend(
-        config,
-        systemPrompt(root, config.preferredLanguage),
-        thread.messages,
-        root,
-        onEvent,
-      );
-      if (stale()) return;
-      patchThreadFn(threadId, (t) => ({
-        messages: [...t.messages, { role: "assistant", content: finalText }],
-        streaming: false,
-        streamingText: "",
-        activeTools: [],
-      }));
-    } catch (err) {
-      if (stale()) return;
-      patchThread(threadId, {
-        streaming: false,
-        streamingText: "",
-        activeTools: [],
-        error: errMessage(err),
-      });
-    }
-  };
-
-  return {
-    threads: [],
-    activeThreadId: null,
-    config: null,
-    configLoaded: false,
-
-    loadConfig: async () => {
-      const cfg = await loadLlmConfig();
-      set({ config: cfg, configLoaded: true });
-    },
-
-    startReview: ({ kind, title, bubble, prompt, root }) => {
-      const id = `review-${Date.now()}-${++nextThread}`;
-      const thread: AiReviewThread = {
-        id,
-        kind,
-        title,
-        bubble: bubble ?? userBubbleLabel(kind),
-        messages: [{ role: "user", content: prompt }],
-        streaming: false,
-        streamingText: "",
-        activeTools: [],
-        error: null,
-      };
-      set((s) => ({ threads: [thread, ...s.threads], activeThreadId: id }));
-      void runAgent(id, root);
-      return id;
-    },
-
-    followUp: (threadId, text, root) => {
-      const thread = get().threads.find((t) => t.id === threadId);
-      const { config } = get();
-      if (!thread || thread.streaming || !config || !text.trim()) return;
-      patchThreadFn(threadId, (t) => ({
-        messages: [...t.messages, { role: "user", content: text.trim() }],
-      }));
-      void runAgent(threadId, root);
-    },
-
-    stop: (threadId) => {
-      const thread = get().threads.find((t) => t.id === threadId);
-      if (!thread || !thread.streaming) return;
-      // Invalidate the generation so late events are ignored; keep whatever
-      // partial text already streamed as an assistant message.
-      bumpGen(threadId);
-      patchThreadFn(threadId, (t) => ({
-        streaming: false,
-        activeTools: [],
-        streamingText: "",
-        messages: t.streamingText
-          ? [...t.messages, { role: "assistant", content: t.streamingText }]
-          : t.messages,
-      }));
-    },
-
-    closeThread: (threadId) => {
-      // Invalidate any in-flight run so its resolution can't resurrect the
-      // thread's state after removal.
-      bumpGen(threadId);
-      set((s) => {
-        const threads = s.threads.filter((t) => t.id !== threadId);
-        return {
-          threads,
-          activeThreadId:
-            s.activeThreadId === threadId
-              ? (threads[0]?.id ?? null)
-              : s.activeThreadId,
-        };
-      });
-    },
-
-    isConfigured: () => {
-      const { config } = get();
-      return !!config && !!config.model && !!config.baseUrl;
-    },
-  };
+const toFinding = (f: RawFinding): Finding => ({
+  ...f,
+  id: `finding-${Date.now()}-${++nextFinding}`,
+  done: false,
 });
+
+export const useAiReviewStore = create<AiReviewState>((set, get) => ({
+  findings: [],
+  running: false,
+  phase: null,
+  error: null,
+  session: 0,
+
+  begin: () => {
+    const session = get().session + 1;
+    set({ findings: [], running: true, phase: null, error: null, session });
+    return session;
+  },
+
+  setPhase: (phase) => set({ phase }),
+
+  isCurrent: (session) => get().session === session,
+
+  addFindings: (session, list) => {
+    if (!get().isCurrent(session) || list.length === 0) return;
+    set((s) => ({ findings: [...s.findings, ...list.map(toFinding)] }));
+  },
+
+  replaceFindings: (session, list) => {
+    if (!get().isCurrent(session)) return;
+    set({ findings: list.map(toFinding) });
+  },
+
+  finish: (session, error = null) => {
+    if (!get().isCurrent(session)) return;
+    set({ running: false, phase: null, error });
+  },
+
+  toggleDone: (id) =>
+    set((s) => ({
+      findings: s.findings.map((f) => (f.id === id ? { ...f, done: !f.done } : f)),
+    })),
+}));

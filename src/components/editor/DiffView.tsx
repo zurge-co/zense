@@ -6,9 +6,7 @@ import {
   ChevronDown,
   Columns2,
   Rows2,
-  Sparkles,
   RotateCcw,
-  Loader2,
   Plus,
   Minus,
 } from "lucide-react";
@@ -16,8 +14,6 @@ import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { gitDiffFile, gitDiffCommitFile, gitDiscardFile, gitDiscardLines, gitStageLines, gitUnstageLines } from "../../lib/git";
-import { explainDiffChange, summarizeFileChange, summarizeCommitFileChange } from "../../lib/aiReview";
-import { findChangeAtLine, extractChunk } from "../../lib/diffChunk";
 import { detectLanguage } from "../../lib/lang";
 import { errMessage } from "../../lib/errors";
 import { defineTheme } from "./monacoSetup";
@@ -50,19 +46,6 @@ export function DiffView({ tab }: { tab: EditorTab }) {
     isNonUtf8: boolean;
   } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
-
-  /* The DiffEditor instance is shared across tabs / content loads, so the
-     Monaco context actions must resolve their inputs via refs — a mount
-     closure would go stale the first time a different file's diff loads. */
-  const contentRef = useRef(content);
-  useEffect(() => {
-    contentRef.current = content;
-  }, [content]);
-  const metaRef = useRef({ path, staged, commitMode, fromSha, toSha, root: workspacePath });
-  useEffect(() => {
-    metaRef.current = { path, staged, commitMode, fromSha, toSha, root: workspacePath };
-  });
 
   useEffect(() => {
     let cancelled = false;
@@ -312,29 +295,6 @@ export function DiffView({ tab }: { tab: EditorTab }) {
               <RotateCcw size={13} />
               Reset File
             </button>
-            <button
-              title="Summarize this diff with AI"
-              disabled={aiSummaryLoading}
-              onClick={async () => {
-                if (!workspacePath || aiSummaryLoading) return;
-                setAiSummaryLoading(true);
-                try {
-                  await summarizeFileChange(workspacePath, path, staged, "AI Summary");
-                } catch (err) {
-                  setLoadError(errMessage(err));
-                } finally {
-                  setAiSummaryLoading(false);
-                }
-              }}
-              className="flex items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20 disabled:opacity-50"
-            >
-              {aiSummaryLoading ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <Sparkles size={12} />
-              )}
-              AI Summary
-            </button>
           </>
         )}
       </div>
@@ -366,72 +326,6 @@ export function DiffView({ tab }: { tab: EditorTab }) {
               const update = () => setChanges(editor.getLineChanges() ?? []);
               editor.onDidUpdateDiff(update);
               update();
-              // Right-click a changed chunk on EITHER side (new code or the
-              // old lines being replaced) → AI explains what it does, why,
-              // what it relates to, how to verify, and its risks.
-              const runExplain = (side: "modified" | "original") => (ed: monaco.editor.IStandaloneCodeEditor) => {
-                const pos = ed.getPosition();
-                const c = contentRef.current;
-                const meta = metaRef.current;
-                if (!pos || !c || !meta.root) return;
-                const change = findChangeAtLine(
-                  diffRef.current?.getLineChanges() ?? [],
-                  pos.lineNumber,
-                  side,
-                );
-                if (!change) return;
-                const chunk = extractChunk(change, c.original, c.modified);
-                void explainDiffChange({
-                  root: meta.root,
-                  path: meta.path,
-                  startLine: chunk.startLine,
-                  endLine: chunk.endLine,
-                  removed: chunk.removed,
-                  added: chunk.added,
-                  bubble: "Explain this change with AI",
-                });
-              };
-              const runSummarize = () => {
-                const meta = metaRef.current;
-                if (!meta.root) return;
-                // Commit-to-commit diffs have no working-tree patch — send
-                // the loaded file pair inline instead.
-                if (meta.commitMode) {
-                  const c = contentRef.current;
-                  if (!c || !meta.toSha) return;
-                  void summarizeCommitFileChange({
-                    root: meta.root,
-                    path: meta.path,
-                    fromLabel: meta.fromSha ? short(meta.fromSha) : `${short(meta.toSha)}^`,
-                    toLabel: short(meta.toSha),
-                    original: c.original,
-                    modified: c.modified,
-                    bubble: "Summarize this file's diff with AI",
-                  });
-                  return;
-                }
-                void summarizeFileChange(meta.root, meta.path, meta.staged, "Summarize this file's diff with AI");
-              };
-              for (const side of ["modified", "original"] as const) {
-                const ed =
-                  side === "modified"
-                    ? editor.getModifiedEditor()
-                    : editor.getOriginalEditor();
-                ed.addAction({
-                  id: `zense.explainChange.${side}`,
-                  label: "Explain this change with AI",
-                  contextMenuGroupId: "zense",
-                  contextMenuOrder: 0,
-                  run: runExplain(side),
-                });
-                ed.addAction({
-                  id: `zense.summarizeDiff.${side}`,
-                  label: "Summarize this file's diff with AI",
-                  contextMenuGroupId: "zense",
-                  contextMenuOrder: 1,
-                  run: runSummarize,
-                });
-              }
             }}
             options={{
               readOnly: true,

@@ -1,56 +1,51 @@
 /**
- * AI Review tests — the four LLM-powered review capabilities:
- *   1. right-click a change → summarize that file
- *   2. AI Review button → summarize everything + human review points
- *   3. find bugs/risks in changes
- *   4. right-click code/chunk (editor + diff view) → explain
+ * Auto Review tests — the chunked, strict-JSON review pipeline:
+ *   1. diffChunk: split the staged diff by file, sub-split by hunk over budget
+ *   2. aiReviewPrompts: strict-JSON parse harness (+ markdown last resort)
+ *   3. aiReview.askFindingsJson: ≤2 format-error-only retries
+ *   4. aiReviewStore: findings state, sessions, checkboxes (Closed sections)
  *
- * Follows the structural-verification pattern of the existing suites:
- * pure helpers and the real Zustand store are exercised directly; Tauri/LLM
- * wiring is verified by reading component source. In this environment
- * isTauri() is false, so chatSend resolves with the "not available in
- * browser dev" fallback — enough to exercise the store's thread lifecycle.
+ * Follows the structural-verification pattern of the existing suites: pure
+ * helpers and the real Zustand store are exercised directly; Tauri/LLM
+ * wiring is verified by reading source. isTauri() is false under bun test,
+ * so no real chat_send happens — the `send` seam is stubbed instead.
  */
-import { describe, test, expect, beforeAll, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import * as fs from "fs";
 import * as path from "path";
+import { chunkDiff, splitDiffByFile } from "../src/lib/diffChunk";
 import {
-  filterPatchForPath,
-  buildFileSummaryPrompt,
-  buildCommitFileSummaryPrompt,
-  buildReviewAllPrompt,
-  buildBugHuntPrompt,
-  buildExplainPrompt,
-  threadTitle,
-  userBubbleLabel,
+  FormatError,
+  buildChunkReviewPrompt,
+  buildCriticPrompt,
+  buildRetryInstruction,
+  buildSynthesisPrompt,
+  parseFindingsJson,
+  parseFindingsMarkdownFallback,
 } from "../src/lib/aiReviewPrompts";
-import { toInclusiveRange, findChangeAtLine, extractChunk } from "../src/lib/diffChunk";
-import { useAiReviewStore, type AiReviewThread } from "../src/store/aiReviewStore";
-import type { LlmConfig } from "../src/lib/llm";
+import { askFindingsJson, runAutoReview } from "../src/lib/aiReview";
+import { useAiReviewStore } from "../src/store/aiReviewStore";
+import type { IpcMessage, LlmConfig } from "../src/lib/llm";
 
 const ROOT = path.resolve(__dirname, "..");
 const readSrc = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), "utf-8");
+
+// isTauri() reads `window`; bun test doesn't always provide one.
+if (typeof globalThis.window === "undefined") {
+  (globalThis as { window?: object }).window = {};
+}
 
 const fakeConfig: LlmConfig = {
   apiFormat: "openai",
   baseUrl: "http://localhost:11434",
   apiKey: "",
   model: "test-model",
-  enabledTools: { readFile: true, readFileRange: true, listFiles: true, gitTools: true },
+  enabledTools: { readFile: false, readFileRange: false, listFiles: false, gitTools: false },
   guards: { maxTurns: 5, maxToolOutput: 5000 },
-  preferredLanguage: "th",
+  preferredLanguage: "en",
 };
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
-
-beforeAll(() => {
-  // isTauri() reads `window`; bun test doesn't always provide one.
-  if (typeof globalThis.window === "undefined") {
-    (globalThis as { window?: object }).window = {};
-  }
-});
-
-// ── filterPatchForPath ────────────────────────────────────────────────────
+// ── diffChunk ─────────────────────────────────────────────────────────────
 
 const TWO_FILE_PATCH = [
   "diff --git a/src/a.ts b/src/a.ts",
@@ -58,381 +53,378 @@ const TWO_FILE_PATCH = [
   "--- a/src/a.ts",
   "+++ b/src/a.ts",
   "@@ -1,1 +1,2 @@",
-  " const a = 1;",
-  "+const a2 = 2;",
+  " line1",
+  "+line2",
   "diff --git a/src/b.ts b/src/b.ts",
   "index 3333333..4444444 100644",
   "--- a/src/b.ts",
   "+++ b/src/b.ts",
-  "@@ -1,1 +1,1 @@",
-  "-const b = 1;",
-  "+const b = 2;",
-  "",
+  "@@ -5,3 +5,3 @@",
+  " ctx",
+  "-old",
+  "+new",
+  " ctx",
 ].join("\n");
 
-describe("filterPatchForPath", () => {
-  test("extracts only the requested file's section", () => {
-    const out = filterPatchForPath(TWO_FILE_PATCH, "src/b.ts");
-    expect(out).toContain("diff --git a/src/b.ts b/src/b.ts");
-    expect(out).toContain("+const b = 2;");
-    expect(out).not.toContain("src/a.ts");
+describe("splitDiffByFile", () => {
+  test("splits a patch into per-file sections with headers and hunks", () => {
+    const files = splitDiffByFile(TWO_FILE_PATCH);
+    expect(files.map((f) => f.path)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(files[0].header).toContain("diff --git a/src/a.ts");
+    expect(files[0].hunks).toHaveLength(1);
+    expect(files[0].hunks[0]).toContain("@@ -1,1 +1,2 @@");
   });
 
-  test("extracts the first file's section without bleeding into the second", () => {
-    const out = filterPatchForPath(TWO_FILE_PATCH, "src/a.ts");
-    expect(out).toContain("diff --git a/src/a.ts b/src/a.ts");
-    expect(out).not.toContain("src/b.ts");
+  test("empty patch yields no sections", () => {
+    expect(splitDiffByFile("")).toEqual([]);
+    expect(splitDiffByFile("   \n")).toEqual([]);
   });
 
-  test("matches a rename via the new (b/) path", () => {
-    const rename = "diff --git a/src/old.ts b/src/new.ts\nindex 1..2 100644\n--- a/src/old.ts\n+++ b/src/new.ts\n@@ -1 +1 @@\n-x\n+y\n";
-    expect(filterPatchForPath(rename, "src/new.ts")).toContain("+y");
-    expect(filterPatchForPath(rename, "src/old.ts")).toContain("+y");
-  });
-
-  test("returns empty string when the file is not in the patch", () => {
-    expect(filterPatchForPath(TWO_FILE_PATCH, "src/missing.ts")).toBe("");
-    expect(filterPatchForPath("", "src/a.ts")).toBe("");
+  test("deleted file (no +++ b/ path) falls back to the a/ side", () => {
+    const patch = [
+      "diff --git a/src/gone.ts b/src/gone.ts",
+      "deleted file mode 100644",
+      "--- a/src/gone.ts",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-bye",
+    ].join("\n");
+    expect(splitDiffByFile(patch)[0].path).toBe("src/gone.ts");
   });
 });
 
-// ── prompt builders ───────────────────────────────────────────────────────
-
-describe("AI Review prompt builders", () => {
-  test("file summary embeds the path and the filtered diff", () => {
-    const p = buildFileSummaryPrompt("src/a.ts", TWO_FILE_PATCH, false);
-    expect(p).toContain("src/a.ts");
-    expect(p).toContain("```diff");
-    expect(p).toContain("summarize");
+describe("chunkDiff", () => {
+  test("one chunk per file when everything fits the budget", () => {
+    const chunks = chunkDiff(TWO_FILE_PATCH, 10_000);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]).toMatchObject({ path: "src/a.ts", part: 1, parts: 1 });
+    expect(chunks[0].patch).toContain("+++ b/src/a.ts");
   });
 
-  test("file summary falls back to tools when no patch is available", () => {
-    const p = buildFileSummaryPrompt("src/new.ts", "", false);
-    expect(p).toContain("read_file");
-    expect(p).not.toContain("```diff");
-  });
-
-  test("review-all covers staged+unstaged and demands human review points", () => {
-    const p = buildReviewAllPrompt(TWO_FILE_PATCH, "");
-    expect(p).toContain("Points a human must review");
-    expect(p).toContain("Staged diff");
-    expect(p).toContain("Unstaged diff");
-    expect(p).toContain("(no unstaged changes)");
-  });
-
-  test("commit-file summary embeds both versions with the sha refs", () => {
-    const p = buildCommitFileSummaryPrompt("src/a.ts", "a1b2c3d", "e5f6071", "old code", "new code");
-    expect(p).toContain("src/a.ts");
-    expect(p).toContain("a1b2c3d");
-    expect(p).toContain("e5f6071");
-    expect(p).toContain("old code");
-    expect(p).toContain("new code");
-    expect(p).toContain("summarize");
-  });
-
-  test("bug hunt asks for severity-classified findings", () => {
-    const p = buildBugHuntPrompt("all changes", TWO_FILE_PATCH);
-    expect(p).toContain("[severity]");
-    expect(p).toContain("edge case");
-  });
-
-  test("explain (editor selection) covers what/why/relations/verify/risk", () => {
-    const p = buildExplainPrompt({
-      path: "src/a.ts",
-      startLine: 3,
-      endLine: 8,
-      snippet: "const x = f();",
-    });
-    for (const section of ["What it is", "Why", "Related code", "How to verify", "Risk"]) {
-      expect(p).toContain(section);
+  test("an oversized file is split by hunk, header repeated per chunk", () => {
+    const hunks = Array.from({ length: 4 }, (_, i) =>
+      [`@@ -${i * 10},3 +${i * 10},3 @@`, " ctx", `-old${i}`, `+new${i}`].join("\n"),
+    );
+    const patch = [
+      "diff --git a/big.ts b/big.ts",
+      "--- a/big.ts",
+      "+++ b/big.ts",
+      ...hunks,
+    ].join("\n");
+    const chunks = chunkDiff(patch, 90);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.path).toBe("big.ts");
+      expect(c.patch).toContain("diff --git a/big.ts");
+      expect(c.parts).toBe(chunks.length);
     }
-    expect(p).toContain("src/a.ts:3-8");
-    expect(p).toContain("const x = f();");
+    expect(chunks.map((c) => c.part)).toEqual(chunks.map((_, i) => i + 1));
   });
 
-  test("explain (diff chunk) includes removed vs added blocks", () => {
-    const p = buildExplainPrompt({
+  test("a single hunk larger than the budget stays in one piece", () => {
+    const hugeHunk = `@@ -1,${300} +1,${300} @@\n` + "+x\n".repeat(300);
+    const patch = `diff --git a/h.ts b/h.ts\n--- a/h.ts\n+++ b/h.ts\n${hugeHunk}`;
+    const chunks = chunkDiff(patch, 50);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].patch).toContain("+x");
+  });
+});
+
+// ── parse harness ─────────────────────────────────────────────────────────
+
+const VALID = JSON.stringify({
+  findings: [
+    {
+      category: "bug",
+      title: "Null deref in save",
+      file: "src/save.ts",
+      line: 42,
+      detail: "config may be null",
+      suggestion: "guard before use",
+    },
+  ],
+});
+
+describe("parseFindingsJson", () => {
+  test("accepts a bare JSON object", () => {
+    const out = parseFindingsJson(VALID);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ category: "bug", title: "Null deref in save", line: 42 });
+  });
+
+  test("tolerates a code fence and surrounding prose", () => {
+    const fenced = `Here are my findings:\n\`\`\`json\n${VALID}\n\`\`\`\nDone.`;
+    expect(parseFindingsJson(fenced)).toHaveLength(1);
+  });
+
+  test("empty findings array is valid", () => {
+    expect(parseFindingsJson('{"findings": []}')).toEqual([]);
+  });
+
+  test("rejects non-JSON replies with FormatError", () => {
+    expect(() => parseFindingsJson("I found no issues!")).toThrow(FormatError);
+    expect(() => parseFindingsJson('{"result": []}')).toThrow(FormatError);
+  });
+
+  test("rejects invalid categories and missing titles", () => {
+    expect(() =>
+      parseFindingsJson('{"findings":[{"category":"style","title":"x"}]}'),
+    ).toThrow(FormatError);
+    expect(() => parseFindingsJson('{"findings":[{"category":"bug"}]}')).toThrow(FormatError);
+  });
+
+  test("drops unknown optional fields but keeps file/detail/suggestion", () => {
+    const out = parseFindingsJson(
+      '{"findings":[{"category":"risk","title":"t","file":"a.ts","line":3.7,"detail":"d","suggestion":"s","extra":1}]}',
+    );
+    expect(out[0]).toEqual({ category: "risk", title: "t", file: "a.ts", line: 4, detail: "d", suggestion: "s" });
+  });
+});
+
+describe("parseFindingsMarkdownFallback", () => {
+  test("salvages bullet lines and keyword-maps categories", () => {
+    const raw = [
+      "Findings:",
+      "- Bug: null check missing in parser",
+      "- Risk: race condition when two saves overlap",
+      "- Decide whether the timeout value is right",
+    ].join("\n");
+    const out = parseFindingsMarkdownFallback(raw);
+    expect(out.map((f) => f.category)).toEqual(["bug", "risk", "human-review"]);
+  });
+
+  test("ignores headings and short lines", () => {
+    expect(parseFindingsMarkdownFallback("# Summary\n- ok")).toEqual([]);
+  });
+
+  test("returns empty for prose without bullets", () => {
+    expect(parseFindingsMarkdownFallback("All good, nothing to report.")).toEqual([]);
+  });
+});
+
+// ── askFindingsJson retry harness ─────────────────────────────────────────
+
+type StubSend = (config: LlmConfig, sys: string, messages: IpcMessage[], root: string, onEvent: (e: unknown) => void) => Promise<string>;
+
+const stubSend = (replies: Array<string | Error>, seen?: string[]): StubSend => {
+  let i = 0;
+  return async (_c, _s, messages) => {
+    seen?.push(messages[messages.length - 1].content);
+    const next = replies[Math.min(i++, replies.length - 1)];
+    if (next instanceof Error) throw next;
+    return next;
+  };
+};
+
+describe("askFindingsJson", () => {
+  test("parses a valid first reply without retries", async () => {
+    const out = await askFindingsJson(stubSend([VALID]), fakeConfig, "sys", "/root", "prompt");
+    expect(out).toHaveLength(1);
+  });
+
+  test("retries on format errors with the retry instruction", async () => {
+    const seen: string[] = [];
+    const out = await askFindingsJson(
+      stubSend(["not json at all", VALID], seen),
+      fakeConfig,
+      "sys",
+      "/root",
+      "prompt",
+    );
+    expect(out).toHaveLength(1);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toContain("could not be parsed");
+  });
+
+  test("gives up after 2 format retries and salvages markdown", async () => {
+    const calls = { n: 0 };
+    const send: StubSend = async () => {
+      calls.n++;
+      return "- Bug: something is definitely wrong here";
+    };
+    const out = await askFindingsJson(send, fakeConfig, "sys", "/root", "prompt");
+    expect(calls.n).toBe(3); // initial + 2 retries
+    expect(out).toHaveLength(1);
+    expect(out[0].category).toBe("bug");
+  });
+
+  test("throws FormatError when nothing salvageable remains after retries", async () => {
+    await expect(
+      askFindingsJson(stubSend(["???"]), fakeConfig, "sys", "/root", "prompt"),
+    ).rejects.toThrow(FormatError);
+  });
+
+  test("provider/network errors do NOT consume retries — they propagate", async () => {
+    const calls = { n: 0 };
+    const send: StubSend = async () => {
+      calls.n++;
+      throw new Error("connection refused");
+    };
+    await expect(
+      askFindingsJson(send, fakeConfig, "sys", "/root", "prompt"),
+    ).rejects.toThrow("connection refused");
+    expect(calls.n).toBe(1);
+  });
+});
+
+// ── prompts ───────────────────────────────────────────────────────────────
+
+describe("prompt builders", () => {
+  test("chunk prompt embeds the patch, position, and the strict-JSON schema", () => {
+    const p = buildChunkReviewPrompt({
+      patch: "@@ -1 +1 @@",
       path: "src/a.ts",
-      startLine: 5,
-      endLine: 6,
-      snippet: "+new code",
-      removed: "-old code",
+      part: 2,
+      parts: 3,
+      chunkIndex: 2,
+      chunkCount: 4,
+      files: ["src/a.ts", "src/b.ts"],
     });
-    expect(p).toContain("Old code");
-    expect(p).toContain("-old code");
-    expect(p).toContain("+new code");
+    expect(p).toContain("chunk 2 of 4");
+    expect(p).toContain("part 2 of 3");
+    expect(p).toContain("`src/a.ts`");
+    expect(p).toContain("src/a.ts, src/b.ts");
+    expect(p).toContain('"category"');
+    expect(p).toContain('"human-review"');
+    expect(p).toContain("Reply with ONLY a JSON object");
   });
 
-  test("thread tab titles keep Thai kind labels", () => {
-    expect(threadTitle("file-summary", "src/a.ts")).toContain("src/a.ts");
+  test("retry instruction quotes the parse error", () => {
+    expect(buildRetryInstruction("boom")).toContain("boom");
   });
 
-  test("bubble fallback mirrors the English button/menu labels", () => {
-    expect(userBubbleLabel("file-summary")).toBe("Summarize with AI");
-    expect(userBubbleLabel("review-all")).toBe("Summarize all changes + review points");
-    expect(userBubbleLabel("bug-hunt")).toBe("Find bugs with AI");
-    expect(userBubbleLabel("explain")).toBe("Explain with AI");
-  });
-});
-
-// ── diffChunk helpers ─────────────────────────────────────────────────────
-
-const change = (oS: number, oE: number, mS: number, mE: number) => ({
-  originalStartLineNumber: oS,
-  originalEndLineNumber: oE,
-  modifiedStartLineNumber: mS,
-  modifiedEndLineNumber: mE,
-});
-
-describe("diffChunk helpers", () => {
-  test("toInclusiveRange normalizes Monaco's empty-range encoding", () => {
-    expect(toInclusiveRange(5, 8)).toEqual({ start: 5, end: 8 });
-    expect(toInclusiveRange(5, 0)).toEqual({ start: 6, end: 5 });
-    expect(toInclusiveRange(5, 4)).toEqual({ start: 6, end: 5 });
-  });
-
-  test("findChangeAtLine returns the change containing the line", () => {
-    const changes = [change(1, 1, 1, 2), change(10, 12, 11, 13)];
-    expect(findChangeAtLine(changes, 12)).toBe(changes[1]);
-    expect(findChangeAtLine(changes, 1)).toBe(changes[0]);
-  });
-
-  test("findChangeAtLine falls back to the nearest change", () => {
-    const changes = [change(1, 1, 1, 2), change(20, 20, 20, 22)];
-    expect(findChangeAtLine(changes, 15)).toBe(changes[1]);
-    expect(findChangeAtLine([], 5)).toBeUndefined();
-  });
-
-  test("findChangeAtLine resolves lines on the original side too", () => {
-    // A pure deletion: empty modified range, real original range.
-    const changes = [change(20, 23, 21, 0), change(5, 5, 5, 7)];
-    // Original-side line of the deleted block hits the deletion change.
-    expect(findChangeAtLine(changes, 22, "original")).toBe(changes[0]);
-    // Modified-side line 22 does NOT (it belongs to the second change's vicinity is checked separately).
-    expect(findChangeAtLine(changes, 6, "modified")).toBe(changes[1]);
-  });
-
-  test("extractChunk pulls removed and added text", () => {
-    const original = "a\nb\nc\nd";
-    const modified = "a\nX\nY\nd";
-    const chunk = extractChunk(change(2, 3, 2, 3), original, modified);
-    expect(chunk).toEqual({ removed: "b\nc", added: "X\nY", startLine: 2, endLine: 3 });
-  });
-
-  test("extractChunk handles a pure insertion", () => {
-    const original = "a\nb";
-    const modified = "a\nNEW\nb";
-    // Insert before modified line 2: original range empty (2,1).
-    const chunk = extractChunk(change(2, 1, 2, 2), original, modified);
-    expect(chunk.removed).toBe("");
-    expect(chunk.added).toBe("NEW");
+  test("critic and synthesis prompts carry the findings JSON", () => {
+    const findings = parseFindingsJson(VALID);
+    expect(buildCriticPrompt(findings)).toContain("Null deref in save");
+    expect(buildSynthesisPrompt(findings, ["src/save.ts"])).toContain("src/save.ts");
   });
 });
 
-// ── aiReviewStore thread lifecycle ────────────────────────────────────────
-
-const makeThread = (id: string, over: Partial<AiReviewThread> = {}): AiReviewThread => ({
-  id,
-  kind: "explain",
-  title: id,
-  bubble: id,
-  messages: [],
-  streaming: false,
-  streamingText: "",
-  activeTools: [],
-  error: null,
-  ...over,
-});
+// ── store ─────────────────────────────────────────────────────────────────
 
 describe("aiReviewStore", () => {
   beforeEach(() => {
     useAiReviewStore.setState({
-      threads: [],
-      activeThreadId: null,
-      config: fakeConfig,
-      configLoaded: true,
+      findings: [],
+      running: false,
+      phase: null,
+      error: null,
+      session: 0,
     });
   });
 
-  test("startReview creates an active thread and completes the run", async () => {
-    const id = useAiReviewStore.getState().startReview({
-      kind: "file-summary",
-      title: "สรุปไฟล์ · src/a.ts",
-      prompt: "สรุป src/a.ts",
-      root: "/tmp",
-    });
-    let s = useAiReviewStore.getState();
-    expect(s.activeThreadId).toBe(id);
-    expect(s.threads).toHaveLength(1);
-    expect(s.threads[0].messages[0]).toEqual({ role: "user", content: "สรุป src/a.ts" });
-    expect(s.threads[0].streaming).toBe(true);
-
-    await tick();
-    s = useAiReviewStore.getState();
-    // Non-Tauri fallback reply is appended as the assistant message.
-    expect(s.threads[0].streaming).toBe(false);
-    expect(s.threads[0].messages).toHaveLength(2);
-    expect(s.threads[0].messages[1].role).toBe("assistant");
+  const raw = (title: string, category: "bug" | "risk" | "human-review" = "bug") => ({
+    category,
+    title,
   });
 
-  test("startReview stores an explicit bubble (clicked button label) verbatim", () => {
-    const id = useAiReviewStore.getState().startReview({
-      kind: "bug-hunt",
-      title: "หาบั๊ก · src/a.ts",
-      bubble: "Find bugs in all changes",
-      prompt: "real english prompt",
-      root: "/tmp",
-    });
-    const t = useAiReviewStore.getState().threads.find((x) => x.id === id)!;
-    expect(t.bubble).toBe("Find bugs in all changes");
-    // The bubble is display-only — the LLM still gets the full prompt.
-    expect(t.messages[0]).toEqual({ role: "user", content: "real english prompt" });
-  });
-
-  test("followUp appends user + assistant messages to the same thread", async () => {
-    const id = useAiReviewStore.getState().startReview({
-      kind: "bug-hunt",
-      title: "หาบั๊ก",
-      prompt: "หาบั๊ก",
-      root: "/tmp",
-    });
-    await tick();
-    useAiReviewStore.getState().followUp(id, "แล้วเสี่ยงอะไรอีก", "/tmp");
-    await tick();
-    const t = useAiReviewStore.getState().threads[0];
-    expect(t.messages).toHaveLength(4);
-    expect(t.messages[2]).toEqual({ role: "user", content: "แล้วเสี่ยงอะไรอีก" });
-    expect(t.messages[3].role).toBe("assistant");
-  });
-
-  test("followUp is ignored while the thread is streaming", () => {
-    const id = useAiReviewStore.getState().startReview({
-      kind: "review-all",
-      title: "Review ทั้งหมด",
-      prompt: "review",
-      root: "/tmp",
-    });
-    // Still streaming → follow-up must be dropped, not queued.
-    useAiReviewStore.getState().followUp(id, "too soon", "/tmp");
-    expect(useAiReviewStore.getState().threads[0].messages).toHaveLength(1);
-  });
-
-  test("stop keeps partial streamed text as an assistant message", () => {
-    const t = makeThread("t-stop", { streaming: true, streamingText: "partial draft" });
-    useAiReviewStore.setState({ threads: [t], activeThreadId: "t-stop" });
-    useAiReviewStore.getState().stop("t-stop");
-    const s = useAiReviewStore.getState().threads[0];
-    expect(s.streaming).toBe(false);
-    expect(s.streamingText).toBe("");
-    expect(s.messages.at(-1)).toEqual({ role: "assistant", content: "partial draft" });
-  });
-
-  test("closeThread removes the thread and reselects another", () => {
-    useAiReviewStore.setState({
-      threads: [makeThread("t1"), makeThread("t2")],
-      activeThreadId: "t1",
-    });
-    useAiReviewStore.getState().closeThread("t1");
+  test("begin clears findings and starts a fresh session", () => {
     const s = useAiReviewStore.getState();
-    expect(s.threads.map((t) => t.id)).toEqual(["t2"]);
-    expect(s.activeThreadId).toBe("t2");
+    s.addFindings(1, [raw("old")]); // ignored — no session started
+    const session = useAiReviewStore.getState().begin();
+    useAiReviewStore.getState().addFindings(session, [raw("first")]);
+    expect(useAiReviewStore.getState().findings).toHaveLength(1);
+    expect(useAiReviewStore.getState().running).toBe(true);
+    const again = useAiReviewStore.getState().begin();
+    expect(again).toBe(session + 1);
+    expect(useAiReviewStore.getState().findings).toHaveLength(0);
   });
 
-  test("isConfigured requires baseUrl+model from the saved config", () => {
-    expect(useAiReviewStore.getState().isConfigured()).toBe(true);
-    useAiReviewStore.setState({ config: null });
-    expect(useAiReviewStore.getState().isConfigured()).toBe(false);
+  test("addFindings assigns ids and appends; stale sessions are ignored", () => {
+    const session = useAiReviewStore.getState().begin();
+    useAiReviewStore.getState().addFindings(session, [raw("a"), raw("b", "risk")]);
+    useAiReviewStore.getState().addFindings(session - 1, [raw("stale")]);
+    const { findings } = useAiReviewStore.getState();
+    expect(findings.map((f) => f.title)).toEqual(["a", "b"]);
+    expect(findings[0].id).not.toBe(findings[1].id);
+    expect(findings.every((f) => !f.done)).toBe(true);
+  });
+
+  test("toggleDone flags a finding for the Closed section", () => {
+    const session = useAiReviewStore.getState().begin();
+    useAiReviewStore.getState().addFindings(session, [raw("a")]);
+    const id = useAiReviewStore.getState().findings[0].id;
+    useAiReviewStore.getState().toggleDone(id);
+    expect(useAiReviewStore.getState().findings[0].done).toBe(true);
+    useAiReviewStore.getState().toggleDone(id);
+    expect(useAiReviewStore.getState().findings[0].done).toBe(false);
+  });
+
+  test("replaceFindings swaps the whole list (critic/synthesis)", () => {
+    const session = useAiReviewStore.getState().begin();
+    useAiReviewStore.getState().addFindings(session, [raw("a"), raw("b")]);
+    useAiReviewStore.getState().replaceFindings(session, [raw("c", "human-review")]);
+    const { findings } = useAiReviewStore.getState();
+    expect(findings).toHaveLength(1);
+    expect(findings[0].category).toBe("human-review");
+  });
+
+  test("finish clears running/phase and records an error", () => {
+    const session = useAiReviewStore.getState().begin();
+    useAiReviewStore.getState().setPhase("chunk 1 of 2");
+    useAiReviewStore.getState().finish(session, "boom");
+    const s = useAiReviewStore.getState();
+    expect(s.running).toBe(false);
+    expect(s.phase).toBeNull();
+    expect(s.error).toBe("boom");
+  });
+});
+
+// ── runAutoReview guards (no Tauri here, so the pipeline itself can't run) ──
+
+describe("runAutoReview guards", () => {
+  test("throws a setup error when the provider is not configured", async () => {
+    await expect(runAutoReview("/tmp/nowhere")).rejects.toThrow(/AI provider/i);
   });
 });
 
 // ── structural wiring ─────────────────────────────────────────────────────
 
-describe("AI Review wiring (structural)", () => {
-  test("uiStore: 'aiReview' is a RightTab", () => {
-    expect(readSrc("src/store/uiStore.ts")).toContain('"aiReview"');
+describe("Auto Review structural wiring", () => {
+  test("Rust backend keeps chat_send + llm_test_connection, drops toggle_chat", () => {
+    const lib = readSrc("src-tauri/src/lib.rs");
+    expect(lib).toContain("chatcmd::chat_send");
+    expect(lib).toContain("chatcmd::llm_test_connection");
+    expect(lib).not.toContain("toggle_chat");
   });
 
-  test("ChatPanel renders the AI Review tab", () => {
-    const src = readSrc("src/components/chat/ChatPanel.tsx");
-    expect(src).toContain("aiReview");
-    expect(src).toContain("AiReviewPanel");
+  test("Review panel runs the chunked Auto Review pipeline", () => {
+    const panel = readSrc("src/components/sidebar/ReviewPanel.tsx");
+    expect(panel).toContain("runAutoReview");
+    expect(panel).not.toContain("summarizeFileChange");
+    expect(panel).not.toContain("findBugsInChanges");
+    expect(panel).not.toContain("reviewAllChanges");
   });
 
-  test("ReviewPanel: right-click menu on changes + AI Review button", () => {
-    const src = readSrc("src/components/sidebar/ReviewPanel.tsx");
-    expect(src.toLowerCase()).toContain("contextmenu");
-    expect(src).toContain("Summarize with AI");
-    expect(src).toContain("Find bugs with AI");
-    expect(src).toContain("AI Review");
-    expect(src).toContain("reviewAllChanges");
-  });
-
-  test("CodeEditor adds an AI explain action next to Copy Reference", () => {
-    const src = readSrc("src/components/editor/CodeEditor.tsx");
-    const actions = src.match(/\.addAction\(/g) ?? [];
-    expect(actions.length).toBeGreaterThanOrEqual(2);
-    expect(src).toContain("zense.explainWithAi");
-    expect(src).toContain("Explain with AI");
-  });
-
-  test("CodeEditor: explain falls back to the cursor line without a selection", () => {
-    const src = readSrc("src/components/editor/CodeEditor.tsx");
-    expect(src).toContain("sel.isEmpty()");
-    expect(src).toContain("getLineContent(sel.startLineNumber)");
-    // An empty selection must no longer silently abort.
-    expect(src).not.toContain("sel.isEmpty() || !root");
-  });
-
-  test("DiffView: context menu enabled with explain/summarize actions", () => {
-    const src = readSrc("src/components/editor/DiffView.tsx");
-    expect(src).toContain("addAction");
-    expect(src).toContain("zense.explainChange");
-    expect(src).toContain("contextmenu: true");
-  });
-
-  test("DiffView: AI actions exist on BOTH diff sides (new + old code)", () => {
-    const src = readSrc("src/components/editor/DiffView.tsx");
-    expect(src).toContain("getModifiedEditor()");
-    expect(src).toContain("getOriginalEditor()");
-    expect(src).toContain('"original"');
-    const actions = src.match(/\.addAction\(/g) ?? [];
-    expect(actions.length).toBeGreaterThanOrEqual(2);
-  });
-
-  test("DiffView: summarize menu works in commit-diff tabs too (not a dead item)", () => {
-    const src = readSrc("src/components/editor/DiffView.tsx");
-    expect(src).toContain("summarizeCommitFileChange");
-    expect(src).toContain("fromSha");
-    expect(src).toContain("toSha");
-    // The commit-mode branch must send the loaded file pair inline.
-    const commitBranch = src.indexOf("if (meta.commitMode)");
-    expect(commitBranch).toBeGreaterThan(-1);
-    expect(src.slice(commitBranch, commitBranch + 700)).toContain("original: c.original");
-  });
-
-  test("DiffView: the pre-existing AI Summary button is wired", () => {
-    const src = readSrc("src/components/editor/DiffView.tsx");
-    const titleIdx = src.indexOf('title="Summarize this diff with AI"');
-    const labelIdx = src.indexOf("AI Summary", titleIdx);
-    expect(titleIdx).toBeGreaterThan(-1);
-    const buttonBody = src.slice(titleIdx, labelIdx);
-    expect(buttonBody).toContain("onClick");
-    expect(buttonBody).toContain("summarizeFileChange");
-  });
-
-  test("orchestration helpers exist and switch to the AI Review tab", () => {
-    const src = readSrc("src/lib/aiReview.ts");
-    for (const fn of [
-      "summarizeFileChange",
-      "summarizeCommitFileChange",
-      "reviewAllChanges",
-      "findBugsInChanges",
-      "explainSelection",
-      "explainDiffChange",
-    ]) {
-      expect(src).toContain(fn);
+  test("removed AI actions are gone from the editor and diff view", () => {
+    const editor = readSrc("src/components/editor/CodeEditor.tsx");
+    const diff = readSrc("src/components/editor/DiffView.tsx");
+    for (const src of [editor, diff]) {
+      expect(src).not.toContain("Explain with AI");
+      expect(src).not.toContain("explainSelection");
+      expect(src).not.toContain("explainDiffChange");
+      expect(src).not.toContain("summarizeCommitFileChange");
     }
-    expect(src).toContain('setRightTab("aiReview")');
-    expect(src).toContain("startReview");
+  });
+
+  test("findings panel groups Bug / Risk / Human Review with Closed sections", () => {
+    const panel = readSrc("src/components/aiReview/AiReviewPanel.tsx");
+    expect(panel).toContain("Bug");
+    expect(panel).toContain("Risk");
+    expect(panel).toContain("Human Review");
+    expect(panel).toContain("Closed");
+    expect(panel).toContain("toggleDone");
+  });
+
+  test("prompts and parse harness are English-only (language-independent parser)", () => {
+    const prompts = readSrc("src/lib/aiReviewPrompts.ts");
+    expect(prompts).toContain('"bug"');
+    expect(prompts).toContain('"risk"');
+    expect(prompts).toContain('"human-review"');
+    // The language directive stays in the shared system prompt.
+    expect(readSrc("src/lib/systemPrompt.ts")).toContain("Always answer in");
+    // No Thai characters anywhere in the review pipeline.
+    expect(readSrc("src/lib/aiReview.ts")).not.toMatch(/[ก-๙]/);
+    expect(prompts).not.toMatch(/[ก-๙]/);
   });
 });

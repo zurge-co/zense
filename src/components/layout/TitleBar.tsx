@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { PanelLeft, PanelRight, GitBranch, FolderOpen, Clock } from "lucide-react";
+import { PanelLeft, GitBranch, FolderOpen, Clock, Timer } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
+import { useFocusStore } from "../../store/focusStore";
+import { formatDuration, totalMs } from "../../lib/focus";
+import { FocusPanel } from "../focus/FocusPanel";
 import {
   formatRelativeTime,
   loadRecents,
@@ -10,13 +13,36 @@ import {
 } from "../../lib/workspace";
 
 export function TitleBar() {
-  const { toggleSidebar, toggleChat, sidebarVisible, chatVisible } =
+  const { toggleSidebar, sidebarVisible, focusPopoverOpen, toggleFocusPopover, setFocusPopover } =
     useUIStore();
   const workspaceName = useUIStore((s) => s.workspaceName);
   const workspacePath = useUIStore((s) => s.workspacePath);
+  const focusNow = useFocusStore((s) => s.now);
+  const focusActive = useFocusStore((s) => s.tasks.find((t) => t.status === "active"));
   const [menuOpen, setMenuOpen] = useState(false);
   const [recents, setRecents] = useState<RecentWorkspace[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
+  const focusRef = useRef<HTMLDivElement>(null);
+
+  // Focus popover: close on outside click / Escape (same pattern as the
+  // recents menu below).
+  useEffect(() => {
+    if (!focusPopoverOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (focusRef.current && !focusRef.current.contains(e.target as Node)) {
+        setFocusPopover(false);
+      }
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocusPopover(false);
+    };
+    window.addEventListener("mousedown", onClick);
+    window.addEventListener("keydown", onEsc);
+    return () => {
+      window.removeEventListener("mousedown", onClick);
+      window.removeEventListener("keydown", onEsc);
+    };
+  }, [focusPopoverOpen, setFocusPopover]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -76,14 +102,33 @@ export function TitleBar() {
         >
           <PanelLeft size={15} />
         </button>
+        {/* Focus tasks live in a TitleBar popover now (the right-hand chat
+            dock is gone). Shows the running timer inline. */}
         <button
-          onClick={toggleChat}
-          title="Toggle AI Chat"
-          className={`rounded p-1.5 hover:bg-hover ${chatVisible ? "text-fg" : "text-fg-muted"}`}
+          onClick={toggleFocusPopover}
+          title="Focus tasks"
+          className={`flex items-center gap-1 rounded p-1.5 hover:bg-hover ${
+            focusPopoverOpen || focusActive ? "text-fg" : "text-fg-muted"
+          }`}
         >
-          <PanelRight size={15} />
+          <Timer size={15} />
+          {focusActive && (
+            <span className="text-[11px] tabular-nums text-accent">
+              {formatDuration(totalMs(focusActive, focusNow))}
+            </span>
+          )}
         </button>
       </div>
+
+      {focusPopoverOpen && (
+        <div
+          ref={focusRef}
+          className="absolute right-2 top-10 z-50 max-h-[70vh] w-80 overflow-y-auto rounded-md border border-border bg-panel shadow-xl"
+          data-no-drag
+        >
+          <FocusPanel />
+        </div>
+      )}
 
       {menuOpen && (
         <div

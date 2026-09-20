@@ -126,16 +126,5 @@ describe("ReviewPanel branch dropdown", () => {
   });
 });
 
-// ── TASKS.md bookkeeping ──────────────────────────────────────────────────
-
-describe("TASKS.md — Review section checks", () => {
-  const TASKS = readSrc("TASKS.md");
-  test("AI commit message / AI Summary marked shipped", () => {
-    expect(TASKS).toContain("- [x] AI commit message");
-    expect(TASKS).toContain("- [x] AI Summary");
-  });
-  test("branch dropdown + hunk staging marked done", () => {
-    expect(TASKS).toContain("- [x] Branch: switch/create/list");
-    expect(TASKS).toContain("- [x] Stage/unstage ระดับ hunk");
-  });
-});
+// The TASKS.md task board was removed from the repo — its bookkeeping
+// block lived here; nothing to assert anymore.

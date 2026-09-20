@@ -1,16 +1,16 @@
 import { create } from "zustand";
 
-export type Activity = "review" | "history" | "editor" | "search" | "terminal";
-/** Tab inside the right-hand panel (Focus and AI Review live here, not the ActivityBar). */
-export type RightTab = "chat" | "focus" | "aiReview";
+/** Editor sidebar tabs: the Explorer or the workspace-wide Search (⌘⇧F). */
+export type Activity = "review" | "history" | "editor" | "terminal";
 export type Screen = "welcome" | "workspace";
 export type SettingsSection = "general" | "appearance" | "llm" | "shortcuts";
-
-/** Width bounds (px) for the drag-resizable right-hand panel (Chat/Focus/AI Review). */
-export const CHAT_PANEL_WIDTH_MIN = 260;
-export const CHAT_PANEL_WIDTH_MAX = 600;
-export const CHAT_PANEL_WIDTH_DEFAULT = 320;
 export type DiffMode = "split" | "inline";
+
+/**
+ * The Editor activity's sidebar content. Search is an Editor *mode* — there
+ * is no standalone Search activity anymore (⌘⇧F / Find in Files lands here).
+ */
+export type EditorPanelMode = "files" | "search";
 
 /**
  * A tab in the editor area.
@@ -35,34 +35,16 @@ export interface EditorTab {
 export const tabKey = (t: EditorTab) =>
   `${t.kind}:${t.path}:${t.fromSha ?? ""}:${t.toSha ?? ""}`;
 
-/** A piece of code context attached to a composed prompt. */
-export interface ContextChip {
-  path: string;
-  range?: { start: number; end: number };
-}
-
-export const chipLabel = (c: ContextChip) =>
-  c.range
-    ? c.range.start === c.range.end
-      ? `${c.path}#L${c.range.start}`
-      : `${c.path}#L${c.range.start}-${c.range.end}`
-    : c.path;
-
 interface UIState {
   screen: Screen;
   workspacePath: string | null;
   workspaceName: string | null;
-  /** Incremented to request focus on the composer input. */
-  composerFocusNonce: number;
   /** Incremented to request focus on the workspace search input. */
   searchFocusNonce: number;
+  /** Which panel the Editor activity shows: Explorer or Search. */
+  editorPanelMode: EditorPanelMode;
   activity: Activity;
   sidebarVisible: boolean;
-  chatVisible: boolean;
-  /** Selected tab of the right-hand panel. */
-  rightTab: RightTab;
-  /** Drag-resizable width (px) of the right-hand panel. */
-  chatPanelWidth: number;
 
   openTabs: EditorTab[];
   activeTabKey: string | null;
@@ -76,6 +58,8 @@ interface UIState {
   cursorPos: { line: number; col: number } | null;
   /** Quick-open file modal (⌘P). */
   quickOpenVisible: boolean;
+  /** Focus tasks popover anchored to the TitleBar's top-right button. */
+  focusPopoverOpen: boolean;
   /** Optional right-hand split pane showing this tab key (⌘\). */
   splitTabKey: string | null;
   /** Bumped to ask EditorArea to close the active tab (dirty-aware). */
@@ -84,14 +68,11 @@ interface UIState {
   setScreen: (s: Screen) => void;
   openWorkspace: (path: string) => void;
   setActivity: (a: Activity) => void;
-  /** Open the workspace search panel and focus its input (⌘⇧F). */
+  /** Switch the Editor sidebar between the Explorer and Search. */
+  setEditorPanelMode: (mode: EditorPanelMode) => void;
+  /** Open the Editor activity in search mode and focus its input (⌘⇧F). */
   openSearch: () => void;
   toggleSidebar: () => void;
-  toggleChat: () => void;
-  /** Select a right-panel tab (opens the panel if hidden). */
-  setRightTab: (t: RightTab) => void;
-  /** Set the right-panel width, clamped to the CHAT_PANEL_WIDTH bounds. */
-  setChatPanelWidth: (w: number) => void;
   /** Open terminal panel and focus its input (⌘`). */
   toggleTerminal: () => void;
   /** Commit sha selected as the base for "Compare with Selected". */
@@ -118,6 +99,8 @@ interface UIState {
   setCursorPos: (p: { line: number; col: number } | null) => void;
   setQuickOpenVisible: (v: boolean) => void;
   toggleQuickOpen: () => void;
+  toggleFocusPopover: () => void;
+  setFocusPopover: (open: boolean) => void;
   /** Split the active tab into the right pane (or close the split). */
   toggleSplit: () => void;
   closeSplit: () => void;
@@ -128,13 +111,10 @@ export const useUIStore = create<UIState>((set) => ({
   screen: "welcome",
   workspacePath: null,
   workspaceName: null,
-  composerFocusNonce: 0,
   searchFocusNonce: 0,
+  editorPanelMode: "files",
   activity: "review",
   sidebarVisible: true,
-  chatVisible: true,
-  rightTab: "chat" as RightTab,
-  chatPanelWidth: CHAT_PANEL_WIDTH_DEFAULT,
 
   openTabs: [],
   activeTabKey: null,
@@ -143,6 +123,7 @@ export const useUIStore = create<UIState>((set) => ({
   historyCompareBase: null,
   cursorPos: null,
   quickOpenVisible: false,
+  focusPopoverOpen: false,
   splitTabKey: null,
   closeActiveTabNonce: 0,
 
@@ -166,22 +147,15 @@ export const useUIStore = create<UIState>((set) => ({
       activity,
       sidebarVisible: s.activity === activity ? !s.sidebarVisible : true,
     })),
+  setEditorPanelMode: (editorPanelMode) => set({ editorPanelMode }),
   openSearch: () =>
     set((state) => ({
-      activity: "search" as Activity,
+      activity: "editor" as Activity,
+      editorPanelMode: "search" as EditorPanelMode,
       sidebarVisible: true,
       searchFocusNonce: state.searchFocusNonce + 1,
     })),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
-  toggleChat: () => set((s) => ({ chatVisible: !s.chatVisible })),
-  setRightTab: (rightTab) => set({ rightTab, chatVisible: true }),
-  setChatPanelWidth: (w) =>
-    set({
-      chatPanelWidth: Math.min(
-        CHAT_PANEL_WIDTH_MAX,
-        Math.max(CHAT_PANEL_WIDTH_MIN, Math.round(w)),
-      ),
-    }),
   toggleTerminal: () =>
     set((_s) => ({
       activity: "terminal" as Activity,
@@ -291,6 +265,8 @@ export const useUIStore = create<UIState>((set) => ({
   setCursorPos: (cursorPos) => set({ cursorPos }),
   setQuickOpenVisible: (quickOpenVisible) => set({ quickOpenVisible }),
   toggleQuickOpen: () => set((s) => ({ quickOpenVisible: !s.quickOpenVisible })),
+  toggleFocusPopover: () => set((s) => ({ focusPopoverOpen: !s.focusPopoverOpen })),
+  setFocusPopover: (open) => set({ focusPopoverOpen: open }),
   toggleSplit: () =>
     set((s) => ({
       splitTabKey: s.splitTabKey ? null : s.activeTabKey,

@@ -59,8 +59,8 @@ export function StatusBar() {
         )}
         {focusActive && (
           <button
-            title="Focus timer — open Focus panel"
-            onClick={() => useUIStore.getState().setRightTab("focus")}
+            title="Focus timer — open Focus tasks"
+            onClick={() => useUIStore.getState().toggleFocusPopover()}
             className="flex items-center gap-1 text-accent hover:text-fg"
           >
             <Timer size={11} />
@@ -69,8 +69,8 @@ export function StatusBar() {
         )}
         {focusIdle && (
           <button
-            title="Timer paused (idle) — open Focus panel to resume or finish"
-            onClick={() => useUIStore.getState().setRightTab("focus")}
+            title="Timer paused (idle) — open Focus tasks to resume or finish"
+            onClick={() => useUIStore.getState().toggleFocusPopover()}
             className="flex items-center gap-1 text-yellow hover:text-fg"
           >
             <Hourglass size={11} />

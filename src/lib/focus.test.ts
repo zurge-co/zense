@@ -56,7 +56,7 @@ describe("formatDuration", () => {
 
 describe("applyEvent", () => {
   test("create + start yields one active task with an open segment", () => {
-    const snap = applyAll([create(t(0), "a", "งาน A"), start(t(1), "a")]);
+    const snap = applyAll([create(t(0), "a", "Task A"), start(t(1), "a")]);
     const a = snap.tasks[0];
     expect(a.status).toBe("active");
     expect(a.segments).toEqual([{ start: t(1), end: null }]);

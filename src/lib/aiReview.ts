@@ -1,169 +1,166 @@
 /**
- * Orchestration layer for the AI Review feature: turns a UI trigger (right-
- * click a change, the AI Review button, a Monaco context action) into a
- * thread in the AI Review panel. Fetching diff context lives here so the
- * components stay thin and the prompt builders stay pure (aiReviewPrompts).
+ * Auto Review orchestration: staged diff → per-file chunks (hunk-split over
+ * budget) → sequential strict-JSON review calls → streamed findings →
+ * critic pass → cross-file synthesis. The findings land in aiReviewStore;
+ * this module owns the async pipeline and its error semantics.
  *
- * Errors are thrown as user-readable strings; callers surface them.
+ * Retry contract: only FormatError (unparseable reply) consumes one of the
+ * 2 retries — provider/network errors abort the run immediately. When the
+ * retries are exhausted the raw markdown reply is salvaged as a last
+ * resort instead of dropping the chunk.
  */
-import { gitStagedDiff, gitUnstagedDiff } from "./git";
+import { gitStagedDiff } from "./git";
+import { errMessage } from "./errors";
+import { chatSend, type IpcMessage, type LlmConfig } from "./llm";
+import { systemPrompt } from "./systemPrompt";
 import { useAiReviewStore } from "../store/aiReviewStore";
-import { useUIStore } from "../store/uiStore";
+import { useLlmConfigStore } from "../store/llmConfigStore";
 import {
-  buildBugHuntPrompt,
-  buildCommitFileSummaryPrompt,
-  buildExplainPrompt,
-  buildFileSummaryPrompt,
-  buildReviewAllPrompt,
-  filterPatchForPath,
-  threadTitle,
-  type AiReviewKind,
+  FormatError,
+  buildChunkReviewPrompt,
+  buildCriticPrompt,
+  buildRetryInstruction,
+  buildSynthesisPrompt,
+  parseFindingsJson,
+  parseFindingsMarkdownFallback,
+  type RawFinding,
 } from "./aiReviewPrompts";
+import { chunkDiff, splitDiffByFile } from "./diffChunk";
+
+/** Max format-error retries per LLM call (2 retries → up to 3 attempts). */
+const MAX_FORMAT_RETRIES = 2;
+
+type SendFn = (
+  config: LlmConfig,
+  systemPrompt: string,
+  messages: IpcMessage[],
+  root: string,
+  onEvent: (e: unknown) => void,
+) => Promise<string>;
 
 /**
- * Open the AI Review panel and start a thread. When the LLM is not
- * configured the panel shows its setup empty state and no thread is
- * created (returns null). `bubble` is the exact label of the button/menu
- * item the user clicked — shown in the user-side bubble instead of the
- * full prompt.
+ * One strict-JSON round trip with the retry harness: initial attempt + up
+ * to MAX_FORMAT_RETRIES follow-ups that show the model its parse error.
+ * Callers pass `send` so tests can drive the harness without Tauri.
  */
-async function begin(
-  kind: AiReviewKind,
-  target: string | undefined,
-  prompt: string,
+export async function askFindingsJson(
+  send: SendFn,
+  config: LlmConfig,
+  sysPrompt: string,
   root: string,
-  bubble?: string,
-): Promise<string | null> {
-  const store = useAiReviewStore.getState();
-  if (!store.configLoaded) await store.loadConfig();
-  useUIStore.getState().setRightTab("aiReview");
-  if (!useAiReviewStore.getState().isConfigured()) return null;
-  return useAiReviewStore.getState().startReview({
-    kind,
-    title: threadTitle(kind, target),
-    bubble,
-    prompt,
-    root,
-  });
-}
-
-/** The working-tree patch a file appears in, based on where it's listed. */
-async function patchForFile(root: string, path: string, staged: boolean): Promise<string> {
-  const raw = staged ? await gitStagedDiff(root) : await gitUnstagedDiff(root);
-  return filterPatchForPath(raw, path);
-}
-
-/** คลิกขวาที่ change → สรุปการเปลี่ยนแปลงของไฟล์นั้น */
-export async function summarizeFileChange(root: string, path: string, staged: boolean, bubble?: string): Promise<void> {
-  const patch = await patchForFile(root, path, staged);
-  await begin("file-summary", path, buildFileSummaryPrompt(path, patch, staged), root, bubble);
-}
-
-/** ปุ่ม AI ใน Review panel → สรุป changes ทั้งหมด + จุดที่คนต้อง review */
-export async function reviewAllChanges(root: string, bubble?: string): Promise<void> {
-  const [staged, unstaged] = await Promise.all([gitStagedDiff(root), gitUnstagedDiff(root)]);
-  if (!staged.trim() && !unstaged.trim()) {
-    throw new Error("No changes to review — ยังไม่มีการเปลี่ยนแปลงใด ๆ");
-  }
-  await begin("review-all", undefined, buildReviewAllPrompt(staged, unstaged), root, bubble);
-}
-
-/** หา bug / ความผิดพลาดจาก changes — ทั้ง repo หรือเฉพาะไฟล์ */
-export async function findBugsInChanges(root: string, path?: string, staged = false, bubble?: string): Promise<void> {
-  let scope = "all changes (staged + unstaged)";
-  let patch: string;
-  if (path) {
-    scope = `the changes in \`${path}\``;
-    patch = await patchForFile(root, path, staged);
-  } else {
-    const [stagedPatch, unstagedPatch] = await Promise.all([
-      gitStagedDiff(root),
-      gitUnstagedDiff(root),
-    ]);
-    if (!stagedPatch.trim() && !unstagedPatch.trim()) {
-      throw new Error("No changes to scan — ยังไม่มีการเปลี่ยนแปลงใด ๆ");
+  prompt: string,
+): Promise<RawFinding[]> {
+  const messages: IpcMessage[] = [{ role: "user", content: prompt }];
+  let lastReply = "";
+  let lastError: FormatError | null = null;
+  for (let attempt = 0; attempt <= MAX_FORMAT_RETRIES; attempt++) {
+    lastReply = await send(config, sysPrompt, messages, root, () => {});
+    try {
+      return parseFindingsJson(lastReply);
+    } catch (err) {
+      if (!(err instanceof FormatError)) throw err;
+      lastError = err;
+      messages.push({ role: "assistant", content: lastReply });
+      messages.push({ role: "user", content: buildRetryInstruction(err.message) });
     }
-    patch = `--- Staged ---\n${stagedPatch}\n--- Unstaged ---\n${unstagedPatch}`;
   }
-  await begin("bug-hunt", path, buildBugHuntPrompt(scope, patch), root, bubble);
+  // Last resort: keep whatever the model said as markdown findings instead
+  // of failing the chunk after 3 replies.
+  const salvaged = parseFindingsMarkdownFallback(lastReply);
+  if (salvaged.length > 0) return salvaged;
+  throw lastError ?? new FormatError("the model returned no usable findings");
 }
 
-/** คลิกขวาใน commitDiff tab → สรุปการเปลี่ยนแปลงของไฟล์ระหว่างสอง commit */
-export async function summarizeCommitFileChange(args: {
-  root: string;
-  path: string;
-  fromLabel: string;
-  toLabel: string;
-  original: string;
-  modified: string;
-  bubble?: string;
-}): Promise<void> {
-  await begin(
-    "file-summary",
-    args.path,
-    buildCommitFileSummaryPrompt(
-      args.path,
-      args.fromLabel,
-      args.toLabel,
-      args.original,
-      args.modified,
-    ),
-    args.root,
-    args.bubble,
-  );
-}
+const NO_TOOLS = {
+  enabledTools: { readFile: false, readFileRange: false, listFiles: false, gitTools: false },
+};
 
-/** คลิกขวาที่ selection ใน editor → อธิบายโค้ด */
-export async function explainSelection(args: {
-  root: string;
-  path: string;
-  startLine: number;
-  endLine: number;
-  snippet: string;
-  bubble?: string;
-}): Promise<void> {
-  if (!args.snippet.trim()) return;
-  const target =
-    args.startLine === args.endLine
-      ? `${args.path}:${args.startLine}`
-      : `${args.path}:${args.startLine}-${args.endLine}`;
-  await begin(
-    "explain",
-    target,
-    buildExplainPrompt({
-      path: args.path,
-      startLine: args.startLine,
-      endLine: args.endLine,
-      snippet: args.snippet,
-    }),
-    args.root,
-    args.bubble,
-  );
-}
+/**
+ * Run a full Auto Review over the staged diff. Throws user-readable errors
+ * for setup problems (nothing staged, provider not configured); pipeline
+ * errors land on the store so partial findings survive a late failure.
+ */
+export async function runAutoReview(root: string): Promise<void> {
+  const llmStore = useLlmConfigStore.getState();
+  if (!llmStore.configLoaded) await llmStore.loadConfig();
+  const config = useLlmConfigStore.getState().config;
+  if (!config || !config.model || !config.baseUrl) {
+    throw new Error("Set up the AI provider first (Settings → AI Provider).");
+  }
 
-/** คลิกขวาที่ chunk ใน diff view → อธิบายการเปลี่ยนแปลงของ chunk นั้น */
-export async function explainDiffChange(args: {
-  root: string;
-  path: string;
-  startLine: number;
-  endLine: number;
-  removed: string;
-  added: string;
-  bubble?: string;
-}): Promise<void> {
-  if (!args.removed.trim() && !args.added.trim()) return;
-  const target = `${args.path}:${args.startLine}${args.endLine > args.startLine ? `-${args.endLine}` : ""}`;
-  await begin(
-    "explain",
-    target,
-    buildExplainPrompt({
-      path: args.path,
-      startLine: args.startLine,
-      endLine: args.endLine,
-      snippet: args.added,
-      removed: args.removed,
-    }),
-    args.root,
-    args.bubble,
-  );
+  const diff = await gitStagedDiff(root);
+  if (!diff.trim()) {
+    throw new Error("No staged changes — stage files first, then run Auto Review.");
+  }
+
+  // The diff is embedded inline — tools would only burn turns, so every
+  // call in the pipeline runs tool-free (same as commitMessage.ts).
+  const toolFree: LlmConfig = { ...config, ...NO_TOOLS };
+  const sysPrompt = systemPrompt(root, config.preferredLanguage);
+  const files = splitDiffByFile(diff).map((f) => f.path);
+  const chunks = chunkDiff(diff);
+
+  const store = useAiReviewStore.getState();
+  const session = store.begin();
+  const stale = () => !useAiReviewStore.getState().isCurrent(session);
+  const send = chatSend as SendFn;
+
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      if (stale()) return;
+      store.setPhase(`chunk ${i + 1} of ${chunks.length}`);
+      const findings = await askFindingsJson(
+        send,
+        toolFree,
+        sysPrompt,
+        root,
+        buildChunkReviewPrompt({
+          patch: chunks[i].patch,
+          path: chunks[i].path,
+          part: chunks[i].part,
+          parts: chunks[i].parts,
+          chunkIndex: i + 1,
+          chunkCount: chunks.length,
+          files,
+        }),
+      );
+      if (stale()) return;
+      useAiReviewStore.getState().addFindings(session, findings);
+    }
+
+    const compact = (): RawFinding[] =>
+      useAiReviewStore.getState().findings.map(({ id: _id, done: _done, ...f }) => f);
+
+    if (compact().length > 0) {
+      if (stale()) return;
+      store.setPhase("critic pass");
+      const critiqued = await askFindingsJson(
+        send,
+        toolFree,
+        sysPrompt,
+        root,
+        buildCriticPrompt(compact()),
+      );
+      if (stale()) return;
+      useAiReviewStore.getState().replaceFindings(session, critiqued);
+
+      if (stale()) return;
+      store.setPhase("cross-file synthesis");
+      const synthesized = await askFindingsJson(
+        send,
+        toolFree,
+        sysPrompt,
+        root,
+        buildSynthesisPrompt(compact(), files),
+      );
+      if (stale()) return;
+      useAiReviewStore.getState().replaceFindings(session, synthesized);
+    }
+
+    useAiReviewStore.getState().finish(session);
+  } catch (err) {
+    if (!stale()) {
+      useAiReviewStore.getState().finish(session, errMessage(err));
+    }
+  }
 }

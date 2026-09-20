@@ -1,8 +1,8 @@
 import { X, Settings2, Palette, Keyboard, Bot, Loader2, Check, AlertCircle, Shield, Wrench } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useUIStore, type SettingsSection } from "../../store/uiStore";
 import { shortcutGroups } from "../../lib/mockData";
-import { useChatStore } from "../../store/chatStore";
+import { useLlmConfigStore } from "../../store/llmConfigStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { applyAutoSave, applyCommitStamp, applyCommitStampName, applyEditorFontSize, applyShowHiddenFiles, applyUiZoom } from "../../lib/settings";
 import type { LlmConfig, EnabledTools, AgentGuards, PreferredLanguage } from "../../lib/llm";
@@ -220,7 +220,12 @@ function ShortcutsSection() {
 }
 
 function LlmSection() {
-  const { config, saveConfig } = useChatStore();
+  const { config, configLoaded, loadConfig, saveConfig } = useLlmConfigStore();
+  // The Chat dock used to trigger the config load; with it gone the LLM
+  // section must hydrate the store itself before the fields render.
+  useEffect(() => {
+    if (!configLoaded) void loadConfig();
+  }, [configLoaded, loadConfig]);
   const [apiFormat, setApiFormat] = useState<"openai" | "anthropic">(
     config?.apiFormat ?? "openai",
   );
@@ -239,6 +244,19 @@ function LlmSection() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"ok" | "err" | null>(null);
   const [testMsg, setTestMsg] = useState("");
+
+  // Hydrate the form once the persisted config arrives — the store starts
+  // empty and the load above resolves after the first render.
+  useEffect(() => {
+    if (!config) return;
+    setApiFormat(config.apiFormat);
+    setBaseUrl(config.baseUrl);
+    setApiKey(config.apiKey);
+    setModel(config.model);
+    setEnabledTools(config.enabledTools);
+    setGuards(config.guards);
+    setPreferredLanguage(config.preferredLanguage);
+  }, [config]);
 
   const handleFormatChange = (fmt: "openai" | "anthropic") => {
     setApiFormat(fmt);
@@ -360,7 +378,7 @@ function LlmSection() {
           onChange={(e) => updateLanguage(e.target.value as PreferredLanguage)}
           className="rounded border border-border bg-base px-2 py-1 text-[12px] text-fg outline-none"
         >
-          <option value="th">ไทย</option>
+          <option value="th">Thai</option>
           <option value="en">English</option>
         </select>
       </Row>

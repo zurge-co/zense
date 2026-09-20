@@ -5,7 +5,6 @@ import { setupKeybindings } from "./monacoKeybindings";
 import { writeClipboardText } from "../../lib/clipboard";
 import { setActiveEditor } from "../../lib/editorRef";
 import { formatReference, selectionLines } from "../../lib/reference";
-import { explainSelection } from "../../lib/aiReview";
 import { useUIStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 
@@ -58,31 +57,6 @@ export function CodeEditor({
             if (!p || !sel) return;
             const { start, end } = selectionLines(sel);
             void writeClipboardText(formatReference(p, start, end));
-          },
-        });
-        // Context menu: "Explain with AI" — sends the selection to the AI
-        // Review panel to explain what it does, why, relations, and risks.
-        editor.addAction({
-          id: "zense.explainWithAi",
-          label: "Explain with AI",
-          contextMenuGroupId: "zense",
-          contextMenuOrder: 1,
-          run: (ed) => {
-            const p = pathRef.current;
-            const sel = ed.getSelection();
-            const root = useUIStore.getState().workspacePath;
-            const model = ed.getModel();
-            if (!p || !sel || !root || !model) return;
-            // Right-click without a selection (Monaco moves the cursor to
-            // the click position) → explain the line under the cursor.
-            const { start, end } = sel.isEmpty()
-              ? { start: sel.startLineNumber, end: sel.startLineNumber }
-              : selectionLines(sel);
-            const snippet = sel.isEmpty()
-              ? model.getLineContent(sel.startLineNumber)
-              : model.getValueInRange(sel);
-            if (!snippet.trim()) return;
-            void explainSelection({ root, path: p, startLine: start, endLine: end, snippet, bubble: "Explain with AI" });
           },
         });
         // Live cursor position for the StatusBar.

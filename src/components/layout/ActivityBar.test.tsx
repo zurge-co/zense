@@ -26,10 +26,9 @@ const resetStore = () =>
     screen: "welcome",
     workspacePath: null,
     workspaceName: null,
-    composerFocusNonce: 0,
     activity: "review",
     sidebarVisible: true,
-    chatVisible: true,
+    editorPanelMode: "files",
     openTabs: [],
     activeTabKey: null,
     selectedFile: null,
@@ -48,30 +47,30 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
     expect(src).toContain("export function ActivityBar");
   });
 
-  // ── Exactly 3 activity buttons ──────────────────────────────────────────
+  // ── Exactly 4 activity buttons, in workflow order ───────────────────────
 
-  test("items array has exactly 3 entries", () => {
-    // The items array defines the buttons; verify it has exactly 3 entries.
+  test("items array has exactly 4 entries", () => {
     const itemsMatch = src.match(
       /const items[^=]*=\s*\[([\s\S]*?)\];/,
     );
     expect(itemsMatch).not.toBe(null);
     const itemsBlock = itemsMatch![1];
-    const idMatches = itemsBlock.match(/\bid:\s*"(review|history|editor)"/g);
+    const idMatches = itemsBlock.match(/\bid:\s*"(terminal|review|editor|history)"/g);
     expect(idMatches).not.toBe(null);
-    expect(idMatches!.length).toBe(3);
+    expect(idMatches!.length).toBe(4);
   });
 
-  test("items array contains review, history, and editor in order", () => {
+  test("items are ordered Terminal → Review → Editor → History (no Search item)", () => {
     const itemsMatch = src.match(
       /const items[^=]*=\s*\[([\s\S]*?)\];/,
     );
     const itemsBlock = itemsMatch![1];
-    const ids = itemsBlock.match(/\bid:\s*"(review|history|editor)"/g);
+    const ids = itemsBlock.match(/\bid:\s*"[a-z]+"/g);
     expect(ids).toEqual([
+      'id: "terminal"',
       'id: "review"',
-      'id: "history"',
       'id: "editor"',
+      'id: "history"',
     ]);
   });
 
@@ -102,18 +101,17 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
     expect(itemsBlock).toContain("Files");
   });
 
-  test("labels are Review, History, Editor, Search", () => {
+  test("labels are Terminal, Review, Editor, History (no Search)", () => {
     const itemsMatch = src.match(
       /const items[^=]*=\s*\[([\s\S]*?)\];/,
     );
     const itemsBlock = itemsMatch![1];
     const labelMatches = itemsBlock.match(/label:\s*"([^"]+)"/g);
     expect(labelMatches).toEqual([
-      'label: "Review"',
-      'label: "History"',
-      'label: "Editor"',
-      'label: "Search (⌘⇧F)"',
       'label: "Terminal (⌘`)"',
+      'label: "Review"',
+      'label: "Editor"',
+      'label: "History"',
     ]);
   });
 
@@ -133,8 +131,10 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
 
   // ── Active state logic ────────────────────────────────────────────────────
 
-  test("active state is activity === id && sidebarVisible", () => {
-    expect(src).toContain("activity === id && sidebarVisible");
+  test("active state is activity === id && sidebarVisible (Review ignores the sidebar flag)", () => {
+    // Review is a full page — its active state must not depend on the
+    // sidebar toggle.
+    expect(src).toContain('activity === id && (sidebarVisible || id === "review")');
   });
 
   test("active button gets text-fg class", () => {
@@ -198,9 +198,9 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
     expect(src.includes("Workflow")).toBe(false);
   });
 
-  test("imports the Search icon for the workspace-search activity", () => {
-    expect(src).toContain("Search");
-    expect(src).toContain('id: "search"');
+  test("does NOT import the Search icon (search moved into the Editor sidebar)", () => {
+    expect(src.includes('id: "search"')).toBe(false);
+    expect(/import \{[^}]*\bSearch\b[^}]*\} from "lucide-react"/.test(src)).toBe(false);
   });
 
   test("does NOT reference prompt library items", () => {
@@ -233,13 +233,16 @@ describe("ActivityBar — store interaction", () => {
     expect(useUIStore.getState().sidebarVisible).toBe(true);
   });
 
-  test("active state is false when sidebarVisible is false even if activity matches", () => {
-    // activity=review, sidebarVisible=true initially
-    useUIStore.getState().setActivity("review"); // toggle off → sidebarVisible=false
+  test("active state computation: Review stays active when the sidebar flag flips", () => {
+    useUIStore.getState().setActivity("editor");
+    useUIStore.getState().setActivity("editor"); // toggles sidebarVisible off
     const { activity, sidebarVisible } = useUIStore.getState();
-    // The component computes: active = activity === id && sidebarVisible
-    const activeForReview = activity === "review" && sidebarVisible;
-    expect(activeForReview).toBe(false);
+    expect(activity).toBe("editor");
+    expect(sidebarVisible).toBe(false);
+    // editor is inactive because the sidebar folded (review would not be —
+    // it renders full-page and ignores the flag).
+    const activeForEditor = activity === "editor" && sidebarVisible;
+    expect(activeForEditor).toBe(false);
   });
 
   test("switching to a different activity from hidden sidebar shows sidebar", () => {
@@ -260,9 +263,10 @@ describe("ActivityBar — store interaction", () => {
 
   // ── Workspace search (⌘⇧F) ───────────────────────────────────────────
 
-  test("openSearch switches to the search activity", () => {
+  test("openSearch opens the Editor activity in search mode", () => {
     useUIStore.getState().openSearch();
-    expect(useUIStore.getState().activity).toBe("search");
+    expect(useUIStore.getState().activity).toBe("editor");
+    expect(useUIStore.getState().editorPanelMode).toBe("search");
   });
 
   test("openSearch always shows the sidebar (never toggles it off)", () => {
@@ -297,29 +301,21 @@ describe("SideBar.tsx — task 1.3 structural verification", () => {
     expect(src).toContain('"./FileTree"');
   });
 
-  test("imports ReviewPanel component (not GitPanel)", () => {
-    expect(src).toContain('import { ReviewPanel }');
-    expect(src).toContain('"./ReviewPanel"');
+  test("does NOT import ReviewPanel (Review is a full page now — ReviewView does)", () => {
+    expect(src.includes("ReviewPanel")).toBe(false);
     expect(src.includes("GitPanel")).toBe(false);
   });
 
-  test("titles map has Review, History, Editor entries", () => {
-    const titlesMatch = src.match(
-      /const titles[^=]*=\s*\{([\s\S]*?)\};/,
-    );
-    expect(titlesMatch).not.toBe(null);
-    const titlesBlock = titlesMatch![1];
-    expect(titlesBlock).toContain('review: "Review"');
-    expect(titlesBlock).toContain('history: "History"');
-    expect(titlesBlock).toContain('editor: "Editor"');
+  test("editor header offers Files / Search tabs switching editorPanelMode", () => {
+    expect(src).toContain("editorPanelMode");
+    expect(src).toContain('setEditorPanelMode("files")');
+    expect(src).toContain('setEditorPanelMode("search")');
   });
 
-  test("renders FileTree when activity is editor", () => {
-    expect(src).toContain('activity === "editor" && <FileTree');
-  });
-
-  test("renders ReviewPanel when activity is review", () => {
-    expect(src).toContain('activity === "review" && <ReviewPanel');
+  test("renders FileTree or SearchPanel when activity is editor", () => {
+    expect(src).toContain('activity === "editor"');
+    expect(src).toContain('<FileTree');
+    expect(src).toContain('<SearchPanel');
   });
 
   test("renders HistoryPanel when activity is history", () => {
@@ -335,28 +331,22 @@ describe("SideBar.tsx — task 1.3 structural verification", () => {
     expect(src.includes("GraphView")).toBe(false);
     expect(src.includes("TerminalPanel")).toBe(false);
     expect(src.includes("PromptLibrary")).toBe(false);
-    // SearchPanel is now shipped — it backs the workspace search activity.
-    expect(src).toContain("SearchPanel");
-  });
-
-  test("title is derived from titles map using activity", () => {
-    expect(src).toContain("{titles[activity]}");
   });
 
   test("does NOT have separate panel branches for removed activities", () => {
     expect(src.includes('"agent"')).toBe(false);
     expect(src.includes('"graph"')).toBe(false);
     expect(src.includes('"prompts"')).toBe(false);
-    // "search" is now shipped: SearchPanel renders for it.
-    expect(src).toContain('activity === "search" && <SearchPanel');
+    // "search" is no longer an activity — it is an Editor panel mode.
+    expect(src.includes('activity === "search"')).toBe(false);
   });
 
-  test("terminal activity renders no sidebar section (early return null, no panel branch)", () => {
-    // The terminal is an ActivityBar main view; its only mention here is the
-    // guard that removes the (otherwise empty) sidebar section.
-    expect(src).toContain('if (activity === "terminal") return null');
+  test("terminal and review render no sidebar section (early return null)", () => {
+    // Terminal is an ActivityBar main view; Review is a full main-area
+    // page (ReviewView). Neither has sidebar content.
+    expect(src).toContain('if (activity === "terminal" || activity === "review") return null');
     expect(src.includes('activity === "terminal" &&')).toBe(false);
-    expect(src.includes('"terminal":')).toBe(false); // no titles entry
+    expect(src.includes('activity === "review" &&')).toBe(false);
   });
 });
 
@@ -614,10 +604,11 @@ describe("Task 1.3 integration — ActivityBar → SideBar → ReviewPanel", () 
     // SideBar parent in App.tsx would hide SideBar when !sidebarVisible
   });
 
-  test("renamed component chain: SideBar imports ReviewPanel, not GitPanel", () => {
-    const sideBarSrc = readSrc("src/components/sidebar/SideBar.tsx");
-    expect(sideBarSrc).toContain("ReviewPanel");
-    expect(sideBarSrc.includes("GitPanel")).toBe(false);
+  test("component chain: ReviewView assembles ReviewPanel + EditorArea + findings panel", () => {
+    const reviewViewSrc = readSrc("src/components/review/ReviewView.tsx");
+    expect(reviewViewSrc).toContain("ReviewPanel");
+    expect(reviewViewSrc).toContain("EditorArea");
+    expect(reviewViewSrc).toContain("AiReviewPanel");
 
     const reviewPanelSrc = readSrc("src/components/sidebar/ReviewPanel.tsx");
     expect(reviewPanelSrc).toContain("export function ReviewPanel");

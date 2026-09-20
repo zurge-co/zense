@@ -62,13 +62,6 @@ fn build_menu(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
   // ── View ────────────────────────────────────────────────────────────────
   let toggle_sidebar =
     MenuItem::with_id(app, "toggle_sidebar", "Toggle Sidebar", true, Some("CmdOrCtrl+B"))?;
-  let toggle_chat = MenuItem::with_id(
-    app,
-    "toggle_chat",
-    "Toggle AI Chat",
-    true,
-    Some("CmdOrCtrl+Shift+C"),
-  )?;
   let toggle_diff_mode =
     MenuItem::with_id(app, "toggle_diff_mode", "Toggle Diff Mode", true, Option::<&str>::None)?;
   let find_in_files = MenuItem::with_id(
@@ -85,7 +78,6 @@ fn build_menu(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
     true,
     &[
       &toggle_sidebar,
-      &toggle_chat,
       &toggle_diff_mode,
       &PredefinedMenuItem::separator(app)?,
       &find_in_files,

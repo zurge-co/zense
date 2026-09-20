@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { useUIStore, type Activity } from "../src/store/uiStore";
+import { useUIStore } from "../src/store/uiStore";
 
 describe("uiStore — task 1.2 cleanup verification", () => {
   beforeEach(() => {
@@ -8,10 +8,10 @@ describe("uiStore — task 1.2 cleanup verification", () => {
       screen: "welcome",
       workspacePath: null,
       workspaceName: null,
-      composerFocusNonce: 0,
       activity: "review",
       sidebarVisible: true,
-      chatVisible: true,
+      editorPanelMode: "files",
+      focusPopoverOpen: false,
       openTabs: [],
       activeTabKey: null,
       selectedFile: null,
@@ -79,8 +79,8 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     expect(useUIStore.getState().sidebarVisible).toBe(true);
   });
 
-  test("initial chatVisible is true", () => {
-    expect(useUIStore.getState().chatVisible).toBe(true);
+  test("initial editorPanelMode is 'files'", () => {
+    expect(useUIStore.getState().editorPanelMode).toBe("files");
   });
 
   test("initial openTabs is empty array", () => {
@@ -105,17 +105,12 @@ describe("uiStore — task 1.2 cleanup verification", () => {
 
   // ── Kept fields DO exist ────────────────────────────────────────────────
 
-  test("store has kept field: composerFocusNonce", () => {
-    expect("composerFocusNonce" in useUIStore.getState()).toBe(true);
-    expect(useUIStore.getState().composerFocusNonce).toBe(0);
+  test("store has field: editorPanelMode", () => {
+    expect("editorPanelMode" in useUIStore.getState()).toBe(true);
   });
 
-  test("store has kept field: chatVisible", () => {
-    expect("chatVisible" in useUIStore.getState()).toBe(true);
-  });
-
-  test("store has kept action: toggleChat", () => {
-    expect(typeof useUIStore.getState().toggleChat).toBe("function");
+  test("store has action: openSearch", () => {
+    expect(typeof useUIStore.getState().openSearch).toBe("function");
   });
 
   // ── setActivity ─────────────────────────────────────────────────────────
@@ -127,9 +122,9 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     expect(state.sidebarVisible).toBe(true);
   });
 
-  test("setActivity switches activity to 'explorer'", () => {
-    useUIStore.getState().setActivity("explorer");
-    expect(useUIStore.getState().activity).toBe("explorer");
+  test("setActivity switches activity to 'editor'", () => {
+    useUIStore.getState().setActivity("editor");
+    expect(useUIStore.getState().activity).toBe("editor");
   });
 
   test("setActivity toggles sidebar when same activity clicked", () => {
@@ -280,7 +275,7 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     expect(useUIStore.getState().settingsSection).toBe("appearance");
   });
 
-  // ── toggleSidebar / toggleChat ──────────────────────────────────────────
+  // ── toggleSidebar / search mode ───────────────────────────────────────
 
   test("toggleSidebar flips sidebarVisible", () => {
     expect(useUIStore.getState().sidebarVisible).toBe(true);
@@ -290,12 +285,28 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     expect(useUIStore.getState().sidebarVisible).toBe(true);
   });
 
-  test("toggleChat flips chatVisible", () => {
-    expect(useUIStore.getState().chatVisible).toBe(true);
-    useUIStore.getState().toggleChat();
-    expect(useUIStore.getState().chatVisible).toBe(false);
-    useUIStore.getState().toggleChat();
-    expect(useUIStore.getState().chatVisible).toBe(true);
+  test("openSearch opens the Editor activity in search mode (⌘⇧F)", () => {
+    const before = useUIStore.getState().searchFocusNonce;
+    useUIStore.getState().openSearch();
+    const s = useUIStore.getState();
+    expect(s.activity).toBe("editor");
+    expect(s.editorPanelMode).toBe("search");
+    expect(s.sidebarVisible).toBe(true);
+    expect(s.searchFocusNonce).toBe(before + 1);
+  });
+
+  test("setEditorPanelMode switches back to the file explorer", () => {
+    useUIStore.getState().openSearch();
+    useUIStore.getState().setEditorPanelMode("files");
+    expect(useUIStore.getState().editorPanelMode).toBe("files");
+  });
+
+  test("toggleFocusPopover flips focusPopoverOpen", () => {
+    expect(useUIStore.getState().focusPopoverOpen).toBe(false);
+    useUIStore.getState().toggleFocusPopover();
+    expect(useUIStore.getState().focusPopoverOpen).toBe(true);
+    useUIStore.getState().toggleFocusPopover();
+    expect(useUIStore.getState().focusPopoverOpen).toBe(false);
   });
 
   // ── setScreen ───────────────────────────────────────────────────────────

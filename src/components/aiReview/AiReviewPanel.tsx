@@ -1,46 +1,38 @@
-import { useEffect, useRef, useState } from "react";
-import { Sparkles, X, Send, Square, Wrench, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bug, Loader2, ShieldAlert, Sparkles, UserCheck, ChevronDown, ChevronRight } from "lucide-react";
 import { useUIStore } from "../../store/uiStore";
-import { useAiReviewStore } from "../../store/aiReviewStore";
-import { MarkdownView, ThinkingIndicator } from "../chat/ChatMessages";
+import { useAiReviewStore, type Finding } from "../../store/aiReviewStore";
+import { useLlmConfigStore } from "../../store/llmConfigStore";
+import type { FindingCategory } from "../../lib/aiReviewPrompts";
+import { MarkdownView, ThinkingIndicator } from "../MarkdownView";
+
+const GROUPS: { key: FindingCategory; label: string; icon: typeof Bug }[] = [
+  { key: "bug", label: "Bug", icon: Bug },
+  { key: "risk", label: "Risk", icon: ShieldAlert },
+  { key: "human-review", label: "Human Review", icon: UserCheck },
+];
 
 /**
- * AI Review tab — every review trigger (right-click a change, the AI Review
- * button, a Monaco "explain" action) opens its own thread here, separate
- * from the free-form Chat tab. The active thread supports follow-ups so the
- * human can dig deeper into a summary or a bug hunt.
+ * Auto Review findings panel — the bottom strip of the full-page Review
+ * view. Findings stream in grouped as Bug / Risk / Human Review; ticking a
+ * checkbox moves the item into that category's Closed section. Re-running
+ * Auto Review (button in the left column) starts a fresh session and
+ * replaces everything here.
  */
 export function AiReviewPanel() {
-  const workspacePath = useUIStore((s) => s.workspacePath);
   const openSettings = useUIStore((s) => s.openSettings);
-  const {
-    threads,
-    activeThreadId,
-    configLoaded,
-    loadConfig,
-    followUp,
-    stop,
-    closeThread,
-    isConfigured,
-  } = useAiReviewStore();
-  const [input, setInput] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const { findings, running, phase, error, toggleDone } = useAiReviewStore();
+  const { config, configLoaded, loadConfig } = useLlmConfigStore();
 
   useEffect(() => {
     if (!configLoaded) void loadConfig();
   }, [configLoaded, loadConfig]);
 
-  const active = threads.find((t) => t.id === activeThreadId) ?? null;
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [active?.messages.length, active?.streamingText, active?.activeTools.length, active?.streaming]);
-
-  if (!isConfigured()) {
+  if (!config || !config.model || !config.baseUrl) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-fg-muted">
         <Sparkles size={22} strokeWidth={1.2} />
-        <p className="text-[12px]">Configure an LLM to use AI Review</p>
+        <p className="text-[12px]">Configure an LLM to use Auto Review</p>
         <button
           onClick={() => openSettings("llm")}
           className="rounded border border-border bg-base px-3 py-1.5 text-[12px] text-fg-muted hover:text-fg"
@@ -51,144 +43,139 @@ export function AiReviewPanel() {
     );
   }
 
-  if (threads.length === 0) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center text-fg-muted">
-        <Sparkles size={22} strokeWidth={1.2} />
-        <p className="text-[12px]">No reviews yet</p>
-        <p className="text-[11px] leading-snug">
-          Right-click a change in Review, or select code and right-click
-          &rarr; Explain with AI — every result opens here as its own thread.
-        </p>
-      </div>
-    );
-  }
+  const open = findings.filter((f) => !f.done);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Thread chips */}
-      <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-1.5">
-        {threads.map((t) => (
-          <div
-            key={t.id}
-            onClick={() => useAiReviewStore.setState({ activeThreadId: t.id })}
-            title={t.title}
-            className={`group flex max-w-44 shrink-0 cursor-pointer items-center gap-1 rounded border px-2 py-1 text-[11px] ${
-              t.id === activeThreadId
-                ? "border-accent/40 bg-accent/10 text-fg"
-                : "border-border bg-base text-fg-muted hover:text-fg"
-            }`}
-          >
-            {t.streaming ? (
-              <Loader2 size={10} className="shrink-0 animate-spin text-accent" />
-            ) : (
-              <Sparkles size={10} className="shrink-0 text-accent" />
-            )}
-            <span className="truncate">{t.title}</span>
-            <button
-              title="Close thread"
-              onClick={(e) => {
-                e.stopPropagation();
-                closeThread(t.id);
-              }}
-              className="shrink-0 rounded p-0.5 opacity-0 hover:bg-hover group-hover:opacity-100"
-            >
-              <X size={10} />
-            </button>
-          </div>
-        ))}
+      <div className="flex h-7 shrink-0 items-center gap-2 border-b border-border px-3 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
+        <Sparkles size={11} className="text-accent" />
+        Auto Review
+        {running ? (
+          <span className="flex items-center gap-1.5 font-normal normal-case tracking-normal text-accent">
+            <Loader2 size={11} className="animate-spin" />
+            {phase ?? "starting…"}
+          </span>
+        ) : (
+          findings.length > 0 && (
+            <span className="font-normal normal-case tracking-normal">
+              {open.length} open · {findings.length - open.length} closed
+            </span>
+          )
+        )}
       </div>
 
-      {active && (
-        <>
-          {/* Messages — the first user message is the full prompt; render
-              the compact bubble instead so giant diffs don't flood the view */}
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
-            {active.messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`mb-2 rounded px-2.5 py-1.5 text-[12.5px] leading-relaxed ${
-                  msg.role === "user" ? "bg-accent/10 text-fg" : "bg-base text-fg"
-                }`}
-              >
-                {msg.role === "user" ? (
-                  // select-text: see ChatPanel — body is user-select:none.
-                  <div className="whitespace-pre-wrap select-text">
-                    {i === 0 ? active.bubble : msg.content}
-                  </div>
-                ) : (
-                  <MarkdownView source={msg.content} />
-                )}
-              </div>
-            ))}
-            {/* Tool indicators */}
-            {active.activeTools.length > 0 && (
-              <div className="mb-2 flex flex-col gap-1">
-                {active.activeTools.map((tool) => (
-                  <div key={tool.id} className="flex items-center gap-1.5 text-[11px] text-fg-muted">
-                    <Wrench size={10} className={tool.done ? "text-accent" : "animate-pulse text-fg-muted"} />
-                    <span>
-                      {tool.name}
-                      {tool.done ? " ✓" : "…"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {active.streaming && active.streamingText && (
-              <div className="mb-2 rounded bg-base px-2.5 py-1.5 text-[12.5px] leading-relaxed text-fg">
-                <MarkdownView source={active.streamingText} streaming />
-              </div>
-            )}
-            {active.streaming && !active.streamingText && active.activeTools.length === 0 && (
-              <ThinkingIndicator />
-            )}
+      {error && (
+        <div className="border-b border-danger/20 bg-danger/5 px-3 py-1.5 text-[11.5px] text-danger">
+          {error}
+        </div>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {findings.length === 0 && !running && (
+          <div className="flex h-full flex-col items-center justify-center gap-1 px-4 text-center text-fg-muted">
+            <p className="text-[12px]">No findings yet</p>
+            <p className="text-[11px] leading-snug">
+              Stage your changes and press Auto Review — findings appear here grouped by
+              Bug / Risk / Human Review.
+            </p>
           </div>
+        )}
+        {findings.length === 0 && running && <ThinkingIndicator />}
+        {GROUPS.map((g) => (
+          <FindingGroup
+            key={g.key}
+            label={g.label}
+            icon={g.icon}
+            findings={findings.filter((f) => f.category === g.key)}
+            onToggle={toggleDone}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-          {/* Error */}
-          {active.error && (
-            <div className="border-b border-danger/20 bg-danger/5 px-3 py-1.5 text-[11.5px] text-danger">
-              {active.error}
-            </div>
+function FindingGroup({
+  label,
+  icon: Icon,
+  findings,
+  onToggle,
+}: {
+  label: string;
+  icon: typeof Bug;
+  findings: Finding[];
+  onToggle: (id: string) => void;
+}) {
+  const open = findings.filter((f) => !f.done);
+  const closed = findings.filter((f) => f.done);
+  if (findings.length === 0) return null;
+  return (
+    <section className="mb-2">
+      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+        <Icon size={12} />
+        {label} · {open.length}
+      </div>
+      {open.map((f) => (
+        <FindingRow key={f.id} finding={f} onToggle={onToggle} />
+      ))}
+      {closed.length > 0 && <ClosedSection findings={closed} onToggle={onToggle} />}
+    </section>
+  );
+}
+
+function ClosedSection({
+  findings,
+  onToggle,
+}: {
+  findings: Finding[];
+  onToggle: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mt-0.5">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-1 text-[10.5px] uppercase tracking-wide text-fg-muted hover:text-fg"
+      >
+        {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        Closed · {findings.length}
+      </button>
+      {expanded && findings.map((f) => <FindingRow key={f.id} finding={f} onToggle={onToggle} />)}
+    </div>
+  );
+}
+
+function FindingRow({ finding, onToggle }: { finding: Finding; onToggle: (id: string) => void }) {
+  return (
+    <div className={`mb-1 rounded border border-border bg-base px-2 py-1.5 ${finding.done ? "opacity-60" : ""}`}>
+      <label className="flex cursor-pointer items-start gap-2">
+        <input
+          type="checkbox"
+          checked={finding.done}
+          onChange={() => onToggle(finding.id)}
+          className="mt-0.5 shrink-0 accent-[var(--color-accent)]"
+        />
+        <span className="min-w-0 flex-1">
+          <span className={`block text-[12.5px] leading-snug text-fg ${finding.done ? "line-through" : ""}`}>
+            {finding.title}
+          </span>
+          {(finding.file || finding.line !== undefined) && (
+            <span className="mt-0.5 block font-mono text-[10.5px] text-fg-muted">
+              {finding.file}
+              {finding.line !== undefined ? `:${finding.line}` : ""}
+            </span>
           )}
-
-          {/* Follow-up input */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!input.trim() || active.streaming || !workspacePath) return;
-              followUp(active.id, input.trim(), workspacePath);
-              setInput("");
-            }}
-            className="flex shrink-0 items-center gap-1.5 border-t border-border p-2"
-          >
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask a follow-up…"
-              disabled={active.streaming}
-              className="flex-1 rounded border border-border bg-base px-2 py-1.5 text-[12px] text-fg outline-none placeholder:text-fg-muted/50 focus:border-accent/50"
-            />
-            {active.streaming ? (
-              <button
-                type="button"
-                onClick={() => stop(active.id)}
-                title="Stop generating"
-                className="rounded p-1.5 text-fg-muted hover:bg-hover hover:text-danger"
-              >
-                <Square size={14} className="fill-current" />
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={!input.trim()}
-                className="rounded p-1.5 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-30"
-              >
-                <Send size={14} />
-              </button>
-            )}
-          </form>
-        </>
+        </span>
+      </label>
+      {finding.detail && (
+        <div className="ml-6 mt-1 text-[12px] text-fg-muted [&_.md-content]:text-[12px]">
+          <MarkdownView source={finding.detail} />
+        </div>
+      )}
+      {finding.suggestion && (
+        <div className="ml-6 mt-0.5 text-[11.5px] italic text-fg-muted">
+          Suggestion: {finding.suggestion}
+        </div>
       )}
     </div>
   );

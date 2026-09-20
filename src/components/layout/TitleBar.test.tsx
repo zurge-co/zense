@@ -42,12 +42,12 @@ describe("TitleBar.tsx — workspace switcher feature", () => {
 
   test("switcher button uses inline onClick (not a toggle* function)", () => {
     // The switcher should use an inline handler to toggle menu state,
-    // not a named toggle function — so the existing onClick={toggle\w+}
-    // regex in App.test.tsx still counts exactly 2 (sidebar + chat).
+    // not a named toggle function — the onClick={toggle\w+} buttons are
+    // exactly the sidebar toggle and the Focus popover toggle.
     expect(src).toContain("setMenuOpen");
   });
 
-  test("still has exactly 2 onClick={toggle*} buttons (sidebar + chat)", () => {
+  test("has exactly 2 onClick={toggle*} buttons (sidebar + focus popover)", () => {
     const onClickMatches = src.match(/onClick=\{toggle\w+\}/g);
     expect(onClickMatches).not.toBe(null);
     expect(onClickMatches!.length).toBe(2);
@@ -143,7 +143,8 @@ describe("TitleBar.tsx — workspace switcher feature", () => {
     expect(src).toContain('title="Toggle Sidebar (⌘B)"');
   });
 
-  test("chat toggle button still present with title='Toggle AI Chat'", () => {
-    expect(src).toContain('title="Toggle AI Chat"');
+  test("chat dock toggle is gone; Focus popover button takes its place", () => {
+    expect(src).not.toContain('title="Toggle AI Chat"');
+    expect(src).toContain('title="Focus tasks"');
   });
 });

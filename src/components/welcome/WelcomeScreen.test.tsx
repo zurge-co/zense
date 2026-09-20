@@ -1,9 +1,9 @@
 // @ts-nocheck
 /**
  * Task 1.6 tests — WelcomeScreen (no Agent/Terminal buttons, new tagline
- * "Review before you commit.") and ChatPanel (real LLM chat panel:
- * header, close/clear buttons, unconfigured empty state with Open
- * Settings CTA, message list, streaming + tool indicators, input form).
+ * "Review before you commit.") and the chat-dock removal (spec v3: the
+ * ChatPanel/chatStore are deleted; LLM config lives in llmConfigStore;
+ * MarkdownView/ThinkingIndicator moved out of the chat directory).
  *
  * We follow the structural-verification pattern established in
  * App.test.tsx and ActivityBar.test.tsx: read source text via Bun.file()
@@ -27,10 +27,8 @@ const resetStore = () =>
     screen: "welcome",
     workspacePath: null,
     workspaceName: null,
-    composerFocusNonce: 0,
     activity: "review",
     sidebarVisible: true,
-    chatVisible: true,
     openTabs: [],
     activeTabKey: null,
     selectedFile: null,
@@ -217,207 +215,53 @@ describe("WelcomeScreen.tsx — task 1.6 structural verification", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ChatPanel.tsx — Real LLM chat panel (rig backend, streaming, tools)
+// Chat dock removal (spec v3)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("ChatPanel.tsx — structural verification", () => {
-  let src: string;
-
-  beforeAll(async () => {
-    src = await readSrc("../chat/ChatPanel.tsx");
+describe("Chat dock — removed (spec v3)", () => {
+  test("components/chat/ directory and chatStore.ts no longer exist", async () => {
+    expect(await Bun.file(`${import.meta.dir}/../chat/ChatPanel.tsx`).exists()).toBe(false);
+    expect(await Bun.file(`${import.meta.dir}/../chat/ChatMessages.tsx`).exists()).toBe(false);
+    expect(await Bun.file(`${import.meta.dir}/../../store/chatStore.ts`).exists()).toBe(false);
   });
 
-  // ── Component export ───────────────────────────────────────────────────────
-
-  test("exports ChatPanel component", () => {
-    expect(src).toContain("export function ChatPanel");
+  test("MarkdownView + ThinkingIndicator survive in components/MarkdownView.tsx", async () => {
+    const md = await readSrc("../MarkdownView.tsx");
+    expect(md).toContain("export function MarkdownView");
+    expect(md).toContain("export function ThinkingIndicator");
+    expect(md).toContain("renderMarkdown");
   });
 
-  test("source file is non-empty (>50 chars)", () => {
-    expect(src.length).toBeGreaterThan(50);
+  test("llmConfigStore replaced the chatStore as the LLM config home", async () => {
+    const store = await readSrc("../../store/llmConfigStore.ts");
+    expect(store).toContain("export const useLlmConfigStore");
+    expect(store).toContain("loadLlmConfig");
+    expect(store).toContain("saveLlmConfig");
   });
 
-  // ── Header with Chat label ─────────────────────────────────────────────────
-
-  test('has "Chat" header label', () => {
-    expect(src).toContain("Chat");
-  });
-
-  test("uses MessageSquare icon in header with accent color", () => {
-    expect(src).toContain("MessageSquare");
-    expect(src).toContain("text-accent");
-  });
-
-  test("header has uppercase tracking-wider styling", () => {
-    expect(src).toContain("uppercase");
-    expect(src).toContain("tracking-wider");
-  });
-
-  // ── Close button (toggleChat) ───────────────────────────────────────────────
-
-  test("has a close button", () => {
-    expect(src).toContain("button");
-    expect(src).toContain("X");
-  });
-
-  test("close button calls toggleChat on click", () => {
-    expect(src).toContain("onClick={toggleChat}");
-  });
-
-  test("imports X icon from lucide-react", () => {
-    expect(src).toContain("X");
-    expect(src).toContain("lucide-react");
-  });
-
-  // ── Unconfigured empty state ──────────────────────────────────────────────
-
-  test('unconfigured state shows "Configure an LLM to start chatting"', () => {
-    expect(src).toContain("Configure an LLM to start chatting");
-  });
-
-  test("unconfigured state has MessageSquare icon (large, thin stroke)", () => {
-    expect(src).toContain("strokeWidth={1.2}");
-    expect(src).toContain("size={22}");
-  });
-
-  test('configured empty state asks "Ask about your code"', () => {
-    expect(src).toContain("Ask about your code");
-  });
-
-  // ── Open Settings button ──────────────────────────────────────────────────
-
-  test('has "Open Settings" button', () => {
-    expect(src).toContain("Open Settings");
-  });
-
-  test("Open Settings button opens the llm settings section on click", () => {
-    expect(src).toContain('onClick={() => openSettings("llm")}');
-  });
-
-  // ── Real chat input + send/stop ───────────────────────────────────────────
-
-  test("has a text input bound to send", () => {
-    expect(src).toContain("<input");
-    expect(src).toContain("onSubmit={handleSubmit}");
-  });
-
-  test("send button dispatches chatStore.send with workspace path", () => {
-    expect(src).toContain("void send(input.trim(), workspacePath)");
-  });
-
-  test("streaming state shows a working stop button", () => {
-    expect(src).toContain("<Square");
-    expect(src).toContain("onClick={stop}");
-  });
-
-  test("tool-call streaming indicators render via activeTools", () => {
-    expect(src).toContain("activeTools");
-    expect(src).toContain("Wrench");
-  });
-
-  test("clear button resets conversation via chatStore.clear", () => {
-    expect(src).toContain("<Eraser");
-    expect(src).toContain("onClick={clear}");
-  });
-
-  // ── Store usage ───────────────────────────────────────────────────────────
-
-  test("imports useUIStore and useChatStore from stores", () => {
-    expect(src).toContain("useUIStore");
-    expect(src).toContain('"../../store/uiStore"');
-    expect(src).toContain("useChatStore");
-    expect(src).toContain('"../../store/chatStore"');
-  });
-
-  test("destructures toggleChat and openSettings from store", () => {
-    expect(src).toContain("toggleChat");
-    expect(src).toContain("openSettings");
-  });
-
-  // ── NO references to removed agent/composer features ─────────────────────────
-
-  test("does NOT reference agentPipe", () => {
-    expect(src.includes("agentPipe")).toBe(false);
-  });
-
-  test("does NOT reference sentLog", () => {
-    expect(src.includes("sentLog")).toBe(false);
-  });
-
-  test("does NOT reference composerDraft", () => {
-    expect(src.includes("composerDraft")).toBe(false);
-  });
-
-  test("does NOT reference contextChips", () => {
-    expect(src.includes("contextChips")).toBe(false);
-  });
-
-  test("does NOT reference addChip", () => {
-    expect(src.includes("addChip")).toBe(false);
-  });
-
-  test("does NOT reference removeChip", () => {
-    expect(src.includes("removeChip")).toBe(false);
-  });
-
-  test("does NOT reference agentCommand", () => {
-    expect(src.includes("agentCommand")).toBe(false);
-  });
-
-  test("does NOT reference agent or Agent", () => {
-    expect(src.includes("agent")).toBe(false);
-    expect(src.includes("Agent")).toBe(false);
-  });
-
-  test("does NOT reference terminal or Terminal", () => {
-    expect(src.includes("terminal")).toBe(false);
-    expect(src.includes("Terminal")).toBe(false);
-  });
-
-
-  // ── Layout ─────────────────────────────────────────────────────────────────
-
-  test("panel width comes from uiStore (drag-resizable, no fixed w-80)", () => {
-    expect(src.includes("w-80")).toBe(false);
-    expect(src).toContain("chatPanelWidth");
-    expect(src).toContain("style={{ width: chatPanelWidth }}");
-  });
-
-  test("panel has a pointer-based resize sash that persists the width", () => {
-    expect(src).toContain("onPointerDown");
-    expect(src).toContain("cursor-col-resize");
-    expect(src).toContain("applyChatPanelWidth");
-  });
-
-  test("panel has left border", () => {
-    expect(src).toContain("border-l");
-  });
-
-  test("panel uses bg-panel background", () => {
-    expect(src).toContain("bg-panel");
+  test("nothing under src/ imports the deleted chat dock", async () => {
+    const app = await readSrc("../../App.tsx");
+    expect(app.includes("ChatPanel")).toBe(false);
+    expect(app.includes("chatStore")).toBe(false);
+    const settings = await readSrc("../settings/SettingsModal.tsx");
+    expect(settings.includes("chatStore")).toBe(false);
+    expect(settings).toContain("useLlmConfigStore");
   });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Store interaction — toggleChat and openSettings (used by ComposerPanel)
+// Store interaction — Focus popover + openSettings
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("ChatPanel — store interaction", () => {
+describe("uiStore — Focus popover + settings interaction", () => {
   beforeEach(() => resetStore());
 
-  test("default chatVisible is true", () => {
-    expect(useUIStore.getState().chatVisible).toBe(true);
-  });
-
-  test("toggleChat() flips chatVisible from true to false", () => {
-    useUIStore.getState().toggleChat();
-    expect(useUIStore.getState().chatVisible).toBe(false);
-  });
-
-  test("toggleChat() flips chatVisible from false back to true", () => {
-    useUIStore.getState().toggleChat(); // → false
-    useUIStore.getState().toggleChat(); // → true
-    expect(useUIStore.getState().chatVisible).toBe(true);
+  test("toggleFocusPopover() flips focusPopoverOpen", () => {
+    expect(useUIStore.getState().focusPopoverOpen).toBe(false);
+    useUIStore.getState().toggleFocusPopover();
+    expect(useUIStore.getState().focusPopoverOpen).toBe(true);
+    useUIStore.getState().setFocusPopover(false);
+    expect(useUIStore.getState().focusPopoverOpen).toBe(false);
   });
 
   test("openSettings() sets settingsOpen to true", () => {
@@ -490,42 +334,47 @@ describe("WelcomeScreen — store interaction (task 1.6)", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("uiStore — removed fields absent (task 1.6)", () => {
-  const state: any = useUIStore.getState();
+  // Fresh snapshot per test — zustand setState REPLACES the state object,
+  // and other suites merge legacy keys into the shared store during a run.
+  const state = () => useUIStore.getState() as any;
 
   test("store does NOT have sentLog", () => {
-    expect(state.sentLog).toBe(undefined);
+    expect(state().sentLog).toBe(undefined);
   });
 
   test("store does NOT have composerDraft", () => {
-    expect(state.composerDraft).toBe(undefined);
+    expect(state().composerDraft).toBe(undefined);
   });
 
   test("store does NOT have contextChips", () => {
-    expect(state.contextChips).toBe(undefined);
+    expect(state().contextChips).toBe(undefined);
   });
 
   test("store does NOT have addChip function", () => {
-    expect(typeof state.addChip).toBe("undefined");
+    expect(typeof state().addChip).toBe("undefined");
   });
 
   test("store does NOT have removeChip function", () => {
-    expect(typeof state.removeChip).toBe("undefined");
+    expect(typeof state().removeChip).toBe("undefined");
   });
 
   test("store does NOT have agentCommand function", () => {
-    expect(typeof state.agentCommand).toBe("undefined");
+    expect(typeof state().agentCommand).toBe("undefined");
   });
 
-  test("store DOES have toggleChat function", () => {
-    expect(typeof state.toggleChat).toBe("function");
+  test("store does NOT have the removed chat-dock fields (spec v3)", () => {
+    expect(typeof state().toggleChat).toBe("undefined");
+    expect(state().rightTab).toBe(undefined);
+    expect(state().setRightTab).toBe(undefined);
+    expect(state().chatPanelWidth).toBe(undefined);
   });
 
   test("store DOES have openSettings function", () => {
-    expect(typeof state.openSettings).toBe("function");
+    expect(typeof state().openSettings).toBe("function");
   });
 
   test("store DOES have openWorkspace function", () => {
-    expect(typeof state.openWorkspace).toBe("function");
+    expect(typeof state().openWorkspace).toBe("function");
   });
 });
 
@@ -539,7 +388,7 @@ describe("Task 1.6 — no dangling references across both files", () => {
 
   beforeAll(async () => {
     welcomeSrc = await readSrc("./WelcomeScreen.tsx");
-    composerSrc = await readSrc("../chat/ChatPanel.tsx");
+    composerSrc = await readSrc("../MarkdownView.tsx");
   });
 
   const removedTerms = [
@@ -557,7 +406,7 @@ describe("Task 1.6 — no dangling references across both files", () => {
       expect(welcomeSrc.includes(term)).toBe(false);
     });
 
-    test(`ChatPanel.tsx does NOT reference ${term}`, () => {
+    test(`MarkdownView.tsx does NOT reference ${term}`, () => {
       expect(composerSrc.includes(term)).toBe(false);
     });
   }

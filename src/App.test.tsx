@@ -26,10 +26,8 @@ const resetStore = () =>
     screen: "welcome",
     workspacePath: null,
     workspaceName: null,
-    composerFocusNonce: 0,
     activity: "review",
     sidebarVisible: true,
-    chatVisible: true,
     openTabs: [],
     activeTabKey: null,
     selectedFile: null,
@@ -49,7 +47,7 @@ describe("App.tsx — keyboard shortcuts (task 1.4)", () => {
     src = await readSrc("App.tsx");
   });
 
-  // ── Kept shortcuts: ⌘S, ⌘B, ⌘O, ⌘,, ⌘⇧C ────────────────────────────────
+  // ── Kept shortcuts: ⌘S, ⌘B, ⌘O, ⌘, ─────────────────────────────────────
 
   test("⌘S: handler present and saves active file tab", () => {
     expect(src).toContain('e.key === "s"');
@@ -87,10 +85,9 @@ describe("App.tsx — keyboard shortcuts (task 1.4)", () => {
     expect(src).toContain("openSettings()");
   });
 
-  test("⌘⇧C: handler present and toggles chat", () => {
-    expect(src).toContain("e.shiftKey");
-    expect(src).toContain('e.key === "C" || e.key === "c"');
-    expect(src).toContain("toggleChat()");
+  test("⌘⇧C chat shortcut is removed (the chat dock is gone)", () => {
+    expect(src).not.toContain("toggleChat");
+    expect(src).not.toContain("toggle_chat");
   });
 
   test("⌘⇧F: handler present and opens workspace search", () => {
@@ -180,11 +177,11 @@ describe("App.tsx — keyboard shortcuts (task 1.4)", () => {
     expect(copyNode).toBeGreaterThan(guard);
   });
 
-  test("chat + AI review user bubbles are selectable", async () => {
-    const chat = await readSrc("components/chat/ChatPanel.tsx");
-    const review = await readSrc("components/aiReview/AiReviewPanel.tsx");
-    expect(chat).toContain("whitespace-pre-wrap select-text");
-    expect(review).toContain("whitespace-pre-wrap select-text");
+  test("the chat dock files are deleted", async () => {
+    const chatPanel = Bun.file(`${import.meta.dir}/components/chat/ChatPanel.tsx`);
+    const chatStore = Bun.file(`${import.meta.dir}/store/chatStore.ts`);
+    expect(await chatPanel.exists()).toBe(false);
+    expect(await chatStore.exists()).toBe(false);
   });
 
   test("⌘S: handler returns early when not on workspace screen", () => {
@@ -225,8 +222,10 @@ describe("App.tsx — WorkspaceLayout (task 1.4)", () => {
     expect(src).toContain("<EditorArea");
   });
 
-  test("renders <ChatPanel /> conditionally on chatVisible", () => {
-    expect(src).toContain("chatVisible && <ChatPanel");
+  test("renders Review as a full page (ReviewView), no chat dock", () => {
+    expect(src).toContain("<ReviewView");
+    expect(src).not.toContain("ChatPanel");
+    expect(src).not.toContain("chatVisible");
   });
 
   test("renders <StatusBar />", () => {
@@ -336,30 +335,26 @@ describe("TitleBar.tsx — toggle buttons (task 1.4)", () => {
     expect(src).toContain("sidebarVisible");
   });
 
-  // ── Chat toggle button ──────────────────────────────────────────────────
+  // ── Focus popover button (replaces the removed chat dock toggle) ──────
 
-  test("has chat toggle button with onClick={toggleChat}", () => {
-    expect(src).toContain("onClick={toggleChat}");
+  test("has a Focus button with onClick={toggleFocusPopover}", () => {
+    expect(src).toContain("onClick={toggleFocusPopover}");
   });
 
-  test("chat toggle button has title='Toggle AI Chat'", () => {
-    expect(src).toContain('title="Toggle AI Chat"');
+  test("Focus button has title='Focus tasks'", () => {
+    expect(src).toContain('title="Focus tasks"');
   });
 
-  test("chat toggle uses PanelRight icon", () => {
-    expect(src).toContain("PanelRight");
+  test("the chat dock toggle is gone (no PanelRight / Toggle AI Chat)", () => {
+    expect(src).not.toContain("PanelRight");
+    expect(src).not.toContain("chatVisible");
+    expect(src).not.toContain("toggleChat");
+    expect(src).not.toContain('title="Toggle AI Chat"');
   });
 
-  test("chat toggle styling responds to chatVisible", () => {
-    expect(src).toContain("chatVisible");
-  });
-
-  // ── Button count ────────────────────────────────────────────────────────
-
-  test("has exactly 2 toggle buttons (sidebar + chat)", () => {
-    const onClickMatches = src.match(/onClick=\{toggle\w+\}/g);
-    expect(onClickMatches).not.toBe(null);
-    expect(onClickMatches!.length).toBe(2);
+  test("the Focus popover renders the FocusPanel conditionally", () => {
+    expect(src).toContain("focusPopoverOpen && (");
+    expect(src).toContain("<FocusPanel");
   });
 
   // ── Removed elements ────────────────────────────────────────────────────
@@ -376,7 +371,7 @@ describe("TitleBar.tsx — toggle buttons (task 1.4)", () => {
   test("does NOT reference terminalStore (⌘N lives in App.tsx, not TitleBar)", () => {
     // The context-sensitive ⌘N handler (newTerminalSession) is in App.tsx —
     // covered by the "App.tsx — context-sensitive ⌘N" suite. TitleBar only
-    // carries the sidebar/chat toggles.
+    // carries the sidebar/focus toggles.
     expect(src.includes("terminalStore")).toBe(false);
   });
 
@@ -386,16 +381,16 @@ describe("TitleBar.tsx — toggle buttons (task 1.4)", () => {
 
   // ── Store usage ─────────────────────────────────────────────────────────
 
-  test("imports PanelLeft, PanelRight, GitBranch from lucide-react", () => {
+  test("imports PanelLeft, Timer, GitBranch from lucide-react", () => {
     expect(src).toContain("PanelLeft");
-    expect(src).toContain("PanelRight");
+    expect(src).toContain("Timer");
     expect(src).toContain("GitBranch");
   });
 
   test("uses useUIStore for toggle actions and visibility state", () => {
     expect(src).toContain("useUIStore");
     expect(src).toContain("toggleSidebar");
-    expect(src).toContain("toggleChat");
+    expect(src).toContain("toggleFocusPopover");
   });
 
   test("uses workspaceName from store for display", () => {
@@ -609,12 +604,11 @@ describe("Store interaction — keyboard shortcut actions (task 1.4)", () => {
     expect(useUIStore.getState().sidebarVisible).toBe(true);
   });
 
-  test("⌘⇧C: toggleChat flips chatVisible true → false → true", () => {
-    expect(useUIStore.getState().chatVisible).toBe(true);
-    useUIStore.getState().toggleChat();
-    expect(useUIStore.getState().chatVisible).toBe(false);
-    useUIStore.getState().toggleChat();
-    expect(useUIStore.getState().chatVisible).toBe(true);
+  test("⌘⇧F: openSearch lands in the Editor's search mode", () => {
+    useUIStore.getState().openSearch();
+    const s = useUIStore.getState();
+    expect(s.activity).toBe("editor");
+    expect(s.editorPanelMode).toBe("search");
   });
 
   test("⌘,: openSettings opens settings with default section 'general'", () => {

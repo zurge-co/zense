@@ -1,12 +1,14 @@
-import { Files, GitBranch, History, Search, Settings, Terminal } from "lucide-react";
+import { Files, GitBranch, History, Settings, Terminal } from "lucide-react";
 import { useUIStore, type Activity } from "../../store/uiStore";
 
+/** Main views in workflow order (spec v3): Terminal → Review → Editor →
+ *  History. Search is no longer a standalone activity — it lives inside
+ *  the Editor sidebar (⌘⇧F opens the Editor in search mode). */
 const items: { id: Activity; icon: typeof Files; label: string }[] = [
-  { id: "review", icon: GitBranch, label: "Review" },
-  { id: "history", icon: History, label: "History" },
-  { id: "editor", icon: Files, label: "Editor" },
-  { id: "search", icon: Search, label: "Search (⌘⇧F)" },
   { id: "terminal", icon: Terminal, label: "Terminal (⌘`)" },
+  { id: "review", icon: GitBranch, label: "Review" },
+  { id: "editor", icon: Files, label: "Editor" },
+  { id: "history", icon: History, label: "History" },
 ];
 
 export function ActivityBar() {
@@ -15,7 +17,9 @@ export function ActivityBar() {
   return (
     <div className="flex w-11 shrink-0 flex-col items-center border-r border-border bg-panel py-1">
       {items.map(({ id, icon: Icon, label }) => {
-        const active = activity === id && sidebarVisible;
+        // Review is a full main-area page (no sidebar) — its active state
+        // ignores sidebarVisible, which toggling it must not flip off.
+        const active = activity === id && (sidebarVisible || id === "review");
         return (
           <button
             key={id}

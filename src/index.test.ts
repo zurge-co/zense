@@ -27,7 +27,8 @@ async function findComponentTsxFiles(): Promise<string[]> {
   const fallback = [
     "App.tsx",
     "main.tsx",
-    "components/chat/ChatPanel.tsx",
+    "components/MarkdownView.tsx",
+    "components/review/ReviewView.tsx",
     "components/editor/CodeEditor.tsx",
     "components/editor/DiffView.tsx",
     "components/editor/EditorArea.tsx",

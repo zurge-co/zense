@@ -1,223 +1,210 @@
 /**
- * Prompt builders + patch helpers for the AI Review feature. Pure functions
- * so tests can exercise them without a workspace, git, or LLM.
+ * Prompt builders + the strict-JSON parse harness for Auto Review. Pure
+ * functions so tests can exercise them without a workspace, git, or LLM.
  *
- * The four review kinds map to the user's four review actions:
- * - file-summary  — right-click a change → summarize that file's changes
- * - review-all    — the AI button in the Review panel → summarize everything
- *                   + points a human must review
- * - bug-hunt      — find bugs / mistakes / edge cases in the changes
- * - explain       — right-click code/chunk → explain what it is, its risks,
- *                   how to verify
- *
- * Prompt templates are English-only; the answer language is controlled by
- * the system prompt's preferred-language directive, not by these prompts.
- * Only the thread-tab labels (KIND_LABEL) stay Thai; the user bubble shows
- * the exact name of the button/menu item the user clicked (English, same
- * as the context menus).
+ * All prompts, JSON keys and category enum values are English-only — the
+ * findings parser must stay language-independent. The answer language is
+ * controlled solely by the system prompt's "Always answer in …" directive;
+ * only the free-text fields (title/detail/suggestion) may come back in the
+ * user's preferred language.
  */
 
-export type AiReviewKind = "file-summary" | "review-all" | "bug-hunt" | "explain";
+export type FindingCategory = "bug" | "risk" | "human-review";
 
-export const KIND_LABEL: Record<AiReviewKind, string> = {
-  "file-summary": "สรุปไฟล์",
-  "review-all": "Review ทั้งหมด",
-  "bug-hunt": "หาบั๊ก",
-  explain: "อธิบายโค้ด",
-};
+export const FINDING_CATEGORIES: FindingCategory[] = ["bug", "risk", "human-review"];
 
-/** Short thread title for the AI Review panel. */
-export function threadTitle(kind: AiReviewKind, target?: string): string {
-  const label = KIND_LABEL[kind];
-  return target ? `${label} · ${target}` : label;
+/** One finding as the model returns it (before id/done are attached). */
+export interface RawFinding {
+  category: FindingCategory;
+  title: string;
+  file?: string;
+  line?: number;
+  detail?: string;
+  suggestion?: string;
 }
 
-/**
- * Extract the per-file section of a unified patch. A patch is a series of
- * `diff --git a/<old> b/<new>` sections; a file matches when either side of
- * its header equals `path` (rename: old or new path). Returns "" when the
- * file is not in the patch (e.g. untracked files never appear in the
- * workdir-vs-index patch).
- */
-export function filterPatchForPath(patch: string, path: string): string {
-  if (!patch.trim()) return "";
-  const header = `diff --git a/${path} b/${path}`;
-  const sections = patch.split(/(?=^diff --git )/m);
-  const hit = sections.find((s) => {
-    const firstLine = s.split("\n", 1)[0];
-    if (firstLine === header) return true;
-    // Renames / quoted paths: fall back to a token match on a/<path> or b/<path>.
-    return (
-      firstLine.startsWith("diff --git ") &&
-      (firstLine.includes(` a/${path} `) ||
-        firstLine.endsWith(` a/${path}`) ||
-        firstLine.includes(` b/${path} `) ||
-        firstLine.endsWith(` b/${path}`))
-    );
-  });
-  return hit ? hit.trim() : "";
-}
-
-/** Cap an inline snippet so a fat selection can't blow up the request. */
-const MAX_SNIPPET = 4000;
-function clip(text: string): string {
-  return text.length > MAX_SNIPPET
-    ? `${text.slice(0, MAX_SNIPPET)}\n… (truncated — use the read_file tool to read more) …`
-    : text;
-}
-
-/**
- * Summarize the changes of a single file (right-click a change in the
- * Review panel). When `patch` is empty the file may be untracked — fall
- * back to tools.
- */
-export function buildFileSummaryPrompt(path: string, patch: string, staged: boolean): string {
-  const scope = staged ? "staged (vs HEAD)" : "unstaged (vs index)";
-  const context = patch.trim()
-    ? `Unified diff of that file (${scope}):\n\n\`\`\`diff\n${clip(patch)}\n\`\`\``
-    : `No diff for this file in the patch (${scope}) — it may be a new untracked file or the diff was truncated. Use the git_status / read_file tools to read the current file and summarize from its actual content.`;
-  return `Please summarize the changes in \`${path}\`.
-
-${context}
-
-Answer format:
-1. **Overview** — 1–2 sentences: what changed and why
-2. **Key details** — bullets (cite file:line)
-3. **Points a reviewer must check** (say "none" if there are none)`;
-}
-
-/** Summarize all changes + points a human must review (AI button in the Review panel). */
-export function buildReviewAllPrompt(stagedPatch: string, unstagedPatch: string): string {
-  const staged = stagedPatch.trim() ? clip(stagedPatch) : "(no staged changes)";
-  const unstaged = unstagedPatch.trim() ? clip(unstagedPatch) : "(no unstaged changes)";
-  return `Please review all uncommitted changes in this workspace.
-
-Staged diff (vs HEAD):
-\`\`\`diff
-${staged}
-\`\`\`
-
-Unstaged diff (vs index):
-\`\`\`diff
-${unstaged}
-\`\`\`
-
-Answer format:
-1. **Overview** — what this change set does and why
-2. **Per file/group** — what each file changed, briefly
-3. **⭐ Points a human must review** — a checklist of things an AI cannot decide: behavior-changing logic, business rules, constants, migrations, compatibility with other parts
-4. **Overall risk** — what should be tested before committing
-
-Use the git_diff / read_file tools to inspect details if the patch is not enough.`;
-}
-
-/**
- * Summarize the changes of a file between two commits (commitDiff tabs from
- * History/CompareView). There is no commit-patch tool in the backend
- * (git_show gives only line stats), so both versions are embedded inline
- * (clipped).
- */
-export function buildCommitFileSummaryPrompt(
-  path: string,
-  fromLabel: string,
-  toLabel: string,
-  original: string,
-  modified: string,
-): string {
-  return `Please summarize the changes in \`${path}\` between commit \`${fromLabel}\` → \`${toLabel}\`.
-
-Old code (at \`${fromLabel}\`):
-\`\`\`
-${clip(original)}
-\`\`\`
-
-New code (at \`${toLabel}\`):
-\`\`\`
-${clip(modified)}
-\`\`\`
-
-(If the content was truncated, summarize what you can see and say so.)
-Answer format:
-1. **Overview** — 1–2 sentences: what changed and why (you may check the commit message via git_show)
-2. **Key details** — bullets (cite file:line)
-3. **Points a reviewer must check** (say "none" if there are none)`;
-}
-
-/** Find bugs / mistakes / edge cases in changes (scope = a path or "all changes"). */
-export function buildBugHuntPrompt(scope: string, patch: string): string {
-  const context = patch.trim()
-    ? `Unified diff to analyze:\n\n\`\`\`diff\n${clip(patch)}\n\`\`\``
-    : `No inline diff — use the git_diff / read_file tools to fetch the changes of ${scope} and analyze them yourself.`;
-  return `Please find bugs / mistakes / edge cases that may come from ${scope}.
-
-${context}
-
-Analyze deeply: wrong logic, off-by-one, null/undefined, missing error handling, race conditions, side effects on callers, cases that worked before and will break now.
-Answer as findings in the system's code review format ([severity] category — file:line), critical first.
-If no problems are found, say so clearly and suggest 1–2 things worth testing.`;
-}
-
-export interface ExplainInput {
-  path: string;
-  /** 1-based inclusive line range on the working-tree side. */
-  startLine: number;
-  endLine: number;
-  /** Selected code (editor) or added lines (diff chunk). */
-  snippet: string;
-  /** Diff chunk only: lines that were removed. */
-  removed?: string;
-}
-
-/** Explain code/chunk — what it is, why it changed, what it relates to, how to verify, risks. */
-export function buildExplainPrompt(input: ExplainInput): string {
-  const ref =
-    input.startLine === input.endLine
-      ? `${input.path}:${input.startLine}`
-      : `${input.path}:${input.startLine}-${input.endLine}`;
-  const context =
-    input.removed !== undefined
-      ? `Change chunk in \`${input.path}\` (new side starts at line ${input.startLine}):
-
-Old code that was removed/replaced:
-\`\`\`
-${clip(input.removed) || "(none — pure addition)"}
-\`\`\`
-
-New code:
-\`\`\`
-${clip(input.snippet) || "(none — pure deletion)"}
-\`\`\``
-      : `Selection \`${ref}\`:
-
-\`\`\`
-${clip(input.snippet)}
-\`\`\``;
-  return `Please explain this code.
-
-${context}
-
-Cover all 5 points:
-1. **What it is** — one sentence: what this code/chunk does
-2. **Why** — its purpose / the problem it solves (if it is a diff chunk, compare with the old code)
-3. **Related code** — use the read_file / read_file_range tools to follow callers, imports, or related files, then say what this change affects
-4. **How to verify** — how to check it is correct (tests to run / cases to try)
-5. **Risk** — what may break if this part is wrong`;
-}
-
-/**
- * Fallback short heading for the user-side bubble in a thread — NOT the
- * full prompt. Callers normally pass the exact label of the button/menu
- * item the user clicked (see aiReview.ts); this is the kind-only default.
- */
-export function userBubbleLabel(kind: AiReviewKind): string {
-  switch (kind) {
-    case "file-summary":
-      return "Summarize with AI";
-    case "review-all":
-      return "Summarize all changes + review points";
-    case "bug-hunt":
-      return "Find bugs with AI";
-    case "explain":
-      return "Explain with AI";
+/** Throwing type marker: only FormatError consumes a retry — provider and
+ *  network errors must abort immediately (constraint: no retry burn). */
+export class FormatError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FormatError";
   }
+}
+
+const SCHEMA = `{
+  "findings": [
+    {
+      "category": "bug" | "risk" | "human-review",
+      "title": "one-line title",
+      "file": "path/to/file",
+      "line": 42,
+      "detail": "what the problem is and why",
+      "suggestion": "what to do instead"
+    }
+  ]
+}`;
+
+const RULES = `Rules:
+- "category" is exactly one of "bug", "risk", "human-review":
+  bug = a defect that produces wrong behavior now;
+  risk = could break under some condition or edge case;
+  human-review = a decision a human must make (business rules, constants, naming), not a defect.
+- Report only what the diff actually shows — never invent files or lines.
+- "line" is the new-side line number the finding refers to (omit when unknown).
+- Keep "title" to one line. Write title/detail/suggestion in your answer language;
+  JSON keys and the category values stay in English exactly as shown.
+- Return {"findings": []} when there is nothing worth reporting.`;
+
+/** Per-chunk review prompt — strict JSON, findings for THIS chunk only. */
+export function buildChunkReviewPrompt(args: {
+  patch: string;
+  path: string;
+  part: number;
+  parts: number;
+  chunkIndex: number;
+  chunkCount: number;
+  files: string[];
+}): string {
+  const part =
+    args.parts > 1 ? ` (part ${args.part} of ${args.parts})` : "";
+  return `You are reviewing a staged git diff, chunk ${args.chunkIndex} of ${args.chunkCount}.
+
+All changed files in this commit: ${args.files.join(", ")}
+
+Review ONLY the following chunk — file \`${args.path}\`${part}:
+
+\`\`\`diff
+${args.patch}
+\`\`\`
+
+Reply with ONLY a JSON object — no markdown fences, no commentary, no text before or after:
+${SCHEMA}
+
+${RULES}`;
+}
+
+/** Follow-up message when the model's reply was not parseable JSON. */
+export function buildRetryInstruction(parseError: string): string {
+  return `Your reply could not be parsed (${parseError}). Reply with ONLY the JSON object described above — no markdown fences, no commentary, nothing else.`;
+}
+
+/** Critic pass: prune duplicates and unsupported findings. */
+export function buildCriticPrompt(findings: RawFinding[]): string {
+  return `A chunk-by-chunk review of a staged diff produced these findings:
+
+\`\`\`json
+${JSON.stringify({ findings }, null, 2)}
+\`\`\`
+
+Act as a critic:
+- remove duplicates and near-duplicates,
+- drop findings that are speculative, trivial style nits, or not actionable,
+- fix wrong categories when obvious,
+- keep everything else unchanged.
+
+Reply with ONLY the JSON object — same schema, no commentary:
+${SCHEMA}`;
+}
+
+/** Final cross-file synthesis over the compact findings + file list. */
+export function buildSynthesisPrompt(findings: RawFinding[], files: string[]): string {
+  return `A chunk-by-chunk review produced these findings:
+
+\`\`\`json
+${JSON.stringify({ findings }, null, 2)}
+\`\`\`
+
+Changed files: ${files.join(", ")}
+
+Do the final cross-file pass:
+- ADD findings that only appear when looking across files (broken call sites, mismatched contracts, a change whose counterpart in another file is missing),
+- merge duplicated findings,
+- keep everything else unchanged.
+
+Reply with ONLY the JSON object — same schema, no commentary:
+${SCHEMA}`;
+}
+
+/** Strip an optional code fence and isolate the outermost JSON object. */
+function extractJson(raw: string): string {
+  let text = raw.trim();
+  const fence = text.match(/```(?:json)?\s*\n([\s\S]*?)```/);
+  if (fence) text = fence[1];
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) {
+    throw new FormatError("no JSON object found in the reply");
+  }
+  return text.slice(start, end + 1);
+}
+
+function toFinding(value: unknown, index: number): RawFinding {
+  if (typeof value !== "object" || value === null) {
+    throw new FormatError(`findings[${index}] is not an object`);
+  }
+  const f = value as Record<string, unknown>;
+  if (typeof f.title !== "string" || !f.title.trim()) {
+    throw new FormatError(`findings[${index}] is missing a title`);
+  }
+  if (!FINDING_CATEGORIES.includes(f.category as FindingCategory)) {
+    throw new FormatError(`findings[${index}] has an invalid category`);
+  }
+  const finding: RawFinding = {
+    category: f.category as FindingCategory,
+    title: f.title.trim(),
+  };
+  if (typeof f.file === "string" && f.file.trim()) finding.file = f.file.trim();
+  if (typeof f.line === "number" && Number.isFinite(f.line)) finding.line = Math.round(f.line);
+  if (typeof f.detail === "string" && f.detail.trim()) finding.detail = f.detail.trim();
+  if (typeof f.suggestion === "string" && f.suggestion.trim()) {
+    finding.suggestion = f.suggestion.trim();
+  }
+  return finding;
+}
+
+/**
+ * Strict-JSON parse: the model must return {"findings": […]} (a wrapping
+ * code fence or stray prose around the object is tolerated). Anything else
+ * throws FormatError so the caller can retry (format errors only).
+ */
+export function parseFindingsJson(raw: string): RawFinding[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(extractJson(raw));
+  } catch (err) {
+    if (err instanceof FormatError) throw err;
+    throw new FormatError(err instanceof Error ? err.message : String(err));
+  }
+  if (typeof parsed !== "object" || parsed === null || !Array.isArray((parsed as { findings?: unknown }).findings)) {
+    throw new FormatError('expected an object with a "findings" array');
+  }
+  return (parsed as { findings: unknown[] }).findings.map(toFinding);
+}
+
+/**
+ * Last resort after all format retries fail: salvage bullet/heading lines
+ * from the raw markdown reply instead of discarding the run. Keyword map
+ * stays English — the model is instructed to keep structure English, and a
+ * wrong guess lands safely in "human-review".
+ */
+export function parseFindingsMarkdownFallback(raw: string): RawFinding[] {
+  const findings: RawFinding[] = [];
+  for (const line of raw.split("\n")) {
+    const m = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(\S.*)$/);
+    if (!m) continue;
+    let title = m[1].trim();
+    if (title.length < 8 || /^(#{1,6}\s*)?(findings?|summary|notes?)\b/i.test(title)) continue;
+    title = title.replace(/^#{1,6}\s*/, "");
+    if (title.length > 200) title = `${title.slice(0, 197)}…`;
+    let category: FindingCategory = "human-review";
+    if (/\b(bug|error|crash|broken|incorrect|wrong|null|undefined|overflow)\b/i.test(title)) {
+      category = "bug";
+    } else if (/\b(risk|warning|edge case|might|could break|race)\b/i.test(title)) {
+      category = "risk";
+    }
+    findings.push({ category, title });
+    if (findings.length >= 50) break; // a wall of bullets is not findings
+  }
+  return findings;
 }

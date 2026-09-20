@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { renderMarkdown } from "../../lib/markdown";
+import { renderMarkdown } from "../lib/markdown";
 
 /** Render assistant Markdown as HTML. Safe: renderMarkdown HTML-escapes the
  *  source up front and allowlists link/image URL schemes, so no raw HTML or
