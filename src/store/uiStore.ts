@@ -129,11 +129,19 @@ interface UIState {
   /** Commit sha selected as the base for "Compare with Selected". */
   historyCompareBase: string | null;
 
+  /** Pending go-to-line set by openFile/openDiff(path, line) — e.g. AI
+   *  Review finding refs. The view rendering `path` reveals the line and
+   *  consumes the request (matched by nonce, never by path alone). */
+  revealLineRequest: { path: string; line: number; nonce: number; at: number } | null;
+  /** Mark a reveal request as handled (or expired) so stale requests
+   *  never fire on a later, unrelated mount of the same path. */
+  consumeRevealLine: (nonce: number) => void;
+
   /** Open a file in the EDITOR area and switch the activity to it —
    *  file tabs can never appear in Review/History, so the view follows. */
-  openFile: (path: string) => void;
+  openFile: (path: string, line?: number) => void;
   /** Open a working-tree diff tab in the REVIEW area. */
-  openDiff: (path: string) => void;
+  openDiff: (path: string, line?: number) => void;
   /** Open a commit detail tab in the HISTORY area. */
   openCommit: (sha: string) => void;
   /** Open a compare tab in the HISTORY area. */
@@ -189,6 +197,24 @@ const patchArea = (
 ): Pick<UIState, "tabsByArea"> => ({
   tabsByArea: { ...s.tabsByArea, [area]: fn(s.tabsByArea[area]) },
 });
+
+/** Build a revealLineRequest patch for open* calls: only when a line was
+ *  given. Line-less opens leave any unconsumed request untouched. */
+const revealPatch = (
+  s: Pick<UIState, "revealLineRequest">,
+  path: string,
+  line?: number,
+): Pick<UIState, "revealLineRequest"> =>
+  line === undefined
+    ? { revealLineRequest: s.revealLineRequest }
+    : {
+        revealLineRequest: {
+          path,
+          line,
+          nonce: (s.revealLineRequest?.nonce ?? 0) + 1,
+          at: Date.now(),
+        },
+      };
 
 /** Append-if-missing + activate `tab` inside one area's state. */
 const upsertTab = (a: AreaTabs, tab: EditorTab): AreaTabs => {
@@ -259,18 +285,23 @@ export const useUIStore = create<UIState>((set) => ({
       sidebarVisible: true,
       quickOpenVisible: false,
     })),
-  openFile: (path) =>
+  revealLineRequest: null,
+  consumeRevealLine: (nonce) =>
+    set((s) => (s.revealLineRequest?.nonce === nonce ? { revealLineRequest: null } : s)),
+  openFile: (path, line) =>
     set((s) => ({
       // File tabs belong to the editor area ONLY — follow them there.
       activity: "editor" as Activity,
       sidebarVisible: true,
       selectedFile: path,
       ...patchArea(s, "editor", (a) => upsertTab(a, { kind: "file", path })),
+      ...revealPatch(s, path, line),
     })),
-  openDiff: (path) =>
+  openDiff: (path, line) =>
     set((s) => ({
       selectedFile: path,
       ...patchArea(s, "review", (a) => upsertTab(a, { kind: "diff", path })),
+      ...revealPatch(s, path, line),
     })),
   openCommit: (sha) =>
     set((s) => ({

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import type * as monaco from "monaco-editor";
 import {
@@ -16,6 +16,7 @@ import { useWorkspaceStore } from "../../store/workspaceStore";
 import { gitDiffFile, gitDiffCommitFile, gitDiscardFile, gitDiscardLines, gitStageLines, gitUnstageLines } from "../../lib/git";
 import { detectLanguage } from "../../lib/lang";
 import { errMessage } from "../../lib/errors";
+import { useRevealLineRequest } from "../../lib/useRevealLine";
 import { defineTheme } from "./monacoSetup";
 import { PathBreadcrumb } from "./PathBreadcrumb";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -96,6 +97,34 @@ export function DiffView({ tab }: { tab: EditorTab }) {
   const [changes, setChanges] = useState<readonly monaco.editor.ILineChange[]>(
     []
   );
+
+  // Go-to-line consumer (AI Review finding refs, openDiff(path, line)):
+  // findings cite new-file line numbers, so the reveal lands on the
+  // MODIFIED editor — the same place the next/prev-change jumper scrolls.
+  // Ready only once the diff editor is mounted AND its modified model
+  // already holds the just-loaded content (revealing before that would
+  // clamp against the previous tab's text).
+  const modifiedRef = useRef<string | null>(null);
+  useEffect(() => {
+    modifiedRef.current = content?.modified ?? null;
+  }, [content]);
+  const getReadyModifiedEditor = useCallback(() => {
+    const diff = diffRef.current;
+    if (!diff) return null;
+    const mod = diff.getModifiedEditor();
+    return modifiedRef.current !== null && mod.getValue() === modifiedRef.current
+      ? mod
+      : null;
+  }, []);
+  const revealAtLine = useCallback(
+    (editor: monaco.editor.IStandaloneCodeEditor, line: number) => {
+      editor.revealLineInCenter(line);
+      editor.setPosition({ lineNumber: line, column: 1 });
+      editor.focus();
+    },
+    [],
+  );
+  useRevealLineRequest(path, getReadyModifiedEditor, revealAtLine);
 
   const jump = (dir: 1 | -1) => {
     if (changes.length === 0) return;

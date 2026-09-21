@@ -10,10 +10,13 @@ import type { FindingCategory } from "../../lib/aiReviewPrompts";
 import { MarkdownView, ThinkingIndicator } from "../MarkdownView";
 import { ConfirmDialog } from "../ConfirmDialog";
 
-const GROUPS: { key: FindingCategory; label: string; icon: typeof Bug }[] = [
-  { key: "bug", label: "Bug", icon: Bug },
-  { key: "risk", label: "Risk", icon: ShieldAlert },
-  { key: "human-review", label: "Human Review", icon: UserCheck },
+/** Per-category accent color: header text/icon plus the card's left edge.
+ *  Bug = red (danger), Risk = amber (yellow), Human Review = green (accent).
+ *  Full literals so Tailwind's scanner keeps these utilities. */
+const GROUPS: { key: FindingCategory; label: string; icon: typeof Bug; color: string; edge: string }[] = [
+  { key: "bug", label: "Bug", icon: Bug, color: "text-danger", edge: "border-l-danger" },
+  { key: "risk", label: "Risk", icon: ShieldAlert, color: "text-yellow", edge: "border-l-yellow" },
+  { key: "human-review", label: "Human Review", icon: UserCheck, color: "text-accent", edge: "border-l-accent" },
 ];
 
 /**
@@ -129,6 +132,8 @@ export function AiReviewPanel() {
             key={g.key}
             label={g.label}
             icon={g.icon}
+            color={g.color}
+            edge={g.edge}
             findings={findings.filter((f) => f.category === g.key)}
             onToggle={toggleDone}
           />
@@ -154,11 +159,15 @@ export function AiReviewPanel() {
 function FindingGroup({
   label,
   icon: Icon,
+  color,
+  edge,
   findings,
   onToggle,
 }: {
   label: string;
   icon: typeof Bug;
+  color: string;
+  edge: string;
   findings: Finding[];
   onToggle: (id: string) => void;
 }) {
@@ -167,23 +176,25 @@ function FindingGroup({
   if (findings.length === 0) return null;
   return (
     <section className="mb-2">
-      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+      <div className={`mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide ${color}`}>
         <Icon size={12} />
         {label} · {open.length}
       </div>
       {open.map((f) => (
-        <FindingRow key={f.id} finding={f} onToggle={onToggle} />
+        <FindingRow key={f.id} finding={f} edge={edge} onToggle={onToggle} />
       ))}
-      {closed.length > 0 && <ClosedSection findings={closed} onToggle={onToggle} />}
+      {closed.length > 0 && <ClosedSection findings={closed} edge={edge} onToggle={onToggle} />}
     </section>
   );
 }
 
 function ClosedSection({
   findings,
+  edge,
   onToggle,
 }: {
   findings: Finding[];
+  edge: string;
   onToggle: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -196,12 +207,20 @@ function ClosedSection({
         {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         Closed · {findings.length}
       </button>
-      {expanded && findings.map((f) => <FindingRow key={f.id} finding={f} onToggle={onToggle} />)}
+      {expanded && findings.map((f) => <FindingRow key={f.id} finding={f} edge={edge} onToggle={onToggle} />)}
     </div>
   );
 }
 
-function FindingRow({ finding, onToggle }: { finding: Finding; onToggle: (id: string) => void }) {
+function FindingRow({
+  finding,
+  edge,
+  onToggle,
+}: {
+  finding: Finding;
+  edge: string;
+  onToggle: (id: string) => void;
+}) {
   const openDiff = useUIStore((s) => s.openDiff);
   const openFile = useUIStore((s) => s.openFile);
   const changedPaths = useGitStore((s) => s.status.files);
@@ -210,11 +229,13 @@ function FindingRow({ finding, onToggle }: { finding: Finding; onToggle: (id: st
   const inChanged = !!finding.file && changedPaths.some((f) => f.path === finding.file);
   const openReference = () => {
     if (!finding.file) return;
-    if (inChanged) openDiff(finding.file);
-    else openFile(finding.file);
+    // Jump straight to the cited line (reveal only fires when the line is
+    // known — line-less findings open the file as before).
+    if (inChanged) openDiff(finding.file, finding.line);
+    else openFile(finding.file, finding.line);
   };
   return (
-    <div className={`mb-1 rounded border border-border bg-base px-2 py-1.5 ${finding.done ? "opacity-60" : ""}`}>
+    <div className={`mb-1 rounded border border-border border-l-2 bg-base px-2 py-1.5 ${edge} ${finding.done ? "opacity-60" : ""}`}>
       <label className="flex cursor-pointer items-start gap-2">
         <input
           type="checkbox"

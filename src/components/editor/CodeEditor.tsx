@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
+import type * as monaco from "monaco-editor";
 import { defineTheme } from "./monacoSetup";
 import { setupKeybindings } from "./monacoKeybindings";
 import { writeClipboardText } from "../../lib/clipboard";
 import { setActiveEditor } from "../../lib/editorRef";
+import { useRevealLineRequest } from "../../lib/useRevealLine";
 import { formatReference, selectionLines } from "../../lib/reference";
 import { useUIStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
@@ -32,6 +34,34 @@ export function CodeEditor({
   useEffect(() => {
     pathRef.current = path;
   }, [path]);
+  // The mounted editor instance (null until onMount) — read by the
+  // go-to-line consumer below.
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  // readiness for revealLine: the model must already hold THIS `value` —
+  // during async file loads the previous tab's text is still in the model.
+  const valueRef = useRef(value);
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+  // Jump to a pending reveal request (AI Review finding refs opened via
+  // openFile(path, line)). Stable getters/callbacks: never close over
+  // stale state — the shared editor instance outlives tab switches.
+  const getReadyEditor = useCallback(
+    () =>
+      editorRef.current && editorRef.current.getValue() === valueRef.current
+        ? editorRef.current
+        : null,
+    [],
+  );
+  const revealAtLine = useCallback(
+    (editor: monaco.editor.IStandaloneCodeEditor, line: number) => {
+      editor.revealLineInCenter(line);
+      editor.setPosition({ lineNumber: line, column: 1 });
+      editor.focus();
+    },
+    [],
+  );
+  useRevealLineRequest(path, getReadyEditor, revealAtLine);
   // Live from Settings > Appearance (workspaceStore is persisted) so the
   // editor re-renders with the new size the moment the user changes it.
   const fontSize = useWorkspaceStore((s) => s.editorFontSize);
@@ -42,6 +72,7 @@ export function CodeEditor({
       theme="zense-dark"
       beforeMount={defineTheme}
       onMount={(editor, monaco) => {
+        editorRef.current = editor;
         setActiveEditor(editor);
         setupKeybindings(editor, monaco);
         // Context menu: "Copy Reference" copies `path:line` (or

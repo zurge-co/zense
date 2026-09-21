@@ -33,6 +33,7 @@ import {
   runAutoReview,
 } from "../src/lib/aiReview";
 import { useAiReviewStore } from "../src/store/aiReviewStore";
+import { useUIStore } from "../src/store/uiStore";
 import type { IpcMessage, LlmConfig } from "../src/lib/llm";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -603,5 +604,86 @@ describe("Auto Review structural wiring", () => {
     // No Thai characters anywhere in the review pipeline.
     expect(readSrc("src/lib/aiReview.ts")).not.toMatch(/[ก-๙]/);
     expect(prompts).not.toMatch(/[ก-๙]/);
+  });
+});
+
+// ── panel UX: category colors, resizable dock, go-to-line refs ────────────
+
+describe("AI Review panel UX", () => {
+  test("finding groups are color-coded per category", () => {
+    const panel = readSrc("src/components/aiReview/AiReviewPanel.tsx");
+    expect(panel).toContain("text-danger"); // Bug — red
+    expect(panel).toContain("text-yellow"); // Risk — amber
+    expect(panel).toContain("text-accent"); // Human Review — green
+  });
+
+  test("clicking a finding threads the cited line into open calls", () => {
+    const panel = readSrc("src/components/aiReview/AiReviewPanel.tsx");
+    expect(panel).toMatch(/openDiff\(finding\.file,\s*finding\.line/);
+    expect(panel).toMatch(/openFile\(finding\.file,\s*finding\.line/);
+  });
+
+  test("the findings dock is drag-resizable, no fixed h-64", () => {
+    const view = readSrc("src/components/review/ReviewView.tsx");
+    expect(view).toContain("row-resize");
+    expect(view).toContain("pointermove");
+    expect(view).not.toContain("h-64");
+  });
+
+  test("both monaco hosts consume and perform the reveal themselves", () => {
+    // The shared hook owns matching/polling/expiry; the actual jump call
+    // (revealLineInCenter) stays in each host — code editor vs. the
+    // diff's MODIFIED side reveal differently.
+    expect(readSrc("src/lib/useRevealLine.ts")).toContain("consumeRevealLine");
+    for (const host of ["src/components/editor/CodeEditor.tsx", "src/components/editor/DiffView.tsx"]) {
+      expect(readSrc(host)).toContain("useRevealLine");
+      expect(readSrc(host)).toContain("revealLineInCenter");
+    }
+  });
+});
+
+describe("revealLineRequest (go-to-line refs)", () => {
+  beforeEach(() => {
+    useUIStore.setState({ revealLineRequest: null });
+  });
+
+  test("openFile with a line records a reveal request", () => {
+    useUIStore.getState().openFile("src/a.ts", 42);
+    const req = useUIStore.getState().revealLineRequest;
+    expect(req).not.toBeNull();
+    expect(req!.path).toBe("src/a.ts");
+    expect(req!.line).toBe(42);
+  });
+
+  test("openDiff with a line records a reveal request", () => {
+    useUIStore.getState().openDiff("src/b.ts", 7);
+    const req = useUIStore.getState().revealLineRequest;
+    expect(req).not.toBeNull();
+    expect(req!.path).toBe("src/b.ts");
+    expect(req!.line).toBe(7);
+  });
+
+  test("line-less opens leave any pending request untouched", () => {
+    useUIStore.getState().openFile("src/a.ts", 1);
+    const before = useUIStore.getState().revealLineRequest;
+    useUIStore.getState().openFile("src/c.ts");
+    expect(useUIStore.getState().revealLineRequest).toBe(before);
+  });
+
+  test("re-clicking the same finding re-arms the request (fresh nonce)", () => {
+    useUIStore.getState().openDiff("src/b.ts", 7);
+    const first = useUIStore.getState().revealLineRequest!;
+    useUIStore.getState().openDiff("src/b.ts", 7);
+    const second = useUIStore.getState().revealLineRequest!;
+    expect(second.nonce).toBe(first.nonce + 1);
+  });
+
+  test("consumeRevealLine clears only the matching nonce", () => {
+    useUIStore.getState().openFile("src/a.ts", 5);
+    const req = useUIStore.getState().revealLineRequest!;
+    useUIStore.getState().consumeRevealLine(req.nonce + 999);
+    expect(useUIStore.getState().revealLineRequest).not.toBeNull();
+    useUIStore.getState().consumeRevealLine(req.nonce);
+    expect(useUIStore.getState().revealLineRequest).toBeNull();
   });
 });
