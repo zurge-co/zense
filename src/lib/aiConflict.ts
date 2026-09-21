@@ -18,6 +18,7 @@ import {
   gitResolveDelete,
   gitResolveSide,
   gitMergeContinue,
+  mockConflictDemoEnabled,
   type GitMergeInProgress,
 } from "./git";
 import { chatSend, type IpcMessage, type LlmConfig } from "./llm";
@@ -237,20 +238,60 @@ export async function analyzeConflict(root: string, path: string): Promise<void>
       return;
     }
 
-    const config = await loadToolFreeConfig();
-    const sysPrompt = systemPrompt(root, config.preferredLanguage);
-    const proposal = await askProposalJson(
-      chatSend as SendFn,
-      config,
-      sysPrompt,
-      root,
-      buildConflictPrompt({ path, ...mergeLabels(useGitStore.getState().mergeInfo), base, ours, theirs }),
-    );
+    // Browser-dev demo (?mockConflict=1): no provider is reachable here
+    // (chatSend is a stub outside Tauri), so the semantic path ships a
+    // canned proposal for the fixture — the pipeline below it is the real
+    // one (evidence engine, store, UI all identical to production).
+    const proposal = mockConflictDemoEnabled()
+      ? cannedDemoProposal(path, ours)
+      : await (async () => {
+          const config = await loadToolFreeConfig();
+          const sysPrompt = systemPrompt(root, config.preferredLanguage);
+          return askProposalJson(
+            chatSend as SendFn,
+            config,
+            sysPrompt,
+            root,
+            buildConflictPrompt({
+              path,
+              ...mergeLabels(useGitStore.getState().mergeInfo),
+              base,
+              ours,
+              theirs,
+            }),
+          );
+        })();
     const evidence = await collectEvidence(root, path, proposal.proposal);
     store.setProposal(path, { ...proposal, evidence, trivial: null });
   } catch (err) {
     store.setError(path, errMessage(err));
   }
+}
+
+/** Canned proposal for the browser-dev demo fixture (never reachable in
+ *  Tauri — the flag is browser-only). Pure so tests can pin the merge. */
+export function cannedDemoProposal(path: string, ours: string) {
+  if (path !== "src/payments.ts") {
+    return {
+      story: "Demo fallback: the current side is kept as the proposal.",
+      proposal: ours,
+      confidence: "low" as const,
+      reasoningPoints: [],
+    };
+  }
+  return {
+    story:
+      "The current branch moved tax calculation into TaxService (architecture change).\n" +
+      "The incoming work adds discount support applied BEFORE tax (behavior change), written against the old inline tax code.\n" +
+      "The two intents do not collide: keep the TaxService boundary and apply the discount first, so tax is computed on the discounted subtotal — exactly what the feature intends.",
+    proposal: `import { taxService } from "./taxService";\n\nexport function applyDiscount(amount: number, code?: string): number {\n  return code === "WELCOME" ? amount * 0.9 : amount;\n}\n\nexport function createPayment(amount: number, code?: string): number {\n  const subtotal = applyDiscount(amount, code);\n  const tax = taxService.calculate(subtotal);\n  return subtotal + tax;\n}\n`,
+    confidence: "high" as const,
+    reasoningPoints: [
+      "Preserves the TaxService migration from the current branch",
+      "Preserves the discount behavior from the incoming work",
+      "Discount stays pre-tax, matching the feature's commit message",
+    ],
+  };
 }
 
 // ── Ask Zense — scoped READ-ONLY Q&A ────────────────────────────────────
@@ -265,6 +306,15 @@ export async function askConflictQuestion(
   record: ResolutionRecord,
   question: string,
 ): Promise<string> {
+  if (mockConflictDemoEnabled()) {
+    // Browser-dev demo: no provider — answer from the fixture's story.
+    const answer =
+      "Demo mode: based on the verified story above, the proposal keeps both intents " +
+      "(TaxService architecture + pre-tax discount). Picking only one side would lose the other change. " +
+      "In the desktop app this answer comes from the configured AI provider, scoped to this conflict.";
+    useConflictResolutionStore.getState().appendQa(record.path, { question, answer });
+    return answer;
+  }
   const config = await loadToolFreeConfig();
   const sysPrompt = `${systemPrompt(root, config.preferredLanguage)}
 

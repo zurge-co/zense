@@ -393,15 +393,105 @@ export interface GitConflictEntry {
 
 export const mockMergeInProgress: GitMergeInProgress = { inProgress: false };
 
+// ── Browser-dev conflict demo ────────────────────────────────────────────
+// Enable in `vite` dev: open the app with ?mockConflict=1 once (the flag
+// sticks in localStorage; clear the key to disable). Simulates a parked
+// merge with one conflict of each kind so the whole Resolution Workspace
+// flow is exercisable without Tauri or a real repo. Resolves shrink the
+// mock list (driving resolvedPaths); continue/abort end the demo.
+
+const MOCK_FLAG_KEY = "zense:mock-conflict";
+
+export function mockConflictDemoEnabled(): boolean {
+  if (isTauri()) return false;
+  try {
+    if (typeof window === "undefined") return false;
+    if (new URLSearchParams(window.location.search).has("mockConflict")) {
+      window.localStorage.setItem(MOCK_FLAG_KEY, "1");
+    }
+    return window.localStorage.getItem(MOCK_FLAG_KEY) === "1";
+  } catch {
+    return false; // storage blocked / non-browser env
+  }
+}
+
+/** Fresh seed — one conflict per kind, pure export for tests. */
+export function seedMockConflictEntries(): GitConflictEntry[] {
+  return [
+    // Semantic: main re-architected tax; the incoming branch added a
+    // discount BEFORE that refactor — neither side's answer is right alone.
+    { path: "src/payments.ts", base: "mock-b", ours: "mock-o", theirs: "mock-t", conflictType: "content" },
+    // Trivial: same imports, different order — settles with NO LLM call.
+    { path: "src/imports.ts", base: "mock-b", ours: "mock-o", theirs: "mock-t", conflictType: "content" },
+    // One side edited, the other deleted.
+    { path: "src/legacy-auth.ts", base: "mock-b", ours: "mock-o", theirs: undefined, conflictType: "modify-delete" },
+    // Binary — the keep-a-side flow, no LLM by design.
+    { path: "assets/logo.png", base: "mock-b", ours: "mock-o", theirs: "mock-t", conflictType: "content", binary: true },
+  ];
+}
+
+/** The mocked conflict list for the running demo (mutable module state —
+ *  browser dev only; Tauri never reaches this). */
+let mockConflicts: GitConflictEntry[] | null = null;
+let mockMergeActive = true;
+
+const mockConflictList = (): GitConflictEntry[] => {
+  if (!mockConflicts) mockConflicts = seedMockConflictEntries();
+  return mockConflicts;
+};
+
+export const MOCK_CONFLICT_MERGE_INFO: GitMergeInProgress = {
+  inProgress: true,
+  operation: "merge",
+  sourceBranch: "feature/discount",
+  sourceSummary: "Add discount support before tax",
+};
+
 export async function gitMergeInProgress(root: string): Promise<GitMergeInProgress> {
-  if (!isTauri()) return mockMergeInProgress;
+  if (!isTauri()) {
+    return mockConflictDemoEnabled() && mockMergeActive
+      ? MOCK_CONFLICT_MERGE_INFO
+      : mockMergeInProgress;
+  }
   return invoke<GitMergeInProgress>("git_merge_in_progress", { root });
 }
 
 /** Every conflicted file in the index — drives the conflict overview panel. */
 export async function gitConflicts(root: string): Promise<GitConflictEntry[]> {
-  if (!isTauri()) return []; // browser dev: no conflicts
+  if (!isTauri()) {
+    return mockConflictDemoEnabled() && mockMergeActive ? mockConflictList() : [];
+  }
   return invoke<GitConflictEntry[]>("git_conflicts", { root });
+}
+
+/** Stage contents for the browser-dev demo (pure export for tests). */
+export function mockConflictStageContent(path: string, stage: "base" | "ours" | "theirs"): string | null {
+  const payments = {
+    base: `export function createPayment(amount: number): number {\n  const tax = amount * 0.07;\n  return amount + tax;\n}\n`,
+    // Current (main): tax calculation migrated into TaxService.
+    ours: `import { taxService } from "./taxService";\n\nexport function createPayment(amount: number): number {\n  const tax = taxService.calculate(amount);\n  return amount + tax;\n}\n`,
+    // Incoming (feature/discount): discount applied before tax, written\n    // against the OLD inline-tax structure — a true semantic conflict.
+    theirs: `export function applyDiscount(amount: number, code?: string): number {\n  return code === "WELCOME" ? amount * 0.9 : amount;\n}\n\nexport function createPayment(amount: number, code?: string): number {\n  const subtotal = applyDiscount(amount, code);\n  const tax = subtotal * 0.07;\n  return subtotal + tax;\n}\n`,
+  };
+  const imports = {
+    base: `import { b } from "./b";\nimport { a } from "./a";\nimport { c } from "./c";\n`,
+    // Same import set, both orders — mechanically resolvable.
+    ours: `import { a } from "./a";\nimport { c } from "./c";\nimport { b } from "./b";\n`,
+    theirs: `import { c } from "./c";\nimport { b } from "./b";\nimport { a } from "./a";\n`,
+  };
+  const legacyAuth = {
+    base: `export function legacyLogin(u: string, p: string) {\n  return post("/login", { u, p });\n}\n`,
+    ours: `export function legacyLogin(u: string, p: string) {\n  return post("/login", { u, p, token: true });\n}\n`,
+    theirs: null, // the incoming side deleted the file
+  };
+  const tables: Record<string, Record<typeof stage, string | null>> = {
+    "src/payments.ts": payments,
+    "src/imports.ts": imports,
+    "src/legacy-auth.ts": legacyAuth,
+  };
+  const table = tables[path];
+  if (!table) return `// mock ${stage} version of ${path}\n`;
+  return table[stage];
 }
 
 /** The base/ours/theirs version of one conflicted file (3-way merge UI).
@@ -411,21 +501,43 @@ export async function gitReadConflictFile(
   path: string,
   stage: "base" | "ours" | "theirs"
 ): Promise<string> {
-  if (!isTauri()) return `// mock ${stage} version of ${path}\n`;
+  if (!isTauri()) {
+    if (mockConflictDemoEnabled() && mockMergeActive) {
+      const content = mockConflictStageContent(path, stage);
+      if (content === null) {
+        throw new Error(`this file has no '${stage}' version — that side deleted the file`);
+      }
+      return content;
+    }
+    return `// mock ${stage} version of ${path}\n`;
+  }
   return invoke<string>("git_read_conflict_file", { root, path, stage });
 }
 
 /** Write the human-approved merge result and mark the path resolved.
  *  browser dev: no-op. */
 export async function gitResolveFile(root: string, path: string, content: string): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    if (mockConflictDemoEnabled()) {
+      mockConflicts = mockConflictList().filter((c) => c.path !== path);
+    }
+    return;
+  }
   return invoke<void>("git_resolve_file", { root, path, content });
 }
 
 /** Create the real merge commit once every conflict is resolved. The backend
  *  refuses while the index still has conflicts. Returns the merge commit oid. */
 export async function gitMergeContinue(root: string, message: string): Promise<string> {
-  if (!isTauri()) return "abcdef0123456789abcdef0123456789abcdef01";
+  if (!isTauri()) {
+    if (mockConflictDemoEnabled()) {
+      // The demo merge is done — banner clears, the audit message would
+      // have landed in the commit body on a real repo.
+      mockMergeActive = false;
+      mockConflicts = null;
+    }
+    return "abcdef0123456789abcdef0123456789abcdef01";
+  }
   return invoke<string>("git_merge_continue", { root, message });
 }
 
@@ -433,7 +545,12 @@ export async function gitMergeContinue(root: string, message: string): Promise<s
  *  deleted" action): removes the workdir file and stages the deletion.
  *  browser dev: no-op. */
 export async function gitResolveDelete(root: string, path: string): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    if (mockConflictDemoEnabled()) {
+      mockConflicts = mockConflictList().filter((c) => c.path !== path);
+    }
+    return;
+  }
   return invoke<void>("git_resolve_delete", { root, path });
 }
 
@@ -445,7 +562,12 @@ export async function gitResolveSide(
   path: string,
   side: "ours" | "theirs"
 ): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    if (mockConflictDemoEnabled()) {
+      mockConflicts = mockConflictList().filter((c) => c.path !== path);
+    }
+    return;
+  }
   return invoke<void>("git_resolve_side", { root, path, side });
 }
 
@@ -453,7 +575,13 @@ export async function gitResolveSide(
  *  workdir. For rebase/cherry-pick/revert the backend answers with a
  *  terminal-hint error — surface that message verbatim. Browser dev: no-op. */
 export async function gitMergeAbort(root: string): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    if (mockConflictDemoEnabled()) {
+      mockMergeActive = false;
+      mockConflicts = null;
+    }
+    return;
+  }
   return invoke<void>("git_merge_abort", { root });
 }
 

@@ -28,6 +28,13 @@ import {
   useConflictResolutionStore,
   effectiveContent,
 } from "../src/store/conflictResolutionStore";
+import {
+  seedMockConflictEntries,
+  mockConflictStageContent,
+  mockConflictDemoEnabled,
+  MOCK_CONFLICT_MERGE_INFO,
+} from "../src/lib/git";
+import { cannedDemoProposal } from "../src/lib/aiConflict";
 import type { GitConflictEntry } from "../src/lib/git";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -182,7 +189,59 @@ describe("buildConflictPrompt", () => {
   });
 });
 
-// ── audit trailer ───────────────────────────────────────────────────────
+// ── browser-dev conflict demo (mock flow) ───────────────────────────────
+
+describe("browser-dev conflict demo fixture", () => {
+  test("seeds one conflict per kind", () => {
+    const entries = seedMockConflictEntries();
+    expect(entries).toHaveLength(4);
+    expect(entries.filter((c) => c.conflictType === "content" && !c.binary)).toHaveLength(2);
+    expect(entries.some((c) => c.conflictType === "modify-delete")).toBe(true);
+    expect(entries.some((c) => c.binary)).toBe(true);
+  });
+
+  test("the trivial fixture really is trivial (settles with no LLM)", () => {
+    const ours = mockConflictStageContent("src/imports.ts", "ours")!;
+    const theirs = mockConflictStageContent("src/imports.ts", "theirs")!;
+    expect(detectTrivial(ours, theirs)).toBe("import-order");
+    // …and the semantic fixture is genuinely NOT trivial.
+    expect(
+      detectTrivial(
+        mockConflictStageContent("src/payments.ts", "ours")!,
+        mockConflictStageContent("src/payments.ts", "theirs")!,
+      ),
+    ).toBeNull();
+  });
+
+  test("the modify-delete fixture has no incoming side (like the real backend)", () => {
+    const entry = seedMockConflictEntries().find((c) => c.conflictType === "modify-delete")!;
+    expect(entry.ours).toBeDefined();
+    expect(entry.theirs).toBeUndefined();
+    expect(mockConflictStageContent(entry.path, "theirs")).toBeNull();
+  });
+
+  test("the demo merge info merges into the current branch in plain words", () => {
+    expect(MOCK_CONFLICT_MERGE_INFO.inProgress).toBe(true);
+    expect(MOCK_CONFLICT_MERGE_INFO.operation).toBe("merge");
+    expect(MOCK_CONFLICT_MERGE_INFO.sourceBranch).toBe("feature/discount");
+  });
+
+  test("the flag is browser-only and off in tests (Tauri never mocks)", () => {
+    // bun test has no window.localStorage — the guard must fail closed.
+    expect(mockConflictDemoEnabled()).toBe(false);
+  });
+
+  test("the canned proposal preserves BOTH fixture intents and parses clean", () => {
+    const p = cannedDemoProposal(
+      "src/payments.ts",
+      mockConflictStageContent("src/payments.ts", "ours")!,
+    );
+    expect(p.proposal).toContain("taxService.calculate"); // current side's intent
+    expect(p.proposal).toContain("applyDiscount"); // incoming side's intent
+    expect(hasConflictMarkers(p.proposal)).toBe(false);
+    expect(p.confidence).toBe("high");
+  });
+});
 
 describe("buildResolutionAudit", () => {
   test("plain summary + machine footer", () => {
@@ -288,6 +347,15 @@ describe("git.ts conflict wrappers", () => {
       expect(section!).toContain("isTauri()");
     });
   }
+
+  test("every resolve/write wrapper simulates the demo when the flag is on", () => {
+    for (const name of ["ResolveFile", "ResolveDelete", "ResolveSide", "MergeContinue", "MergeAbort"]) {
+      const section = src.split("export async function git").find((x) => x.startsWith(`${name}(`));
+      expect(section, `git${name} missing`).toBeDefined();
+      expect(section!).toContain("mockConflictDemoEnabled");
+    }
+    expect(src).toContain("?mockConflict");
+  });
 });
 
 describe("ResolutionWorkspace component", () => {
