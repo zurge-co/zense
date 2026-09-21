@@ -11,6 +11,7 @@ import { isUntitledPath, openUntitledTab, saveUntitledAs, untitledLabel } from "
 import { adjustUiZoom, applyUiZoom, loadUiPrefs, UI_ZOOM_STEP } from "./lib/settings";
 import { TitleBar } from "./components/layout/TitleBar";
 import { ConflictBanner } from "./components/layout/ConflictBanner";
+import { ResolutionWorkspace } from "./components/conflicts/ResolutionWorkspace";
 import { ActivityBar } from "./components/layout/ActivityBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { SideBar } from "./components/sidebar/SideBar";
@@ -154,6 +155,8 @@ function WorkspaceLayout() {
       </div>
       <StatusBar />
       <SettingsModal />
+      {/* AI conflict Resolution Workspace — self-hides when no path open. */}
+      <ResolutionWorkspace />
       <QuickOpen />
     </div>
   );

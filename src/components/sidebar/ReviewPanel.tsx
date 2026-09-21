@@ -4,6 +4,7 @@ import { gitPush } from "../../lib/git";
 import { errMessage } from "../../lib/errors";
 import { generateCommitMessage } from "../../lib/commitMessage";
 import { runAutoReview } from "../../lib/aiReview";
+import { finishMerge } from "../../lib/aiConflict";
 import { useGitStore } from "../../store/gitStore";
 import { useAiReviewStore } from "../../store/aiReviewStore";
 import { useUIStore } from "../../store/uiStore";
@@ -13,7 +14,7 @@ import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { BranchMenu } from "../layout/BranchMenu";
 
 export function ReviewPanel() {
-  const { openDiff, openFile, workspacePath } = useUIStore();
+  const { openDiff, openFile, openResolution, workspacePath } = useUIStore();
   const { status, branchInfo, diffSummary, loading, refresh, stageFile, unstageFile, stageAll, commit, discardFile, mergeInfo, conflicts, resolvedPaths } = useGitStore();
   const [message, setMessage] = useState("");
   const [commitError, setCommitError] = useState<string | null>(null);
@@ -24,6 +25,8 @@ export function ReviewPanel() {
   /** Right-click context menu (change rows + the AI Review button). */
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  /** Finish-merge in flight (all conflicts resolved → audit commit). */
+  const [finishing, setFinishing] = useState(false);
   /** Push-from-Review state: in-flight push + last result (ok = accent, err = danger). */
   const [pushing, setPushing] = useState(false);
   const [pushFeedback, setPushFeedback] = useState<{ ok: boolean; message: string } | null>(null);
@@ -154,7 +157,7 @@ export function ReviewPanel() {
         <div className="text-[12.5px] text-fg-muted">Not a git repository</div>
       ) : (
         <>
-          {/* ── Chunk 2: conflict overview while Conflict Mode is on ── */}
+          {/* ── AI conflict resolution (spec V1): story-centric list ── */}
           {mergeInfo.inProgress && (
             <section className="rounded border border-danger/40 bg-danger/5 p-2">
               <div className="mb-1 flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-danger">
@@ -162,29 +165,46 @@ export function ReviewPanel() {
                 Conflicts · {resolvedPaths.length}/{conflicts.length + resolvedPaths.length} resolved
               </div>
               <div className="mb-1.5 text-[10.5px] leading-snug text-fg-muted">
-                Open each file, keep the version you want, then Stage it — a
-                staged file counts as resolved.
+                Open a file — Zense proposes a resolution with verified
+                evidence; you accept, ask, or hand it to a teammate.
               </div>
               {conflicts.map((c) => (
                 <div
                   key={`conflict-${c.path}`}
-                  onClick={() => openFile(c.path)}
+                  onClick={() => openResolution(c.path)}
                   title={
-                    c.conflictType === "modify-delete"
-                      ? "One side edited this file, the other deleted it"
-                      : `Both sides edited ${c.path}`
+                    c.binary
+                      ? "Both sides changed this binary file"
+                      : c.conflictType === "modify-delete"
+                        ? "One side edited this file, the other deleted it"
+                        : `Both sides edited ${c.path}`
                   }
                   className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[12.5px] text-fg hover:bg-hover"
                 >
                   <AlertTriangle size={12} className="shrink-0 text-danger" />
                   <span className="flex-1 truncate text-left">{c.path}</span>
+                  {c.binary && (
+                    <span className="shrink-0 rounded border border-danger/30 px-1 text-[9px] uppercase tracking-wide text-danger">
+                      binary
+                    </span>
+                  )}
                   {c.conflictType === "modify-delete" && (
                     <span className="shrink-0 rounded border border-danger/30 px-1 text-[9px] uppercase tracking-wide text-danger">
                       edited + deleted
                     </span>
                   )}
                   <button
-                    title="Stage as resolved"
+                    title="Open the raw conflicted file in the editor (advanced)"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openFile(c.path);
+                    }}
+                    className="rounded p-0.5 text-fg-muted opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                  >
+                    <FileDiff size={12} />
+                  </button>
+                  <button
+                    title="Stage as resolved — manual escape hatch"
                     onClick={(e) => {
                       e.stopPropagation();
                       void stageFile(c.path);
@@ -206,9 +226,33 @@ export function ReviewPanel() {
                 </div>
               ))}
               {conflicts.length === 0 && resolvedPaths.length > 0 && (
-                <div className="mt-1 text-[11px] text-accent">
-                  Every conflict is resolved — finish the merge from the
-                  integrated terminal (`git commit`).
+                <div className="mt-1">
+                  {mergeInfo.operation === "merge" ? (
+                    <button
+                      disabled={finishing || !workspacePath}
+                      title="Create the merge commit — the AI audit trail goes into its message"
+                      onClick={() => {
+                        if (!workspacePath) return;
+                        setFinishing(true);
+                        setReviewError(null);
+                        const source = mergeInfo.sourceBranch
+                          ? `Merge branch '${mergeInfo.sourceBranch}'`
+                          : "";
+                        void finishMerge(workspacePath, source)
+                          .catch((err) => setReviewError(errMessage(err)))
+                          .finally(() => setFinishing(false));
+                      }}
+                      className="flex w-full items-center justify-center gap-1.5 rounded bg-accent px-2 py-1.5 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-60"
+                    >
+                      {finishing ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      Finish merge · {resolvedPaths.length} file{resolvedPaths.length === 1 ? "" : "s"} resolved
+                    </button>
+                  ) : (
+                    <div className="text-[11px] text-accent">
+                      Every conflict is resolved — continue the {mergeInfo.operation ?? "operation"}{" "}
+                      from the integrated terminal.
+                    </div>
+                  )}
                 </div>
               )}
             </section>

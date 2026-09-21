@@ -387,6 +387,8 @@ export interface GitConflictEntry {
   theirs?: string;
   /** "content": both sides edited. "modify-delete": one side deleted. */
   conflictType: "content" | "modify-delete";
+  /** Any stage blob is non-text — route to the keep-side flow (no LLM). */
+  binary?: boolean;
 }
 
 export const mockMergeInProgress: GitMergeInProgress = { inProgress: false };
@@ -425,6 +427,26 @@ export async function gitResolveFile(root: string, path: string, content: string
 export async function gitMergeContinue(root: string, message: string): Promise<string> {
   if (!isTauri()) return "abcdef0123456789abcdef0123456789abcdef01";
   return invoke<string>("git_merge_continue", { root, message });
+}
+
+/** Resolve a modify-delete conflict by deleting the file (the "Keep
+ *  deleted" action): removes the workdir file and stages the deletion.
+ *  browser dev: no-op. */
+export async function gitResolveDelete(root: string, path: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("git_resolve_delete", { root, path });
+}
+
+/** Resolve a conflict by taking one side wholesale (the binary flow's
+ *  "Keep yours / Keep theirs" — works for non-text content too).
+ *  browser dev: no-op. */
+export async function gitResolveSide(
+  root: string,
+  path: string,
+  side: "ours" | "theirs"
+): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("git_resolve_side", { root, path, side });
 }
 
 /** `git merge --abort`: throw away the half-done merge and restore the

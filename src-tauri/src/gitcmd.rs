@@ -2071,6 +2071,9 @@ pub struct GitConflictEntry {
   /// deleted it while the other edited it. (binary / rename-rename taxonomy
   /// needs a full tree compare and is left to a later chunk.)
   conflict_type: &'static str,
+  /// Any conflicted stage blob holds non-text bytes — the classifier
+  /// routes these to the dedicated keep-side flow (no LLM, no text edit).
+  binary: bool,
 }
 
 /// Branch name from the original merge message — git survives ``Merge branch
@@ -2198,12 +2201,22 @@ pub fn git_conflicts(root: String) -> Result<Vec<GitConflictEntry>, String> {
     } else {
       "modify-delete"
     };
+    let binary = [&c.ancestor, &c.our, &c.their]
+      .into_iter()
+      .flatten()
+      .any(|e| {
+        repo
+          .find_blob(e.id)
+          .map(|b| is_binary_content(b.content()))
+          .unwrap_or(false)
+      });
     out.push(GitConflictEntry {
       path,
       base: c.ancestor.map(|e| e.id.to_string()),
       ours: c.our.map(|e| e.id.to_string()),
       theirs: c.their.map(|e| e.id.to_string()),
       conflict_type,
+      binary,
     });
   }
   Ok(out)
@@ -2269,6 +2282,72 @@ pub fn git_resolve_file(root: String, path: String, content: String) -> Result<(
   index.add_path(Path::new(&path)).map_err(|e| e.to_string())?;
   index.write().map_err(|e| e.to_string())?;
   Ok(())
+}
+
+/// Resolve a conflict by deleting the file: drop the workdir file and
+/// clear every conflict stage in the index so the deletion is staged.
+/// The dedicated modify-delete flow's "Keep deleted" action.
+#[tauri::command]
+pub fn git_resolve_delete(root: String, path: String) -> Result<(), String> {
+  validate_repo_path(&path)?;
+  let repo = open_repo_or_err(&root)?;
+  let full = Path::new(&root).join(&path);
+  match fs::remove_file(&full) {
+    Ok(()) => {}
+    // Already gone is fine — the goal state (no file) holds either way.
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+    Err(e) => return Err(format!("could not delete '{path}': {e}")),
+  }
+  let mut index = repo.index().map_err(|e| e.to_string())?;
+  // remove_path clears every conflict stage; with no workdir file left,
+  // the path simply has no stage-0 entry — the deletion is staged.
+  index.remove_path(Path::new(&path)).map_err(|e| e.to_string())?;
+  index.write().map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Resolve a conflict by taking one side wholesale: write that stage's
+/// blob bytes to the workdir and stage it. Unlike git_resolve_file this
+/// works for binary content — the dedicated binary flow's
+/// "Keep yours / Keep theirs" actions.
+#[tauri::command]
+pub fn git_resolve_side(root: String, path: String, side: String) -> Result<(), String> {
+  validate_repo_path(&path)?;
+  if !matches!(side.as_str(), "ours" | "theirs") {
+    return Err("side must be 'ours' or 'theirs'".to_string());
+  }
+  let repo = open_repo_or_err(&root)?;
+  let normalized = path.replace('\\', "/");
+  let index = repo.index().map_err(|e| e.to_string())?;
+  for conflict in index.conflicts().map_err(|e| e.to_string())? {
+    let c = conflict.map_err(|e| e.to_string())?;
+    let cpath = c
+      .our
+      .as_ref()
+      .or(c.their.as_ref())
+      .or(c.ancestor.as_ref())
+      .map(|e| String::from_utf8_lossy(&e.path).replace('\\', "/"))
+      .unwrap_or_default();
+    if cpath != normalized {
+      continue;
+    }
+    let entry = if side == "ours" { c.our } else { c.their };
+    let entry = entry.ok_or_else(|| {
+      format!("this file has no '{side}' version — that side deleted the file")
+    })?;
+    let blob = repo.find_blob(entry.id).map_err(|e| e.to_string())?;
+    let full = Path::new(&root).join(&path);
+    if let Some(parent) = full.parent() {
+      fs::create_dir_all(parent).map_err(|e| format!("could not create folder for '{path}': {e}"))?;
+    }
+    fs::write(&full, blob.content()).map_err(|e| format!("could not write '{path}': {e}"))?;
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    index.remove_path(Path::new(&path)).map_err(|e| e.to_string())?;
+    index.add_path(Path::new(&path)).map_err(|e| e.to_string())?;
+    index.write().map_err(|e| e.to_string())?;
+    return Ok(());
+  }
+  Err(format!("'{path}' is not a conflicted file — nothing to resolve"))
 }
 
 /// Finish a merge once every conflict is resolved: create the real merge
@@ -4558,6 +4637,76 @@ mod tests {
     (dir, root)
   }
 
+  /// Merge parked on a modify/delete conflict: main edits conflict.txt,
+  /// the other branch deletes it → our present, their absent.
+  fn make_modify_delete_repo() -> (PathBuf, String) {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    let mut cfg = repo.config().unwrap();
+    cfg.set_str("user.name", "Zense Test").unwrap();
+    cfg.set_str("user.email", "test@zense.local").unwrap();
+
+    fs::write(dir.join("conflict.txt"), "original\n").unwrap();
+    stage_file(&repo, "conflict.txt").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    let main_name = repo.head().unwrap().shorthand().unwrap().to_string();
+
+    let main_commit = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.branch("other", &main_commit, false).unwrap();
+
+    checkout_local_branch(&repo, "other").unwrap();
+    fs::remove_file(dir.join("conflict.txt")).unwrap();
+    let mut index = repo.index().unwrap();
+    index.remove_path(Path::new("conflict.txt")).unwrap();
+    index.write().unwrap();
+    let other_oid = commit_head(&repo, "delete it").unwrap();
+
+    checkout_local_branch(&repo, &main_name).unwrap();
+    fs::write(dir.join("conflict.txt"), "main edits\n").unwrap();
+    stage_file(&repo, "conflict.txt").unwrap();
+    commit_head(&repo, "edit it").unwrap();
+
+    let ann = repo.find_annotated_commit(other_oid).unwrap();
+    repo.merge(&[&ann], None, None).unwrap();
+    assert_eq!(repo.state(), git2::RepositoryState::Merge);
+    (dir, root)
+  }
+
+  /// Merge parked on a binary content conflict — both sides wrote
+  /// different non-UTF8 bytes to bin.dat.
+  fn make_binary_conflict_repo() -> (PathBuf, String) {
+    let dir = temp_ws();
+    let root = dir.to_string_lossy().into_owned();
+    let repo = git2::Repository::init(&dir).unwrap();
+    let mut cfg = repo.config().unwrap();
+    cfg.set_str("user.name", "Zense Test").unwrap();
+    cfg.set_str("user.email", "test@zense.local").unwrap();
+
+    fs::write(dir.join("bin.dat"), [0u8, 1, 2, 3]).unwrap();
+    stage_file(&repo, "bin.dat").unwrap();
+    commit_head(&repo, "initial").unwrap();
+    let main_name = repo.head().unwrap().shorthand().unwrap().to_string();
+
+    let main_commit = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.branch("other", &main_commit, false).unwrap();
+
+    checkout_local_branch(&repo, "other").unwrap();
+    fs::write(dir.join("bin.dat"), [0u8, 9, 9, 9]).unwrap();
+    stage_file(&repo, "bin.dat").unwrap();
+    let other_oid = commit_head(&repo, "other bytes").unwrap();
+
+    checkout_local_branch(&repo, &main_name).unwrap();
+    fs::write(dir.join("bin.dat"), [0u8, 7, 7, 7]).unwrap();
+    stage_file(&repo, "bin.dat").unwrap();
+    commit_head(&repo, "main bytes").unwrap();
+
+    let ann = repo.find_annotated_commit(other_oid).unwrap();
+    repo.merge(&[&ann], None, None).unwrap();
+    assert_eq!(repo.state(), git2::RepositoryState::Merge);
+    (dir, root)
+  }
+
   #[test]
   fn test_git_merge_in_progress_clean_repo() {
     let dir = temp_ws();
@@ -4667,6 +4816,92 @@ mod tests {
 
     let err = git_resolve_file(root, "../x".into(), "nope".into()).unwrap_err();
     assert!(err.contains("escapes"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_conflicts_flags_binary_and_modify_delete() {
+    let (dir, root) = make_binary_conflict_repo();
+    let entries = git_conflicts(root).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].binary);
+    assert_eq!(entries[0].conflict_type, "content");
+    fs::remove_dir_all(&dir).ok();
+
+    let (dir, root) = make_modify_delete_repo();
+    let entries = git_conflicts(root).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(!entries[0].binary);
+    assert_eq!(entries[0].conflict_type, "modify-delete");
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_resolve_delete_marks_resolved() {
+    let (dir, root) = make_modify_delete_repo();
+
+    git_resolve_delete(root.clone(), "conflict.txt".into()).unwrap();
+    assert!(!dir.join("conflict.txt").exists());
+    assert!(git_conflicts(root.clone()).unwrap().is_empty());
+
+    let err = git_resolve_delete(root, "../x".into()).unwrap_err();
+    assert!(err.contains("escapes"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_resolve_delete_then_continue() {
+    let (dir, root) = make_modify_delete_repo();
+
+    git_resolve_delete(root.clone(), "conflict.txt".into()).unwrap();
+    let oid = git_merge_continue(root.clone(), "merge, keep deleted".into()).unwrap();
+    let repo = git2::Repository::open(&root).unwrap();
+    let commit = repo.find_commit(oid.parse::<git2::Oid>().unwrap()).unwrap();
+    assert_eq!(commit.summary().unwrap(), "merge, keep deleted");
+    // The tree really lost the file.
+    assert!(commit.tree().unwrap().get_name("conflict.txt").is_none());
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_resolve_side_keeps_blob_bytes() {
+    let (dir, root) = make_binary_conflict_repo();
+
+    git_resolve_side(root.clone(), "bin.dat".into(), "ours".into()).unwrap();
+    assert_eq!(fs::read(dir.join("bin.dat")).unwrap(), vec![0u8, 7, 7, 7]);
+    assert!(git_conflicts(root.clone()).unwrap().is_empty());
+
+    fs::remove_dir_all(&dir).ok();
+
+    let (dir, root) = make_binary_conflict_repo();
+    git_resolve_side(root.clone(), "bin.dat".into(), "theirs".into()).unwrap();
+    assert_eq!(fs::read(dir.join("bin.dat")).unwrap(), vec![0u8, 9, 9, 9]);
+
+    let err = git_resolve_side(root.clone(), "bin.dat".into(), "wat".into()).unwrap_err();
+    assert!(err.contains("side must be"));
+    let err = git_resolve_side(root.clone(), "../x".into(), "ours".into()).unwrap_err();
+    assert!(err.contains("escapes"));
+    let err = git_resolve_side(root, "missing.dat".into(), "ours".into()).unwrap_err();
+    assert!(err.contains("not a conflicted file"));
+
+    fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn test_git_resolve_side_modify_delete_missing_side() {
+    let (dir, root) = make_modify_delete_repo();
+
+    // 'theirs' deleted the file — keeping it must explain that clearly.
+    let err = git_resolve_side(root.clone(), "conflict.txt".into(), "theirs".into()).unwrap_err();
+    assert!(err.contains("no 'theirs' version"));
+
+    // Keeping the modified side works like git_resolve_file.
+    git_resolve_side(root.clone(), "conflict.txt".into(), "ours".into()).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("conflict.txt")).unwrap(), "main edits\n");
+    assert!(git_conflicts(root).unwrap().is_empty());
 
     fs::remove_dir_all(&dir).ok();
   }

@@ -197,6 +197,8 @@ pub fn run() {
       gitcmd::git_conflicts,
       gitcmd::git_read_conflict_file,
       gitcmd::git_resolve_file,
+      gitcmd::git_resolve_delete,
+      gitcmd::git_resolve_side,
       gitcmd::git_merge_continue,
       gitcmd::git_merge_abort,
       chatcmd::chat_send,

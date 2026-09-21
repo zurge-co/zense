@@ -86,12 +86,19 @@ export function ConflictBanner() {
           <button
             onClick={() => {
               const ui = useUIStore.getState();
-              if (!ui.sidebarVisible) ui.toggleSidebar();
-              ui.setActivity("review");
+              // Open the AI Resolution Workspace for the first remaining
+              // conflict; with none left, jump to the Review panel (the
+              // Finish-merge action lives there).
+              if (conflicts.length > 0) {
+                ui.openResolution(conflicts[0].path);
+              } else {
+                if (!ui.sidebarVisible) ui.toggleSidebar();
+                ui.setActivity("review");
+              }
             }}
             className="rounded border border-border bg-panel px-2 py-1 text-[11.5px] text-fg hover:bg-hover"
           >
-            Review Conflicts
+            {conflicts.length > 0 ? "Resolve with Zense" : "Review Conflicts"}
           </button>
           <button
             disabled={aborting}

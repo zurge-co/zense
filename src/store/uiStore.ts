@@ -112,6 +112,10 @@ interface UIState {
   /** Bumped to ask EditorArea to close the active tab (dirty-aware). */
   closeActiveTabNonce: number;
 
+  /** AI conflict Resolution Workspace: the conflicted path open right now
+   *  (null = closed). Launched from the Review conflict list / banner. */
+  resolutionPath: string | null;
+
   setScreen: (s: Screen) => void;
   openWorkspace: (path: string) => void;
   setActivity: (a: Activity) => void;
@@ -163,6 +167,8 @@ interface UIState {
   toggleSplit: () => void;
   closeSplit: () => void;
   requestCloseActiveTab: () => void;
+  openResolution: (path: string) => void;
+  closeResolution: () => void;
 }
 
 /** The tab-area state the CURRENT activity displays (null on terminal). */
@@ -216,6 +222,7 @@ export const useUIStore = create<UIState>((set) => ({
   focusPopoverOpen: false,
   splitTabKey: null,
   closeActiveTabNonce: 0,
+  resolutionPath: null,
 
   settingsOpen: false,
   settingsSection: "general",
@@ -230,6 +237,7 @@ export const useUIStore = create<UIState>((set) => ({
       selectedFile: null,
       splitTabKey: null,
       cursorPos: null,
+      resolutionPath: null,
     }),
   setActivity: (activity) =>
     set((s) => ({
@@ -369,4 +377,6 @@ export const useUIStore = create<UIState>((set) => ({
     })),
   closeSplit: () => set({ splitTabKey: null }),
   requestCloseActiveTab: () => set((s) => ({ closeActiveTabNonce: s.closeActiveTabNonce + 1 })),
+  openResolution: (resolutionPath) => set({ resolutionPath }),
+  closeResolution: () => set({ resolutionPath: null }),
 }));
