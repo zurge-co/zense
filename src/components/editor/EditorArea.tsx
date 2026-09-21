@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { X, File, FileImage, Sparkles, SplitSquareHorizontal, GitCompareArrows, GitCommitHorizontal, TriangleAlert, CopyX, XCircle, RotateCcw, Eye } from "lucide-react";
-import { useUIStore, tabKey, type EditorTab } from "../../store/uiStore";
+import { useUIStore, tabKey, areaOfActivity, type EditorTab, type TabArea } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { detectLanguage } from "../../lib/lang";
 import { isImagePath } from "../../lib/image";
@@ -26,7 +26,15 @@ const DEFAULT_EMPTY_PLACEHOLDER = (
 );
 
 export function EditorArea({ emptyPlaceholder }: { emptyPlaceholder?: ReactNode }) {
-  const { openTabs, activeTabKey, setActiveTab, closeTab, closeOtherTabs, closeAllTabs, toggleSplit, closeSplit } = useUIStore();
+  // Tabs are partitioned per activity area (uiStore tabsByArea): the
+  // Review page sees ONLY diff tabs, History ONLY commit/compare tabs,
+  // the Editor ONLY file/preview/untitled tabs — this instance renders
+  // the area slice of whichever activity is showing. (TabArea kept in the
+  // type so the partition is explicit; area is never terminal here.)
+  const activity = useUIStore((s) => s.activity);
+  const area: TabArea = areaOfActivity(activity) ?? "editor";
+  const { openTabs, activeTabKey } = useUIStore((s) => s.tabsByArea[area]);
+  const { setActiveTab, closeTab, closeOtherTabs, closeAllTabs, toggleSplit, closeSplit } = useUIStore();
   const splitTabKey = useUIStore((s) => s.splitTabKey);
   const closeNonce = useUIStore((s) => s.closeActiveTabNonce);
   const workspacePath = useUIStore((s) => s.workspacePath);

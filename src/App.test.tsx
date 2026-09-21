@@ -12,7 +12,7 @@
  * plus workspace.ts pure functions directly.
  */
 import { describe, test, expect, beforeAll, beforeEach } from "bun:test";
-import { useUIStore, tabKey } from "./store/uiStore";
+import { useUIStore, tabKey, emptyTabsByArea } from "./store/uiStore";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -28,8 +28,7 @@ const resetStore = () =>
     workspaceName: null,
     activity: "review",
     sidebarVisible: true,
-    openTabs: [],
-    activeTabKey: null,
+    tabsByArea: emptyTabsByArea(),
     selectedFile: null,
     diffMode: "split",
     settingsOpen: false,
@@ -646,8 +645,9 @@ describe("Store interaction — keyboard shortcut actions (task 1.4)", () => {
     useUIStore.getState().openDiff("src/main.ts");
 
     const state = useUIStore.getState();
-    const fileTab = state.openTabs.find((t) => t.kind === "file");
-    const diffTab = state.openTabs.find((t) => t.kind === "diff");
+    // File tabs live in the editor area, diff tabs in the review area.
+    const fileTab = state.tabsByArea.editor.openTabs.find((t) => t.kind === "file");
+    const diffTab = state.tabsByArea.review.openTabs.find((t) => t.kind === "diff");
 
     // Simulate the condition from App.tsx: if (!tab || tab.kind !== "file") return;
     const shouldSaveFile = fileTab != null && fileTab.kind === "file";
@@ -658,7 +658,8 @@ describe("Store interaction — keyboard shortcut actions (task 1.4)", () => {
 
   test("⌘S: save handler returns early when no active tab", () => {
     const state = useUIStore.getState();
-    const tab = state.openTabs.find((t) => tabKey(t) === state.activeTabKey);
+    const tabs = state.tabsByArea.review; // reset activity is "review"
+    const tab = tabs.openTabs.find((t) => tabKey(t) === tabs.activeTabKey);
     expect(tab).toBe(undefined);
   });
 
@@ -676,7 +677,8 @@ describe("Store interaction — keyboard shortcut actions (task 1.4)", () => {
     useUIStore.getState().openFile("src/main.ts");
 
     const ui = useUIStore.getState();
-    const tab = ui.openTabs.find((t) => tabKey(t) === ui.activeTabKey);
+    const editorTabs = ui.tabsByArea.editor;
+    const tab = editorTabs.openTabs.find((t) => tabKey(t) === editorTabs.activeTabKey);
 
     const screenOk = ui.screen === "workspace";
     const pathOk = ui.workspacePath != null;
@@ -697,9 +699,9 @@ describe("Store interaction — keyboard shortcut actions (task 1.4)", () => {
 
   test("⌘O: openWorkspace resets tabs", () => {
     useUIStore.getState().openFile("src/a.ts");
-    expect(useUIStore.getState().openTabs.length).toBe(1);
+    expect(useUIStore.getState().tabsByArea.editor.openTabs.length).toBe(1);
     useUIStore.getState().openWorkspace("/new/project");
-    expect(useUIStore.getState().openTabs).toEqual([]);
+    expect(useUIStore.getState().tabsByArea).toEqual(emptyTabsByArea());
   });
 
   test("⌘O: openWorkspace extracts name from Windows path", () => {
@@ -719,15 +721,15 @@ describe("Tab context-menu actions (closeOtherTabs / closeAllTabs)", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openFile("src/b.ts");
     useUIStore.getState().openFile("src/c.ts");
-    expect(useUIStore.getState().openTabs.length).toBe(3);
+    expect(useUIStore.getState().tabsByArea.editor.openTabs.length).toBe(3);
 
     const keepKey = tabKey({ kind: "file", path: "src/a.ts" });
     useUIStore.getState().closeOtherTabs(keepKey);
 
     const state = useUIStore.getState();
-    expect(state.openTabs.length).toBe(1);
-    expect(tabKey(state.openTabs[0])).toBe(keepKey);
-    expect(state.activeTabKey).toBe(keepKey);
+    expect(state.tabsByArea.editor.openTabs.length).toBe(1);
+    expect(tabKey(state.tabsByArea.editor.openTabs[0])).toBe(keepKey);
+    expect(state.tabsByArea.editor.activeTabKey).toBe(keepKey);
     expect(state.selectedFile).toBe("src/a.ts");
   });
 
@@ -735,27 +737,29 @@ describe("Tab context-menu actions (closeOtherTabs / closeAllTabs)", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openFile("src/b.ts");
     // b.ts is now active
-    expect(useUIStore.getState().activeTabKey).toBe(tabKey({ kind: "file", path: "src/b.ts" }));
+    expect(useUIStore.getState().tabsByArea.editor.activeTabKey).toBe(
+      tabKey({ kind: "file", path: "src/b.ts" }),
+    );
 
     const keepKey = tabKey({ kind: "file", path: "src/a.ts" });
     useUIStore.getState().closeOtherTabs(keepKey);
 
     const state = useUIStore.getState();
-    expect(state.openTabs.length).toBe(1);
-    expect(state.activeTabKey).toBe(keepKey);
+    expect(state.tabsByArea.editor.openTabs.length).toBe(1);
+    expect(state.tabsByArea.editor.activeTabKey).toBe(keepKey);
   });
 
   test("closeOtherTabs is a no-op when the key doesn't match any tab", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openFile("src/b.ts");
-    const before = useUIStore.getState().openTabs.length;
+    const before = useUIStore.getState().tabsByArea.editor.openTabs.length;
 
     useUIStore.getState().closeOtherTabs("file:src/nonexistent.ts");
 
-    expect(useUIStore.getState().openTabs.length).toBe(before);
+    expect(useUIStore.getState().tabsByArea.editor.openTabs.length).toBe(before);
   });
 
-  test("closeOtherTabs preserves a diff tab when its key is passed", () => {
+  test("closeOtherTabs is area-scoped: a diff key never closes editor file tabs", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openDiff("src/b.ts");
     useUIStore.getState().openFile("src/c.ts");
@@ -764,31 +768,32 @@ describe("Tab context-menu actions (closeOtherTabs / closeAllTabs)", () => {
     useUIStore.getState().closeOtherTabs(diffKey);
 
     const state = useUIStore.getState();
-    expect(state.openTabs.length).toBe(1);
-    expect(state.openTabs[0].kind).toBe("diff");
-    expect(state.activeTabKey).toBe(diffKey);
+    // Review area keeps only the diff tab; editor area is untouched.
+    expect(state.tabsByArea.review.openTabs).toEqual([{ kind: "diff", path: "src/b.ts" }]);
+    expect(state.tabsByArea.review.activeTabKey).toBe(diffKey);
+    expect(state.tabsByArea.editor.openTabs.length).toBe(2);
     expect(state.selectedFile).toBe("src/b.ts");
   });
 
-  test("closeAllTabs clears all tabs and resets active state", () => {
+  test("closeAllTabs clears the CURRENT area's tabs and resets active state", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openFile("src/b.ts");
     useUIStore.getState().openFile("src/c.ts");
-    expect(useUIStore.getState().openTabs.length).toBe(3);
-
+    expect(useUIStore.getState().tabsByArea.editor.openTabs.length).toBe(3);
+    // activity is "editor" (openFile switches to it) → closeAllTabs is
+    // scoped to the editor area.
     useUIStore.getState().closeAllTabs();
 
     const state = useUIStore.getState();
-    expect(state.openTabs).toEqual([]);
-    expect(state.activeTabKey).toBe(null);
+    expect(state.tabsByArea.editor.openTabs).toEqual([]);
+    expect(state.tabsByArea.editor.activeTabKey).toBe(null);
     expect(state.selectedFile).toBe(null);
   });
 
   test("closeAllTabs on an empty tab list is a no-op", () => {
     useUIStore.getState().closeAllTabs();
     const state = useUIStore.getState();
-    expect(state.openTabs).toEqual([]);
-    expect(state.activeTabKey).toBe(null);
+    expect(state.tabsByArea).toEqual(emptyTabsByArea());
     expect(state.selectedFile).toBe(null);
   });
 });

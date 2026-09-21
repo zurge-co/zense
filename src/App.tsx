@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { useUIStore, tabKey } from "./store/uiStore";
+import { useUIStore, tabKey, currentAreaTabs } from "./store/uiStore";
 import { useTerminalStore } from "./store/terminalStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
 import { useGitStore } from "./store/gitStore";
@@ -264,7 +264,10 @@ const destroyRef: { current: (() => Promise<void>) | null } = { current: null };
 function saveActiveTab() {
   const ui = useUIStore.getState();
   if (ui.screen !== "workspace" || !ui.workspacePath) return;
-  const tab = ui.openTabs.find((t) => tabKey(t) === ui.activeTabKey);
+  // Only the CURRENT area's active tab is saveable (file/untitled tabs
+  // live in the editor area; other areas' views are read-only).
+  const areaTabs = currentAreaTabs(ui);
+  const tab = areaTabs?.openTabs.find((t) => tabKey(t) === areaTabs.activeTabKey);
   if (!tab) return;
   if (tab.kind === "untitled") {
     void saveUntitledAs(ui.workspacePath);
@@ -450,21 +453,22 @@ function useKeyboardShortcuts() {
           e.preventDefault();
           useUIStore.getState().toggleSplit();
         } else if (/^[1-9]$/.test(e.key)) {
-          // ⌘1–9 → activate the nth open tab
+          // ⌘1–9 → activate the nth tab of the CURRENT area only
           const ui = useUIStore.getState();
-          const tab = ui.openTabs[Number(e.key) - 1];
+          const tab = currentAreaTabs(ui)?.openTabs[Number(e.key) - 1];
           if (tab) {
             e.preventDefault();
             ui.setActiveTab(tabKey(tab));
           }
         } else if (e.key === "Tab" && e.ctrlKey) {
-          // Ctrl(+Shift)+Tab → cycle open tabs (VS Code style)
+          // Ctrl(+Shift)+Tab → cycle the CURRENT area's tabs (VS Code style)
           const ui = useUIStore.getState();
-          if (ui.openTabs.length > 1) {
+          const tabs = currentAreaTabs(ui);
+          if (tabs && tabs.openTabs.length > 1) {
             e.preventDefault();
-            const idx = ui.openTabs.findIndex((t) => tabKey(t) === ui.activeTabKey);
+            const idx = tabs.openTabs.findIndex((t) => tabKey(t) === tabs.activeTabKey);
             const dir = e.shiftKey ? -1 : 1;
-            const next = ui.openTabs[(idx + dir + ui.openTabs.length) % ui.openTabs.length];
+            const next = tabs.openTabs[(idx + dir + tabs.openTabs.length) % tabs.openTabs.length];
             ui.setActiveTab(tabKey(next));
           }
         }

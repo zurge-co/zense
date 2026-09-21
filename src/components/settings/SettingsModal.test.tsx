@@ -14,7 +14,7 @@
  * errors. No Node.js APIs (fs, path, __dirname) are used.
  */
 const { describe, test, expect, beforeAll, beforeEach } = await import("bun:test");
-import { useUIStore, tabKey } from "../../store/uiStore";
+import { useUIStore, tabKey, currentAreaTabs, emptyTabsByArea } from "../../store/uiStore";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -30,8 +30,7 @@ const resetStore = () =>
     workspaceName: null,
     activity: "review",
     sidebarVisible: true,
-    openTabs: [],
-    activeTabKey: null,
+    tabsByArea: emptyTabsByArea(),
     selectedFile: null,
     diffMode: "split",
     settingsOpen: false,
@@ -137,7 +136,8 @@ describe("StatusBar.tsx — no agent button (task 1.5)", () => {
     expect(src).toContain("useUIStore");
   });
 
-  test("destructures openTabs and activeTabKey from store", () => {
+  test("reads the CURRENT area's tabs via currentAreaTabs (never hidden areas)", () => {
+    expect(src).toContain("currentAreaTabs");
     expect(src).toContain("openTabs");
     expect(src).toContain("activeTabKey");
   });
@@ -495,9 +495,8 @@ describe("StatusBar — store interaction: active tab file type (task 1.5)", () 
   test("opening a .rs file tab resolves activeTab to that file", () => {
     useUIStore.getState().openFile("src/auth/token.rs");
     const state = useUIStore.getState();
-    const activeTab = state.openTabs.find(
-      (t) => tabKey(t) === state.activeTabKey,
-    );
+    const tabs = currentAreaTabs(state)!;
+    const activeTab = tabs.openTabs.find((t) => tabKey(t) === tabs.activeTabKey);
     expect(activeTab).toEqual({ kind: "file", path: "src/auth/token.rs" });
     const file = activeTab!.path.split("/").pop();
     expect(file).toBe("token.rs");
@@ -507,9 +506,8 @@ describe("StatusBar — store interaction: active tab file type (task 1.5)", () 
   test("opening a .ts file tab resolves to TypeScript type", () => {
     useUIStore.getState().openFile("src/auth/login.ts");
     const state = useUIStore.getState();
-    const activeTab = state.openTabs.find(
-      (t) => tabKey(t) === state.activeTabKey,
-    );
+    const tabs = currentAreaTabs(state)!;
+    const activeTab = tabs.openTabs.find((t) => tabKey(t) === tabs.activeTabKey);
     const file = activeTab!.path.split("/").pop();
     expect(file).toBe("login.ts");
     expect(file!.endsWith(".rs")).toBe(false);
@@ -517,20 +515,19 @@ describe("StatusBar — store interaction: active tab file type (task 1.5)", () 
 
   test("no active tab yields null file (file type span not rendered)", () => {
     const state = useUIStore.getState();
-    const activeTab = state.openTabs.find(
-      (t) => tabKey(t) === state.activeTabKey,
-    );
+    const tabs = currentAreaTabs(state)!;
+    const activeTab = tabs.openTabs.find((t) => tabKey(t) === tabs.activeTabKey);
     expect(activeTab).toBe(undefined);
     const file = activeTab ? activeTab.path.split("/").pop() : null;
     expect(file).toBe(null);
   });
 
   test("opening a diff tab (not file) still resolves activeTab", () => {
+    useUIStore.getState().setActivity("review"); // diff tabs live in the review area
     useUIStore.getState().openDiff("src/auth/login.ts");
     const state = useUIStore.getState();
-    const activeTab = state.openTabs.find(
-      (t) => tabKey(t) === state.activeTabKey,
-    );
+    const tabs = currentAreaTabs(state)!;
+    const activeTab = tabs.openTabs.find((t) => tabKey(t) === tabs.activeTabKey);
     expect(activeTab).toEqual({ kind: "diff", path: "src/auth/login.ts" });
     const file = activeTab!.path.split("/").pop();
     expect(file).toBe("login.ts");
@@ -539,9 +536,8 @@ describe("StatusBar — store interaction: active tab file type (task 1.5)", () 
   test("file name extraction works for nested paths", () => {
     useUIStore.getState().openFile("src/deep/nested/folder/file.rs");
     const state = useUIStore.getState();
-    const activeTab = state.openTabs.find(
-      (t) => tabKey(t) === state.activeTabKey,
-    );
+    const tabs = currentAreaTabs(state)!;
+    const activeTab = tabs.openTabs.find((t) => tabKey(t) === tabs.activeTabKey);
     const file = activeTab!.path.split("/").pop();
     expect(file).toBe("file.rs");
     expect(file!.endsWith(".rs")).toBe(true);

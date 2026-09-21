@@ -10,7 +10,7 @@
  * directly and exercise the Zustand store that the components consume.
  */
 import { describe, test, expect, beforeEach } from "bun:test";
-import { useUIStore } from "../../store/uiStore";
+import { useUIStore, ACTIVITY_MENU, emptyTabsByArea } from "../../store/uiStore";
 import { gitChanges, diffStats } from "../../lib/mockData";
 import * as fs from "fs";
 import * as path from "path";
@@ -29,8 +29,7 @@ const resetStore = () =>
     activity: "review",
     sidebarVisible: true,
     editorPanelMode: "files",
-    openTabs: [],
-    activeTabKey: null,
+    tabsByArea: emptyTabsByArea(),
     selectedFile: null,
     diffMode: "split",
     settingsOpen: false,
@@ -47,71 +46,49 @@ describe("ActivityBar.tsx — task 1.3 structural verification", () => {
     expect(src).toContain("export function ActivityBar");
   });
 
-  // ── Exactly 4 activity buttons, in workflow order ───────────────────────
+  // ── Menu order comes from the shared ACTIVITY_MENU (uiStore) ────────────
+  // The store's initial activity also derives from ACTIVITY_MENU[0], so the
+  // workspace always opens on the FIRST menu item — never a hardcoded id.
 
-  test("items array has exactly 4 entries", () => {
-    const itemsMatch = src.match(
-      /const items[^=]*=\s*\[([\s\S]*?)\];/,
-    );
-    expect(itemsMatch).not.toBe(null);
-    const itemsBlock = itemsMatch![1];
-    const idMatches = itemsBlock.match(/\bid:\s*"(terminal|review|editor|history)"/g);
-    expect(idMatches).not.toBe(null);
-    expect(idMatches!.length).toBe(4);
+  test("items are derived from the shared ACTIVITY_MENU (single source of truth)", () => {
+    expect(src).toContain("ACTIVITY_MENU");
+    expect(src).toMatch(/import \{[^}]*\bACTIVITY_MENU\b[^}]*\} from "\.\.\/\.\.\/store\/uiStore"/);
+    expect(src).toContain("ACTIVITY_MENU.map(");
   });
 
-  test("items are ordered Terminal → Review → Editor → History (no Search item)", () => {
-    const itemsMatch = src.match(
-      /const items[^=]*=\s*\[([\s\S]*?)\];/,
-    );
-    const itemsBlock = itemsMatch![1];
-    const ids = itemsBlock.match(/\bid:\s*"[a-z]+"/g);
-    expect(ids).toEqual([
-      'id: "terminal"',
-      'id: "review"',
-      'id: "editor"',
-      'id: "history"',
+  test("ACTIVITY_MENU has exactly 4 entries (no Search item)", () => {
+    expect(ACTIVITY_MENU.length).toBe(4);
+    expect(ACTIVITY_MENU.some((m) => (m.id as string) === "search")).toBe(false);
+  });
+
+  test("ACTIVITY_MENU is ordered Terminal → Review → Editor → History", () => {
+    expect(ACTIVITY_MENU.map((m) => m.id)).toEqual([
+      "terminal",
+      "review",
+      "editor",
+      "history",
     ]);
   });
 
   test("Review button uses GitBranch icon", () => {
-    const itemsMatch = src.match(
-      /const items[^=]*=\s*\[([\s\S]*?)\];/,
-    );
-    const itemsBlock = itemsMatch![1];
-    expect(itemsBlock).toContain('id: "review"');
-    expect(itemsBlock).toContain("GitBranch");
+    expect(src).toContain("GitBranch");
+    expect(src).toContain('review: GitBranch');
   });
 
   test("History button uses History icon", () => {
-    const itemsMatch = src.match(
-      /const items[^=]*=\s*\[([\s\S]*?)\];/,
-    );
-    const itemsBlock = itemsMatch![1];
-    expect(itemsBlock).toContain('id: "history"');
-    expect(itemsBlock).toContain("History");
+    expect(src).toContain('history: History');
   });
 
   test("Editor button uses Files icon", () => {
-    const itemsMatch = src.match(
-      /const items[^=]*=\s*\[([\s\S]*?)\];/,
-    );
-    const itemsBlock = itemsMatch![1];
-    expect(itemsBlock).toContain('id: "editor"');
-    expect(itemsBlock).toContain("Files");
+    expect(src).toContain('editor: Files');
   });
 
   test("labels are Terminal, Review, Editor, History (no Search)", () => {
-    const itemsMatch = src.match(
-      /const items[^=]*=\s*\[([\s\S]*?)\];/,
-    );
-    const itemsBlock = itemsMatch![1];
-    const labelMatches = itemsBlock.match(/label:\s*"([^"]+)"/g);
-    expect(labelMatches).toEqual([
-      'label: "Terminal (⌘`)"',
-      'label: "Review"',
-      'label: "Editor"',
-      'label: "History"',
+    expect(ACTIVITY_MENU.map((m) => m.label)).toEqual([
+      "Terminal (⌘`)",
+      "Review",
+      "Editor",
+      "History",
     ]);
   });
 
@@ -548,23 +525,28 @@ describe("ReviewPanel — mockData interaction", () => {
     expect(stats.dels).toBe(7);
   });
 
-  test("openDiff adds a diff tab to the store", () => {
+  test("openDiff adds a diff tab to the REVIEW area", () => {
     useUIStore.getState().openDiff("src/auth/login.ts");
     const state = useUIStore.getState();
-    expect(state.openTabs).toEqual([{ kind: "diff", path: "src/auth/login.ts" }]);
-    expect(state.activeTabKey).toBe("diff:src/auth/login.ts::");
+    expect(state.tabsByArea.review.openTabs).toEqual([
+      { kind: "diff", path: "src/auth/login.ts" },
+    ]);
+    expect(state.tabsByArea.review.activeTabKey).toBe("diff:src/auth/login.ts::");
     expect(state.selectedFile).toBe("src/auth/login.ts");
+    // Diff tabs must never leak into the editor/history areas.
+    expect(state.tabsByArea.editor.openTabs).toEqual([]);
+    expect(state.tabsByArea.history.openTabs).toEqual([]);
   });
 
   test("openDiff for each gitChanges file creates separate diff tabs", () => {
     for (const c of gitChanges) {
       useUIStore.getState().openDiff(c.file);
     }
-    expect(useUIStore.getState().openTabs.length).toBe(4);
+    expect(useUIStore.getState().tabsByArea.review.openTabs.length).toBe(4);
     // All should be diff tabs
     const allDiffs = useUIStore
       .getState()
-      .openTabs.every((t) => t.kind === "diff");
+      .tabsByArea.review.openTabs.every((t) => t.kind === "diff");
     expect(allDiffs).toBe(true);
   });
 });

@@ -5,7 +5,7 @@
  * and the Ctrl+T routing in App.tsx + Monaco binding.
  */
 import { describe, test, expect, beforeEach } from "bun:test";
-import { useUIStore, tabKey } from "../store/uiStore";
+import { useUIStore, tabKey, emptyTabsByArea } from "../store/uiStore";
 import { useWorkspaceStore } from "../store/workspaceStore";
 import {
   UNTITLED_PREFIX,
@@ -19,8 +19,7 @@ const reset = () => {
     screen: "workspace",
     workspacePath: "/tmp/ws",
     activity: "editor",
-    openTabs: [],
-    activeTabKey: null,
+    tabsByArea: emptyTabsByArea(),
     selectedFile: null,
     splitTabKey: null,
   });
@@ -47,7 +46,8 @@ describe("openUntitledTab", () => {
   test("opens an activated tab of kind 'untitled' with a seeded empty buffer", () => {
     openUntitledTab();
     const ui = useUIStore.getState();
-    const tab = ui.openTabs.find((t) => tabKey(t) === ui.activeTabKey);
+    const editorTabs = ui.tabsByArea.editor;
+    const tab = editorTabs.openTabs.find((t) => tabKey(t) === editorTabs.activeTabKey);
     expect(tab?.kind).toBe("untitled");
     expect(tab && isUntitledPath(tab.path)).toBe(true);
     const ws = useWorkspaceStore.getState();
@@ -59,16 +59,16 @@ describe("openUntitledTab", () => {
 
   test("sequential opens produce distinct pseudo-paths", () => {
     openUntitledTab();
-    const p1 = useUIStore.getState().activeTabKey!;
+    const p1 = useUIStore.getState().tabsByArea.editor.activeTabKey!;
     openUntitledTab();
-    const p2 = useUIStore.getState().activeTabKey!;
+    const p2 = useUIStore.getState().tabsByArea.editor.activeTabKey!;
     expect(p1).not.toBe(p2);
-    expect(useUIStore.getState().openTabs.length).toBe(2);
+    expect(useUIStore.getState().tabsByArea.editor.openTabs.length).toBe(2);
   });
 
   test("typing marks the tab dirty (VS Code style dirty dot)", () => {
     openUntitledTab();
-    const tab = useUIStore.getState().openTabs[0];
+    const tab = useUIStore.getState().tabsByArea.editor.openTabs[0];
     useWorkspaceStore.getState().markDirty(tab.path, "hello");
     expect(useWorkspaceStore.getState().dirtyPaths.has(tab.path)).toBe(true);
     // deleting everything back to the original clears dirty again (FR-002)
@@ -82,7 +82,7 @@ describe("workspaceStore guards", () => {
 
   test("saveFile refuses to write untitled pseudo-paths (in-memory only)", async () => {
     openUntitledTab();
-    const path = useUIStore.getState().openTabs[0].path;
+    const path = useUIStore.getState().tabsByArea.editor.openTabs[0].path;
     useWorkspaceStore.getState().markDirty(path, "draft");
     // Must resolve without touching disk and keep the dirty flag, so
     // saveAllDirty (window close guard) reports it as un-savable.
@@ -92,7 +92,7 @@ describe("workspaceStore guards", () => {
 
   test("promoteUntitled moves the buffer to the real path and clears pseudo", () => {
     openUntitledTab();
-    const pseudo = useUIStore.getState().openTabs[0].path;
+    const pseudo = useUIStore.getState().tabsByArea.editor.openTabs[0].path;
     useWorkspaceStore.getState().markDirty(pseudo, "hello world");
     useWorkspaceStore.getState().promoteUntitled(pseudo, "notes.md", "hello world");
     const ws = useWorkspaceStore.getState();
@@ -106,7 +106,7 @@ describe("workspaceStore guards", () => {
 
   test("dropBuffer removes everything for a closed untitled tab", () => {
     openUntitledTab();
-    const pseudo = useUIStore.getState().openTabs[0].path;
+    const pseudo = useUIStore.getState().tabsByArea.editor.openTabs[0].path;
     useWorkspaceStore.getState().markDirty(pseudo, "x");
     useWorkspaceStore.getState().dropBuffer(pseudo);
     const ws = useWorkspaceStore.getState();

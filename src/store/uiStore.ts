@@ -13,6 +13,20 @@ export type DiffMode = "split" | "inline";
 export type EditorPanelMode = "files" | "search";
 
 /**
+ * SINGLE SOURCE OF TRUTH for the ActivityBar menu order (workflow order,
+ * spec v3): Terminal → Review → Editor → History. Both the ActivityBar's
+ * buttons and the store's INITIAL activity derive from this array — the
+ * workspace always opens on the FIRST menu item (`ACTIVITY_MENU[0]`),
+ * never a hardcoded id, so reordering the menu reorders the default.
+ */
+export const ACTIVITY_MENU: { id: Activity; label: string }[] = [
+  { id: "terminal", label: "Terminal (⌘`)" },
+  { id: "review", label: "Review" },
+  { id: "editor", label: "Editor" },
+  { id: "history", label: "History" },
+];
+
+/**
  * A tab in the editor area.
  * - `file` — editable file from disk (`path` = workspace-relative path)
  * - `diff` — working-tree diff vs HEAD (`path` = file path)
@@ -35,6 +49,39 @@ export interface EditorTab {
 export const tabKey = (t: EditorTab) =>
   `${t.kind}:${t.path}:${t.fromSha ?? ""}:${t.toSha ?? ""}`;
 
+/**
+ * Tab areas (per-activity tab partitions). Editor tabs (files, previews,
+ * untitled buffers) NEVER mix with Review's working-tree diffs or
+ * History's commit views — each area keeps its own tab list and its own
+ * active tab, so switching activities away and back restores exactly what
+ * that area had open.
+ */
+export type TabArea = "editor" | "review" | "history";
+
+export interface AreaTabs {
+  openTabs: EditorTab[];
+  activeTabKey: string | null;
+}
+
+/** Which tab area a tab belongs to, derived from its kind. */
+export const areaOfTab = (t: EditorTab): TabArea =>
+  t.kind === "diff"
+    ? "review"
+    : t.kind === "commit" || t.kind === "commitDiff" || t.kind === "compare"
+      ? "history"
+      : "editor";
+
+/** The tab area an activity displays; the terminal has no tabs. */
+export const areaOfActivity = (a: Activity): TabArea | null =>
+  a === "terminal" ? null : a;
+
+/** Fresh empty per-area tab state (initial state, workspace switch, tests). */
+export const emptyTabsByArea = (): Record<TabArea, AreaTabs> => ({
+  editor: { openTabs: [], activeTabKey: null },
+  review: { openTabs: [], activeTabKey: null },
+  history: { openTabs: [], activeTabKey: null },
+});
+
 interface UIState {
   screen: Screen;
   workspacePath: string | null;
@@ -46,8 +93,8 @@ interface UIState {
   activity: Activity;
   sidebarVisible: boolean;
 
-  openTabs: EditorTab[];
-  activeTabKey: string | null;
+  /** Tabs partitioned per area — see TabArea. Never share across areas. */
+  tabsByArea: Record<TabArea, AreaTabs>;
   selectedFile: string | null;
   diffMode: DiffMode;
 
@@ -78,17 +125,28 @@ interface UIState {
   /** Commit sha selected as the base for "Compare with Selected". */
   historyCompareBase: string | null;
 
+  /** Open a file in the EDITOR area and switch the activity to it —
+   *  file tabs can never appear in Review/History, so the view follows. */
   openFile: (path: string) => void;
+  /** Open a working-tree diff tab in the REVIEW area. */
   openDiff: (path: string) => void;
+  /** Open a commit detail tab in the HISTORY area. */
   openCommit: (sha: string) => void;
+  /** Open a compare tab in the HISTORY area. */
   openCompare: (fromSha: string, toSha: string) => void;
+  /** Open a between-commits file diff tab in the HISTORY area. */
   openCommitFileDiff: (path: string, toSha: string, fromSha?: string | null) => void;
+  /** Open a rendered preview in the EDITOR area (switches activity). */
   openPreview: (path: string) => void;
-  /** Open/activate an untitled editor tab (Ctrl+T, see lib/untitled). */
+  /** Open/activate an untitled editor tab in the EDITOR area (Ctrl+T,
+   *  see lib/untitled); switches the activity so the tab is visible. */
   openUntitled: (path: string) => void;
   setHistoryCompareBase: (sha: string | null) => void;
+  /** Close one tab (in whichever area owns it). */
   closeTab: (key: string) => void;
+  /** Close every OTHER tab in the area that owns `key`. */
   closeOtherTabs: (key: string) => void;
+  /** Close all tabs of the CURRENT activity's area (no-op on terminal). */
   closeAllTabs: () => void;
   setActiveTab: (key: string) => void;
   toggleDiffMode: () => void;
@@ -107,17 +165,49 @@ interface UIState {
   requestCloseActiveTab: () => void;
 }
 
+/** The tab-area state the CURRENT activity displays (null on terminal). */
+export const currentAreaTabs = (
+  s: Pick<UIState, "activity" | "tabsByArea">,
+): AreaTabs | null => {
+  const area = areaOfActivity(s.activity);
+  return area ? s.tabsByArea[area] : null;
+};
+
+const TAB_AREAS: TabArea[] = ["editor", "review", "history"];
+
+/** Return a `tabsByArea` patch with `area` replaced by fn(areaState). */
+const patchArea = (
+  s: Pick<UIState, "tabsByArea">,
+  area: TabArea,
+  fn: (a: AreaTabs) => AreaTabs,
+): Pick<UIState, "tabsByArea"> => ({
+  tabsByArea: { ...s.tabsByArea, [area]: fn(s.tabsByArea[area]) },
+});
+
+/** Append-if-missing + activate `tab` inside one area's state. */
+const upsertTab = (a: AreaTabs, tab: EditorTab): AreaTabs => {
+  const key = tabKey(tab);
+  return {
+    openTabs: a.openTabs.some((t) => tabKey(t) === key) ? a.openTabs : [...a.openTabs, tab],
+    activeTabKey: key,
+  };
+};
+
+/** The area currently owning `key`, if any. */
+const areaOfKey = (tabsByArea: Record<TabArea, AreaTabs>, key: string): TabArea | undefined =>
+  TAB_AREAS.find((area) => tabsByArea[area].openTabs.some((t) => tabKey(t) === key));
+
 export const useUIStore = create<UIState>((set) => ({
   screen: "welcome",
   workspacePath: null,
   workspaceName: null,
   searchFocusNonce: 0,
   editorPanelMode: "files",
-  activity: "review",
+  // Default = FIRST ActivityBar menu item — never a hardcoded id.
+  activity: ACTIVITY_MENU[0].id,
   sidebarVisible: true,
 
-  openTabs: [],
-  activeTabKey: null,
+  tabsByArea: emptyTabsByArea(),
   selectedFile: null,
   diffMode: "split",
   historyCompareBase: null,
@@ -136,8 +226,7 @@ export const useUIStore = create<UIState>((set) => ({
       screen: "workspace" as Screen,
       workspacePath: path,
       workspaceName: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
-      openTabs: [],
-      activeTabKey: null,
+      tabsByArea: emptyTabsByArea(),
       selectedFile: null,
       splitTabKey: null,
       cursorPos: null,
@@ -162,98 +251,105 @@ export const useUIStore = create<UIState>((set) => ({
       sidebarVisible: true,
       quickOpenVisible: false,
     })),
-  openFile: (path) => {
-    const tab: EditorTab = { kind: "file", path };
-    const key = tabKey(tab);
+  openFile: (path) =>
+    set((s) => ({
+      // File tabs belong to the editor area ONLY — follow them there.
+      activity: "editor" as Activity,
+      sidebarVisible: true,
+      selectedFile: path,
+      ...patchArea(s, "editor", (a) => upsertTab(a, { kind: "file", path })),
+    })),
+  openDiff: (path) =>
     set((s) => ({
       selectedFile: path,
-      activeTabKey: key,
-      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
-    }));
-  },
-  openDiff: (path) => {
-    const tab: EditorTab = { kind: "diff", path };
-    const key = tabKey(tab);
+      ...patchArea(s, "review", (a) => upsertTab(a, { kind: "diff", path })),
+    })),
+  openCommit: (sha) =>
     set((s) => ({
-      selectedFile: path,
-      activeTabKey: key,
-      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
-    }));
-  },
-  openCommit: (sha) => {
-    const tab: EditorTab = { kind: "commit", path: sha };
-    const key = tabKey(tab);
+      ...patchArea(s, "history", (a) => upsertTab(a, { kind: "commit", path: sha })),
+    })),
+  openCompare: (fromSha, toSha) =>
     set((s) => ({
-      activeTabKey: key,
-      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
-    }));
-  },
-  openCompare: (fromSha, toSha) => {
-    const tab: EditorTab = { kind: "compare", path: `${fromSha}..${toSha}`, fromSha, toSha };
-    const key = tabKey(tab);
-    set((s) => ({
-      activeTabKey: key,
       historyCompareBase: null,
-      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
-    }));
-  },
-  openPreview: (path) => {
-    const tab: EditorTab = { kind: "preview", path };
-    const key = tabKey(tab);
+      ...patchArea(s, "history", (a) =>
+        upsertTab(a, { kind: "compare", path: `${fromSha}..${toSha}`, fromSha, toSha }),
+      ),
+    })),
+  openPreview: (path) =>
+    set((s) => ({
+      activity: "editor" as Activity,
+      sidebarVisible: true,
+      selectedFile: path,
+      ...patchArea(s, "editor", (a) => upsertTab(a, { kind: "preview", path })),
+    })),
+  openCommitFileDiff: (path, toSha, fromSha = null) =>
     set((s) => ({
       selectedFile: path,
-      activeTabKey: key,
-      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
-    }));
-  },
-  openCommitFileDiff: (path, toSha, fromSha = null) => {
-    const tab: EditorTab = { kind: "commitDiff", path, fromSha, toSha };
-    const key = tabKey(tab);
+      ...patchArea(s, "history", (a) => upsertTab(a, { kind: "commitDiff", path, fromSha, toSha })),
+    })),
+  openUntitled: (path) =>
     set((s) => ({
-      selectedFile: path,
-      activeTabKey: key,
-      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
-    }));
-  },
-  openUntitled: (path) => {
-    const tab: EditorTab = { kind: "untitled", path };
-    const key = tabKey(tab);
-    set((s) => ({
-      activeTabKey: key,
-      openTabs: s.openTabs.some((t) => tabKey(t) === key) ? s.openTabs : [...s.openTabs, tab],
-    }));
-  },
+      activity: "editor" as Activity,
+      sidebarVisible: true,
+      ...patchArea(s, "editor", (a) => upsertTab(a, { kind: "untitled", path })),
+    })),
   setHistoryCompareBase: (historyCompareBase) => set({ historyCompareBase }),
   closeTab: (key) =>
     set((s) => {
-      const openTabs = s.openTabs.filter((t) => tabKey(t) !== key);
+      const area = areaOfKey(s.tabsByArea, key);
+      const splitTabKey = s.splitTabKey === key ? null : s.splitTabKey;
+      if (!area) return { splitTabKey };
+      const a = s.tabsByArea[area];
+      const openTabs = a.openTabs.filter((t) => tabKey(t) !== key);
       const newActiveKey =
-        s.activeTabKey === key
+        a.activeTabKey === key
           ? (openTabs.length ? tabKey(openTabs[openTabs.length - 1]) : null)
-          : s.activeTabKey;
+          : a.activeTabKey;
       const newTab = openTabs.find((t) => tabKey(t) === newActiveKey);
       return {
-        openTabs,
-        activeTabKey: newActiveKey,
+        ...patchArea(s, area, () => ({ openTabs, activeTabKey: newActiveKey })),
         selectedFile: newTab?.path ?? null,
-        splitTabKey: s.splitTabKey === key ? null : s.splitTabKey,
+        splitTabKey,
       };
     }),
   closeOtherTabs: (key) =>
     set((s) => {
-      const openTabs = s.openTabs.filter((t) => tabKey(t) === key);
-      if (openTabs.length === 0) return s;
-      const kept = openTabs[0];
-      return { openTabs, activeTabKey: tabKey(kept), selectedFile: kept.path };
+      const area = areaOfKey(s.tabsByArea, key);
+      if (!area) return s;
+      const kept = s.tabsByArea[area].openTabs.find((t) => tabKey(t) === key);
+      if (!kept) return s;
+      const splitTabKey =
+        s.splitTabKey && s.splitTabKey !== key ? null : s.splitTabKey;
+      return {
+        ...patchArea(s, area, () => ({ openTabs: [kept], activeTabKey: key })),
+        selectedFile: kept.path,
+        splitTabKey,
+      };
     }),
   closeAllTabs: () =>
-    set({ openTabs: [], activeTabKey: null, selectedFile: null, splitTabKey: null, cursorPos: null }),
+    set((s) => {
+      const area = areaOfActivity(s.activity);
+      if (!area) return s;
+      const a = s.tabsByArea[area];
+      const splitInArea =
+        s.splitTabKey !== null && a.openTabs.some((t) => tabKey(t) === s.splitTabKey);
+      return {
+        ...patchArea(s, area, () => ({ openTabs: [], activeTabKey: null })),
+        // Editor-coupled fields only reset when the editor area is cleared.
+        selectedFile: area === "editor" ? null : s.selectedFile,
+        splitTabKey: splitInArea ? null : s.splitTabKey,
+        cursorPos: area === "editor" ? null : s.cursorPos,
+      };
+    }),
   setActiveTab: (key) =>
     set((s) => {
-      const tab = s.openTabs.find((t) => tabKey(t) === key);
-      return tab
-        ? { activeTabKey: key, selectedFile: tab.path }
-        : { activeTabKey: key };
+      const area = areaOfKey(s.tabsByArea, key);
+      if (!area) return s;
+      const tab = s.tabsByArea[area].openTabs.find((t) => tabKey(t) === key)!;
+      return {
+        ...patchArea(s, area, (a) => ({ ...a, activeTabKey: key })),
+        selectedFile: tab.path,
+      };
     }),
   toggleDiffMode: () =>
     set((s) => ({ diffMode: s.diffMode === "split" ? "inline" : "split" })),
@@ -269,7 +365,7 @@ export const useUIStore = create<UIState>((set) => ({
   setFocusPopover: (open) => set({ focusPopoverOpen: open }),
   toggleSplit: () =>
     set((s) => ({
-      splitTabKey: s.splitTabKey ? null : s.activeTabKey,
+      splitTabKey: s.splitTabKey ? null : (currentAreaTabs(s)?.activeTabKey ?? null),
     })),
   closeSplit: () => set({ splitTabKey: null }),
   requestCloseActiveTab: () => set((s) => ({ closeActiveTabNonce: s.closeActiveTabNonce + 1 })),

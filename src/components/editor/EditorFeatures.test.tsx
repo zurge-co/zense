@@ -5,7 +5,7 @@
  * Structural source verification (project pattern) + store behavior tests.
  */
 import { describe, test, expect, beforeAll } from "bun:test";
-import { useUIStore, tabKey } from "../../store/uiStore";
+import { useUIStore, tabKey, emptyTabsByArea } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 
 const ROOT = `${import.meta.dir}/../../..`;
@@ -13,8 +13,7 @@ const srcRead = (rel: string) => Bun.file(`${ROOT}/src/${rel}`).text();
 
 const resetUI = () =>
   useUIStore.setState({
-    openTabs: [],
-    activeTabKey: null,
+    tabsByArea: emptyTabsByArea(),
     splitTabKey: null,
     cursorPos: null,
     quickOpenVisible: false,

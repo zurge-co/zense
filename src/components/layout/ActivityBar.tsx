@@ -1,15 +1,20 @@
 import { Files, GitBranch, History, Settings, Terminal } from "lucide-react";
-import { useUIStore, type Activity } from "../../store/uiStore";
+import { ACTIVITY_MENU, useUIStore, type Activity } from "../../store/uiStore";
 
 /** Main views in workflow order (spec v3): Terminal → Review → Editor →
- *  History. Search is no longer a standalone activity — it lives inside
- *  the Editor sidebar (⌘⇧F opens the Editor in search mode). */
-const items: { id: Activity; icon: typeof Files; label: string }[] = [
-  { id: "terminal", icon: Terminal, label: "Terminal (⌘`)" },
-  { id: "review", icon: GitBranch, label: "Review" },
-  { id: "editor", icon: Files, label: "Editor" },
-  { id: "history", icon: History, label: "History" },
-];
+ *  History. The ORDER comes from ACTIVITY_MENU in the uiStore — the single
+ *  source of truth the store's initial activity also derives from, so the
+ *  workspace always opens on the first menu item. Search is no longer a
+ *  standalone activity — it lives inside the Editor sidebar (⌘⇧F opens
+ *  the Editor in search mode). */
+const ICONS: Record<Activity, typeof Files> = {
+  terminal: Terminal,
+  review: GitBranch,
+  editor: Files,
+  history: History,
+};
+const items: { id: Activity; icon: typeof Files; label: string }[] =
+  ACTIVITY_MENU.map(({ id, label }) => ({ id, icon: ICONS[id], label }));
 
 export function ActivityBar() {
   const { activity, setActivity, sidebarVisible, openSettings } = useUIStore();

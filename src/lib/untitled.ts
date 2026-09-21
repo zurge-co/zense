@@ -49,7 +49,11 @@ export function openUntitledTab(): void {
  */
 export async function saveUntitledAs(root: string, key?: string): Promise<string | null> {
   const ui = useUIStore.getState();
-  const tab = ui.openTabs.find((t) => tabKey(t) === (key ?? ui.activeTabKey));
+  // Untitled buffers exist only in the editor area's tab list.
+  const editorTabs = ui.tabsByArea.editor;
+  const tab = editorTabs.openTabs.find(
+    (t) => tabKey(t) === (key ?? editorTabs.activeTabKey),
+  );
   if (!tab || tab.kind !== "untitled") return null;
   const ws = useWorkspaceStore.getState();
   const content = ws.fileContents[tab.path] ?? "";
@@ -99,15 +103,21 @@ export async function saveUntitledAs(root: string, key?: string): Promise<string
   useUIStore.setState((s) => {
     const newTab: EditorTab = { kind: "file", path: rel };
     const newKey = tabKey(newTab);
+    const a = s.tabsByArea.editor;
     // If a tab for that file is already open, drop the untitled one and
     // just activate the existing file tab (no duplicate).
-    const exists = s.openTabs.some((t) => tabKey(t) === newKey && tabKey(t) !== oldKey);
+    const exists = a.openTabs.some((t) => tabKey(t) === newKey && tabKey(t) !== oldKey);
     const openTabs = exists
-      ? s.openTabs.filter((t) => tabKey(t) !== oldKey)
-      : s.openTabs.map((t) => (tabKey(t) === oldKey ? newTab : t));
+      ? a.openTabs.filter((t) => tabKey(t) !== oldKey)
+      : a.openTabs.map((t) => (tabKey(t) === oldKey ? newTab : t));
     return {
-      openTabs,
-      activeTabKey: s.activeTabKey === oldKey ? newKey : s.activeTabKey,
+      tabsByArea: {
+        ...s.tabsByArea,
+        editor: {
+          openTabs,
+          activeTabKey: a.activeTabKey === oldKey ? newKey : a.activeTabKey,
+        },
+      },
       selectedFile: rel,
       splitTabKey: s.splitTabKey === oldKey ? newKey : s.splitTabKey,
     };

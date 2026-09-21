@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { useUIStore } from "../src/store/uiStore";
+import { useUIStore, emptyTabsByArea } from "../src/store/uiStore";
 
 describe("uiStore — task 1.2 cleanup verification", () => {
   beforeEach(() => {
@@ -12,8 +12,7 @@ describe("uiStore — task 1.2 cleanup verification", () => {
       sidebarVisible: true,
       editorPanelMode: "files",
       focusPopoverOpen: false,
-      openTabs: [],
-      activeTabKey: null,
+      tabsByArea: emptyTabsByArea(),
       selectedFile: null,
       diffMode: "split",
       settingsOpen: false,
@@ -62,7 +61,10 @@ describe("uiStore — task 1.2 cleanup verification", () => {
 
   // ── Default values ──────────────────────────────────────────────────────
 
-  test("initial activity is 'review'", () => {
+  test("initial activity derives from the first ActivityBar menu item", () => {
+    // The app DEFAULT (store initializer) is ACTIVITY_MENU[0].id, never a
+    // hardcoded id — see tests/per-area-tabs.test.ts. Here we only verify
+    // the field is settable (this suite's reset parks it on "review").
     useUIStore.setState({ activity: "review" });
     expect(useUIStore.getState().activity).toBe("review");
   });
@@ -83,12 +85,15 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     expect(useUIStore.getState().editorPanelMode).toBe("files");
   });
 
-  test("initial openTabs is empty array", () => {
-    expect(useUIStore.getState().openTabs).toEqual([]);
+  test("initial tabsByArea is empty for every area", () => {
+    expect(useUIStore.getState().tabsByArea).toEqual(emptyTabsByArea());
   });
 
-  test("initial activeTabKey is null", () => {
-    expect(useUIStore.getState().activeTabKey).toBe(null);
+  test("initial per-area activeTabKey is null", () => {
+    const { tabsByArea } = useUIStore.getState();
+    expect(tabsByArea.editor.activeTabKey).toBe(null);
+    expect(tabsByArea.review.activeTabKey).toBe(null);
+    expect(tabsByArea.history.activeTabKey).toBe(null);
   });
 
   test("initial selectedFile is null", () => {
@@ -151,8 +156,7 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     expect(state.screen).toBe("workspace");
     expect(state.workspacePath).toBe("/home/user/my-project");
     expect(state.workspaceName).toBe("my-project");
-    expect(state.openTabs).toEqual([]);
-    expect(state.activeTabKey).toBe(null);
+    expect(state.tabsByArea).toEqual(emptyTabsByArea());
     expect(state.selectedFile).toBe(null);
   });
 
@@ -163,39 +167,43 @@ describe("uiStore — task 1.2 cleanup verification", () => {
 
   test("openWorkspace resets tabs even if previously populated", () => {
     useUIStore.getState().openFile("src/foo.ts");
-    expect(useUIStore.getState().openTabs.length).toBe(1);
+    expect(useUIStore.getState().tabsByArea.editor.openTabs.length).toBe(1);
     useUIStore.getState().openWorkspace("/home/user/new-project");
-    expect(useUIStore.getState().openTabs).toEqual([]);
+    expect(useUIStore.getState().tabsByArea).toEqual(emptyTabsByArea());
   });
 
   // ── Tab management ──────────────────────────────────────────────────────
 
-  test("openFile adds a file tab and sets it active", () => {
+  test("openFile adds a file tab to the EDITOR area and sets it active", () => {
     useUIStore.getState().openFile("src/main.ts");
     const state = useUIStore.getState();
-    expect(state.openTabs).toEqual([{ kind: "file", path: "src/main.ts" }]);
-    expect(state.activeTabKey).toBe("file:src/main.ts::");
+    expect(state.tabsByArea.editor.openTabs).toEqual([{ kind: "file", path: "src/main.ts" }]);
+    expect(state.tabsByArea.editor.activeTabKey).toBe("file:src/main.ts::");
     expect(state.selectedFile).toBe("src/main.ts");
   });
 
   test("openFile does not duplicate an already-open tab", () => {
     useUIStore.getState().openFile("src/main.ts");
     useUIStore.getState().openFile("src/main.ts");
-    expect(useUIStore.getState().openTabs).toEqual([{ kind: "file", path: "src/main.ts" }]);
+    expect(useUIStore.getState().tabsByArea.editor.openTabs).toEqual([
+      { kind: "file", path: "src/main.ts" },
+    ]);
   });
 
-  test("openDiff adds a diff tab and sets it active", () => {
+  test("openDiff adds a diff tab to the REVIEW area and sets it active", () => {
     useUIStore.getState().openDiff("src/main.ts");
     const state = useUIStore.getState();
-    expect(state.openTabs).toEqual([{ kind: "diff", path: "src/main.ts" }]);
-    expect(state.activeTabKey).toBe("diff:src/main.ts::");
+    expect(state.tabsByArea.review.openTabs).toEqual([{ kind: "diff", path: "src/main.ts" }]);
+    expect(state.tabsByArea.review.activeTabKey).toBe("diff:src/main.ts::");
     expect(state.selectedFile).toBe("src/main.ts");
   });
 
-  test("openFile and openDiff create separate tabs for same path", () => {
+  test("openFile and openDiff never mix: one tab per area for the same path", () => {
     useUIStore.getState().openFile("src/main.ts");
     useUIStore.getState().openDiff("src/main.ts");
-    expect(useUIStore.getState().openTabs.length).toBe(2);
+    const { tabsByArea } = useUIStore.getState();
+    expect(tabsByArea.editor.openTabs).toEqual([{ kind: "file", path: "src/main.ts" }]);
+    expect(tabsByArea.review.openTabs).toEqual([{ kind: "diff", path: "src/main.ts" }]);
   });
 
   test("closeTab removes the tab", () => {
@@ -203,7 +211,7 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     useUIStore.getState().openFile("src/b.ts");
     useUIStore.getState().closeTab("file:src/a.ts::");
     const state = useUIStore.getState();
-    expect(state.openTabs).toEqual([{ kind: "file", path: "src/b.ts" }]);
+    expect(state.tabsByArea.editor.openTabs).toEqual([{ kind: "file", path: "src/b.ts" }]);
   });
 
   test("closeTab on active tab switches active to last remaining tab", () => {
@@ -212,21 +220,21 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     // active is now b
     useUIStore.getState().closeTab("file:src/b.ts::");
     const state = useUIStore.getState();
-    expect(state.activeTabKey).toBe("file:src/a.ts::");
+    expect(state.tabsByArea.editor.activeTabKey).toBe("file:src/a.ts::");
     expect(state.selectedFile).toBe("src/a.ts");
   });
 
   test("closeTab on active tab with no remaining tabs nulls activeTabKey", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().closeTab("file:src/a.ts::");
-    expect(useUIStore.getState().activeTabKey).toBe(null);
+    expect(useUIStore.getState().tabsByArea.editor.activeTabKey).toBe(null);
   });
 
   test("closeTab on inactive tab does not change activeTabKey", () => {
     useUIStore.getState().openFile("src/a.ts");
     useUIStore.getState().openFile("src/b.ts");
     useUIStore.getState().closeTab("file:src/a.ts::");
-    expect(useUIStore.getState().activeTabKey).toBe("file:src/b.ts::");
+    expect(useUIStore.getState().tabsByArea.editor.activeTabKey).toBe("file:src/b.ts::");
   });
 
   test("setActiveTab updates activeTabKey and selectedFile", () => {
@@ -234,7 +242,7 @@ describe("uiStore — task 1.2 cleanup verification", () => {
     useUIStore.getState().openFile("src/b.ts");
     useUIStore.getState().setActiveTab("file:src/a.ts::");
     const state = useUIStore.getState();
-    expect(state.activeTabKey).toBe("file:src/a.ts::");
+    expect(state.tabsByArea.editor.activeTabKey).toBe("file:src/a.ts::");
     expect(state.selectedFile).toBe("src/a.ts");
   });
 

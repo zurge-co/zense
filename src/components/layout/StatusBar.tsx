@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { GitBranch, CircleX, TriangleAlert, SquareTerminal, Timer, Hourglass } from "lucide-react";
 import { BranchMenu } from "./BranchMenu";
-import { useUIStore, tabKey } from "../../store/uiStore";
+import { useUIStore, tabKey, currentAreaTabs } from "../../store/uiStore";
 import { useGitStore } from "../../store/gitStore";
 import { useFocusStore } from "../../store/focusStore";
 import { formatDuration, totalMs } from "../../lib/focus";
@@ -23,11 +23,13 @@ const LANGUAGE_LABELS: Record<string, string> = {
 };
 
 export function StatusBar() {
-  const { openTabs, activeTabKey } = useUIStore();
+  // Active tab of the CURRENT activity's area only — never a hidden
+  // area's tab (terminal has no tabs at all).
+  const areaTabs = useUIStore((s) => currentAreaTabs(s));
   const terminalActive = useUIStore((s) => s.activity) === "terminal";
   const cursorPos = useUIStore((s) => s.cursorPos);
   const { branchInfo, status } = useGitStore();
-  const activeTab = openTabs.find((t) => tabKey(t) === activeTabKey);
+  const activeTab = areaTabs?.openTabs.find((t) => tabKey(t) === areaTabs.activeTabKey);
   const langId =
     activeTab?.kind === "file"
       ? detectLanguage(activeTab.path)

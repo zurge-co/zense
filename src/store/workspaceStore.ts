@@ -525,7 +525,8 @@ async function handleFsChanged(root: string, paths: string[]) {
         return { fileContents, originalContents };
       });
       const ui = useUIStore.getState();
-      ui.openTabs
+      // File tabs live in the editor area only — close matches there.
+      ui.tabsByArea.editor.openTabs
         .filter((t) => t.kind === "file" && t.path === p)
         .forEach((t) => ui.closeTab(tabKey(t)));
     }

@@ -9,7 +9,7 @@
  * and mock window.confirm for the non-Tauri browser path.
  */
 import { describe, test, expect, beforeAll, beforeEach } from "bun:test";
-import { useUIStore } from "../store/uiStore";
+import { useUIStore, emptyTabsByArea } from "../store/uiStore";
 import { useWorkspaceStore } from "../store/workspaceStore";
 
 async function readSrc(relFromThisDir: string): Promise<string> {
@@ -23,8 +23,7 @@ const resetStores = () => {
     workspaceName: null,
     activity: "review",
     sidebarVisible: true,
-    openTabs: [],
-    activeTabKey: null,
+    tabsByArea: emptyTabsByArea(),
     selectedFile: null,
     diffMode: "split",
     settingsOpen: false,

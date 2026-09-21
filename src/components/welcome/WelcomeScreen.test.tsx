@@ -13,7 +13,7 @@
  * errors. No Node.js APIs (fs, path, __dirname) are used.
  */
 import { describe, test, expect, beforeAll, beforeEach } from "bun:test";
-import { useUIStore } from "../../store/uiStore";
+import { useUIStore, emptyTabsByArea } from "../../store/uiStore";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -29,8 +29,7 @@ const resetStore = () =>
     workspaceName: null,
     activity: "review",
     sidebarVisible: true,
-    openTabs: [],
-    activeTabKey: null,
+    tabsByArea: emptyTabsByArea(),
     selectedFile: null,
     diffMode: "split",
     settingsOpen: false,
@@ -310,11 +309,12 @@ describe("WelcomeScreen — store interaction (task 1.6)", () => {
   test("openWorkspace() clears open tabs and selection", () => {
     useUIStore.getState().openFile("src/foo.ts");
     useUIStore.getState().openDiff("src/bar.ts");
-    expect(useUIStore.getState().openTabs.length).toBe(2);
+    // One tab per area now — editor: file, review: diff.
+    expect(useUIStore.getState().tabsByArea.editor.openTabs.length).toBe(1);
+    expect(useUIStore.getState().tabsByArea.review.openTabs.length).toBe(1);
 
     useUIStore.getState().openWorkspace("/home/user/new");
-    expect(useUIStore.getState().openTabs).toEqual([]);
-    expect(useUIStore.getState().activeTabKey).toBe(null);
+    expect(useUIStore.getState().tabsByArea).toEqual(emptyTabsByArea());
     expect(useUIStore.getState().selectedFile).toBe(null);
   });
 

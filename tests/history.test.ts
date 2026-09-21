@@ -6,7 +6,7 @@
  * component source text to assert wiring (imports, commands, openers).
  */
 import { describe, test, expect, beforeEach } from "bun:test";
-import { useUIStore, tabKey } from "../src/store/uiStore";
+import { useUIStore, tabKey, emptyTabsByArea } from "../src/store/uiStore";
 import { formatRelativeTime, formatAbsoluteTime, formatFullTime } from "../src/lib/time";
 import * as fs from "fs";
 import * as path from "path";
@@ -22,36 +22,37 @@ const B_SHA = "b2c3d4e5f60718293a4b5c6d7e8f9012345678a1";
 
 const resetStore = () =>
   useUIStore.setState({
-    openTabs: [],
-    activeTabKey: null,
+    tabsByArea: emptyTabsByArea(),
     selectedFile: null,
     historyCompareBase: null,
   });
+
+/** History-area tab state — commit/commitDiff/compare tabs live here. */
+const historyTabs = () => useUIStore.getState().tabsByArea.history;
 
 // ── uiStore: new tab kinds ────────────────────────────────────────────────
 
 describe("uiStore — history tab kinds", () => {
   beforeEach(resetStore);
 
-  test("openCommit adds a commit tab keyed by sha", () => {
+  test("openCommit adds a commit tab (history area) keyed by sha", () => {
     useUIStore.getState().openCommit(A_SHA);
-    const s = useUIStore.getState();
-    expect(s.openTabs).toHaveLength(1);
-    expect(s.openTabs[0].kind).toBe("commit");
-    expect(s.openTabs[0].path).toBe(A_SHA);
-    expect(s.activeTabKey).toBe(tabKey({ kind: "commit", path: A_SHA }));
+    expect(historyTabs().openTabs).toHaveLength(1);
+    expect(historyTabs().openTabs[0].kind).toBe("commit");
+    expect(historyTabs().openTabs[0].path).toBe(A_SHA);
+    expect(historyTabs().activeTabKey).toBe(tabKey({ kind: "commit", path: A_SHA }));
   });
 
   test("openCommit is idempotent for the same sha", () => {
     const { openCommit } = useUIStore.getState();
     openCommit(A_SHA);
     openCommit(A_SHA);
-    expect(useUIStore.getState().openTabs).toHaveLength(1);
+    expect(historyTabs().openTabs).toHaveLength(1);
   });
 
   test("openCommitFileDiff defaults fromSha to null (commit vs parent)", () => {
     useUIStore.getState().openCommitFileDiff("src/a.ts", A_SHA);
-    const tab = useUIStore.getState().openTabs[0];
+    const tab = historyTabs().openTabs[0];
     expect(tab.kind).toBe("commitDiff");
     expect(tab.path).toBe("src/a.ts");
     expect(tab.toSha).toBe(A_SHA);
@@ -63,7 +64,7 @@ describe("uiStore — history tab kinds", () => {
     s.openCommitFileDiff("src/a.ts", A_SHA);
     s.openCommitFileDiff("src/a.ts", B_SHA);
     s.openCommitFileDiff("src/a.ts", B_SHA, A_SHA);
-    const tabs = useUIStore.getState().openTabs;
+    const tabs = historyTabs().openTabs;
     expect(tabs).toHaveLength(3);
     const keys = tabs.map(tabKey);
     expect(new Set(keys).size).toBe(3);
@@ -74,7 +75,7 @@ describe("uiStore — history tab kinds", () => {
     useUIStore.getState().openCompare(A_SHA, B_SHA);
     const s = useUIStore.getState();
     expect(s.historyCompareBase).toBeNull();
-    expect(s.openTabs[0]).toMatchObject({
+    expect(historyTabs().openTabs[0]).toMatchObject({
       kind: "compare",
       fromSha: A_SHA,
       toSha: B_SHA,
@@ -89,25 +90,31 @@ describe("uiStore — history tab kinds", () => {
     expect(useUIStore.getState().historyCompareBase).toBeNull();
   });
 
-  test("file and commitDiff tabs with the same path do not collide", () => {
+  test("file and commitDiff tabs with the same path live in separate areas", () => {
     const s = useUIStore.getState();
     s.openFile("src/a.ts");
     s.openCommitFileDiff("src/a.ts", A_SHA);
-    expect(useUIStore.getState().openTabs).toHaveLength(2);
+    const { tabsByArea } = useUIStore.getState();
+    expect(tabsByArea.editor.openTabs).toHaveLength(1);
+    expect(tabsByArea.history.openTabs).toHaveLength(1);
   });
 
-  test("closeTab removes a commit tab and keeps others", () => {
+  test("closeTab removes a commit tab and keeps the editor area's file tab", () => {
     const s = useUIStore.getState();
     s.openFile("src/a.ts");
     s.openCommit(A_SHA);
     const commitKey = tabKey({ kind: "commit", path: A_SHA });
-    expect(useUIStore.getState().activeTabKey).toBe(commitKey);
+    expect(historyTabs().activeTabKey).toBe(commitKey);
     useUIStore.getState().closeTab(commitKey);
     const after = useUIStore.getState();
-    expect(after.openTabs).toHaveLength(1);
-    expect(after.openTabs[0].kind).toBe("file");
-    // Active tab falls back to the remaining tab.
-    expect(after.activeTabKey).toBe(tabKey({ kind: "file", path: "src/a.ts" }));
+    // Closing a history tab must never touch the editor area.
+    expect(after.tabsByArea.history.openTabs).toHaveLength(0);
+    expect(after.tabsByArea.history.activeTabKey).toBeNull();
+    expect(after.tabsByArea.editor.openTabs).toHaveLength(1);
+    expect(after.tabsByArea.editor.openTabs[0].kind).toBe("file");
+    expect(after.tabsByArea.editor.activeTabKey).toBe(
+      tabKey({ kind: "file", path: "src/a.ts" }),
+    );
   });
 });
 
