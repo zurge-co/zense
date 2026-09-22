@@ -1,7 +1,8 @@
 /** Hand-rolled Markdown → HTML renderer for the right-click "Open Preview"
  *  action. Deliberately a practical subset (not CommonMark-complete):
  *  headings, bold/italic/strikethrough, inline code, fenced code blocks,
- *  links, images, blockquotes, lists, horizontal rules, paragraphs.
+ *  links, images, blockquotes, lists, horizontal rules, GFM pipe tables,
+ *  paragraphs.
  *
  *  Security: workspace files are untrusted input. The source is HTML-escaped
  *  BEFORE any transform runs, and link/image URLs pass a scheme allowlist
@@ -60,6 +61,48 @@ interface ListState {
   items: string[];
 }
 
+type CellAlign = "left" | "center" | "right" | null;
+
+/** Split a table row into cell contents. Leading/trailing pipes are
+ *  optional framing; unescaped `|` splits cells; `\|` is a literal pipe
+ *  (unescaped before inline rendering, per GFM's table rules). */
+function splitTableRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  // A trailing | is framing only when not escaped (\| is cell content).
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  return s.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+}
+
+/** Parse a GFM separator row (| --- | :-: | ---: |). Returns per-column
+ *  alignment, or null when the line is not a valid separator. */
+function parseSeparatorRow(line: string): CellAlign[] | null {
+  const cells = splitTableRow(line);
+  if (cells.length === 0) return null;
+  const aligns: CellAlign[] = [];
+  for (const cell of cells) {
+    if (!/^:?-+:?$/.test(cell)) return null;
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    aligns.push(left && right ? "center" : right ? "right" : left ? "left" : null);
+  }
+  return aligns;
+}
+
+/** Build one table cell element with optional GFM column alignment. */
+function tableCell(tag: "th" | "td", content: string, align: CellAlign): string {
+  const style = align ? ` style="text-align:${align}"` : "";
+  return `<${tag}${style}>${renderInline(content)}</${tag}>`;
+}
+
+/** Row-count tolerance per GFM: rows with fewer cells than the header are
+ *  padded with empty cells; extra cells are dropped. */
+function padRow(cells: string[], width: number): string[] {
+  const out = cells.slice(0, width);
+  while (out.length < width) out.push("");
+  return out;
+}
+
 /** Block-level rendering. Input may be raw Markdown — escaping happens here
  *  up front, so every downstream transform operates on safe text. */
 export function renderMarkdown(source: string): string {
@@ -98,7 +141,8 @@ export function renderMarkdown(source: string): string {
     flushQuote();
   };
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const fence = line.match(/^```(.*)$/);
     if (fence) {
       if (inCode) {
@@ -119,6 +163,33 @@ export function renderMarkdown(source: string): string {
       continue;
     }
 
+    // GFM pipe table: header row followed immediately by a separator row
+    // (--- / :-: / ---:). Body rows run until a blank line or a line with
+    // no unescaped pipe.
+    if (line.includes("|") && i + 1 < lines.length) {
+      const aligns = parseSeparatorRow(lines[i + 1]);
+      if (aligns) {
+        flushAll();
+        i += 2;
+        const header = padRow(splitTableRow(line), aligns.length);
+        const thead =
+          `<thead><tr>` +
+          header.map((c, j) => tableCell("th", c, aligns[j])).join("") +
+          `</tr></thead>`;
+        const rows: string[] = [];
+        for (; i < lines.length; i++) {
+          const rowLine = lines[i];
+          if (rowLine.trim() === "" || !rowLine.includes("|")) break;
+          const cells = padRow(splitTableRow(rowLine), aligns.length);
+          rows.push(
+            `<tr>` + cells.map((c, j) => tableCell("td", c, aligns[j])).join("") + `</tr>`,
+          );
+        }
+        out.push(`<table>${thead}<tbody>${rows.join("")}</tbody></table>`);
+        i -= 1; // the for-loop's i++ re-reads the non-table line we stopped at
+        continue;
+      }
+    }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
       flushAll();
@@ -204,6 +275,9 @@ export function renderMarkdownDocument(source: string): string {
   pre code { background: none; padding: 0; }
   a { color: #7aa2f7; }
   blockquote { border-left: 3px solid #3a3a48; margin: 0; padding: 0 12px; color: #9a9aad; }
+  table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+  th, td { border: 1px solid #3a3a48; padding: 3px 10px; }
+  th { background: #2a2a38; font-weight: 600; }
   img { max-width: 100%; }
   hr { border: none; border-top: 1px solid #3a3a48; }
 </style>

@@ -88,6 +88,31 @@ describe("terminalStore — multi-session state transitions", () => {
     useTerminalStore.getState().requestFit();
     expect(useTerminalStore.getState().fitNonce).toBe(before + 1);
   });
+
+  test("moveSession reorders tabs (post-removal target index, clamped)", () => {
+    useTerminalStore.getState().addSession();
+    useTerminalStore.getState().addSession();
+    useTerminalStore.getState().addSession();
+    const [a, b, c] = useTerminalStore.getState().sessions;
+
+    // Move first tab after the third: insert at post-removal index 2.
+    useTerminalStore.getState().moveSession(a.id, 2);
+    expect(useTerminalStore.getState().sessions.map((t) => t.id)).toEqual([b.id, c.id, a.id]);
+
+    // Move last tab to the front.
+    useTerminalStore.getState().moveSession(a.id, 0);
+    expect(useTerminalStore.getState().sessions.map((t) => t.id)).toEqual([a.id, b.id, c.id]);
+
+    // Out-of-range indices clamp to the ends.
+    useTerminalStore.getState().moveSession(a.id, 99);
+    expect(useTerminalStore.getState().sessions.map((t) => t.id)).toEqual([b.id, c.id, a.id]);
+    useTerminalStore.getState().moveSession(a.id, -5);
+    expect(useTerminalStore.getState().sessions.map((t) => t.id)).toEqual([a.id, b.id, c.id]);
+
+    // Unknown id is a no-op.
+    useTerminalStore.getState().moveSession("nope", 1);
+    expect(useTerminalStore.getState().sessions.map((t) => t.id)).toEqual([a.id, b.id, c.id]);
+  });
 });
 
 describe("TerminalPanel.tsx — structural verification (multi-tab)", () => {
@@ -170,6 +195,29 @@ describe("TerminalPanel.tsx — structural verification (multi-tab)", () => {
   test("refits + focuses the active session when the terminal view becomes active", () => {
     expect(src.includes("if (activity !== \"terminal\") return")).toBe(true);
     expect(src.includes(".term.focus()")).toBe(true);
+  });
+
+  test("tabs are renamable via double-click inline input committing to setTitle", () => {
+    // Double-click on the title span enters edit mode...
+    expect(src.includes("onDoubleClick")).toBe(true);
+    expect(src.includes("setEditingId(s.id)")).toBe(true);
+    // ...the inline input commits on Enter / blur, cancels on Escape...
+    expect(src.includes('e.key === "Enter"')).toBe(true);
+    expect(src.includes("commitRename()")).toBe(true);
+    expect(src.includes("setEditingId(null)")).toBe(true);
+    // ...and a manual rename marks the session named so the first-command
+    // auto-title (terminalTitle.ts) never overrides the user's choice.
+    expect(src.includes("ctx.named = true")).toBe(true);
+    expect(src.includes("useTerminalStore.getState().setTitle(editingId")).toBe(true);
+  });
+
+  test("tabs are reorderable via HTML5 drag & drop wired to moveSession", () => {
+    expect(src.includes("onDragStart")).toBe(true);
+    expect(src.includes("onDragOver")).toBe(true);
+    expect(src.includes("onDrop")).toBe(true);
+    expect(src.includes("moveSession(dragId")).toBe(true);
+    // Visual drop-slot indicator.
+    expect(src.includes("dropIndex")).toBe(true);
   });
 });
 

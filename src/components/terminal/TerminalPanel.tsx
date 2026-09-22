@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
@@ -71,7 +71,10 @@ const DOT: Record<TermSession["status"], string> = {
  * Integrated terminal as an ActivityBar main view: xterm.js on top of real
  * PTYs (see src-tauri/src/ptycmd.rs). Multiple shell sessions live in tabs —
  * new via the + button or ⌘N (context-sensitive, App.tsx), close via the X
- * on each tab. Each tab keeps its own xterm instance mounted (inactive tabs
+ * on each tab. Tabs are renamable (double-click the title → inline input;
+ * a manual rename beats the first-command auto-title) and reorderable by
+ * dragging (drop left/right of a tab, accent line marks the slot).
+ * Each tab keeps its own xterm instance mounted (inactive tabs
  * are display:none), so a background shell keeps running while you look at
  * another session. The panel is mounted lazily on first visit and afterwards
  * stays mounted when another activity is selected (App.tsx conceals it via
@@ -84,6 +87,26 @@ export function TerminalPanel() {
 
   /** Frontend session id → runtime context. */
   const ctxsRef = useRef(new Map<string, TermCtx>());
+  /** Tab rename UI: which tab is in inline-edit mode, and the input value. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  /** Tab drag-reorder: the dragged tab id and the current drop slot
+   *  (an insertion index in session-list coordinates, null when not over). */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+
+  /** Commit the inline rename: manual titles stick — mark the session named
+   *  so the first-command auto-rename (terminalTitle.ts) never overrides. */
+  const commitRename = () => {
+    if (!editingId) return;
+    const title = editValue.trim();
+    if (title) {
+      const ctx = ctxsRef.current.get(editingId);
+      if (ctx) ctx.named = true;
+      useTerminalStore.getState().setTitle(editingId, title);
+    }
+    setEditingId(null);
+  };
   /** Backend PTY id → frontend session id (event routing). */
   const backendToSessionRef = useRef(new Map<string, string>());
   /** Frontend session id → host div (xterm mount point). */
@@ -356,18 +379,80 @@ export function TerminalPanel() {
       {/* ── Tab bar ── */}
       <div className="flex h-7 shrink-0 items-center border-b border-border bg-panel">
         <div className="flex min-w-0 flex-1 items-center overflow-x-auto">
-          {sessions.map((s) => {
+          {sessions.map((s, i) => {
             const active = s.id === activeId;
+            // Accent line marking the drop slot: left of this tab when the
+            // slot is i, right of it when the slot is i+1 on the last tab.
+            const dropMark =
+              dropIndex === i
+                ? "inset 2px 0 0 0 #00c55a"
+                : dropIndex === i + 1 && i === sessions.length - 1
+                  ? "inset -2px 0 0 0 #00c55a"
+                  : undefined;
             return (
               <div
                 key={s.id}
                 onClick={() => useTerminalStore.getState().setActiveId(s.id)}
+                draggable={editingId !== s.id}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData("text/plain", s.id);
+                  e.dataTransfer.effectAllowed = "move";
+                  setDragId(s.id);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault(); // required for onDrop to fire
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const after = e.clientX > rect.left + rect.width / 2;
+                  setDropIndex(after ? i + 1 : i);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragId) {
+                    const from = sessions.findIndex((t) => t.id === dragId);
+                    // Drop slot is in pre-removal coordinates; shrink it past
+                    // the dragged tab's own position (post-removal index).
+                    let target = dropIndex ?? i;
+                    if (from >= 0 && target > from) target -= 1;
+                    useTerminalStore.getState().moveSession(dragId, target);
+                  }
+                  setDragId(null);
+                  setDropIndex(null);
+                }}
+                onDragEnd={() => {
+                  setDragId(null);
+                  setDropIndex(null);
+                }}
+                style={dropMark ? { boxShadow: dropMark } : undefined}
                 className={`flex h-7 shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border px-2.5 text-[11px] ${
                   active ? "bg-base text-fg" : "text-fg-muted hover:bg-base/50"
                 }`}
               >
                 <span className={`h-1.5 w-1.5 rounded-full ${DOT[s.status]}`} />
-                {s.title}
+                {editingId === s.id ? (
+                  <input
+                    autoFocus
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitRename();
+                      else if (e.key === "Escape") setEditingId(null);
+                    }}
+                    onBlur={commitRename}
+                    className="w-24 rounded border border-accent bg-base px-1 text-fg outline-none"
+                  />
+                ) : (
+                  <span
+                    title="Double-click to rename"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setEditingId(s.id);
+                      setEditValue(s.title);
+                    }}
+                  >
+                    {s.title}
+                  </span>
+                )}
                 <span
                   role="button"
                   title="Close terminal"

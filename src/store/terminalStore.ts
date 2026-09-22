@@ -46,6 +46,8 @@ interface TerminalState {
   setStatus: (id: string, s: TermStatus) => void;
   /** Rename a session tab (first typed command replaces "Terminal N"). */
   setTitle: (id: string, title: string) => void;
+  /** Move a tab to a new position (post-removal index, clamped). */
+  moveSession: (id: string, toIndex: number) => void;
   /** Replace everything with a single fresh session (workspace switch). */
   reset: () => void;
   requestFit: () => void;
@@ -82,6 +84,16 @@ export const useTerminalStore = create<TerminalState>((set) => ({
     set((s) => ({
       sessions: s.sessions.map((t) => (t.id === id ? { ...t, title } : t)),
     })),
+  moveSession: (id, toIndex) =>
+    set((s) => {
+      const from = s.sessions.findIndex((t) => t.id === id);
+      if (from < 0) return {};
+      const sessions = [...s.sessions];
+      const [moved] = sessions.splice(from, 1);
+      const to = Math.max(0, Math.min(toIndex, sessions.length));
+      sessions.splice(to, 0, moved);
+      return { sessions };
+    }),
   reset: () => {
     const session = newSession();
     set({ sessions: [session], activeId: session.id });
