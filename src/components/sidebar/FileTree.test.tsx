@@ -50,3 +50,29 @@ describe("FileTree.tsx — pointer-based internal drag", () => {
     expect(src).toContain('window.removeEventListener("pointermove", onMove)');
   });
 });
+
+describe("FileTree expansion state — store-backed (survives sidebar unmounts)", () => {
+  let src: string;
+  let storeSrc: string;
+
+  beforeAll(async () => {
+    src = await Bun.file(`${import.meta.dir}/FileTree.tsx`).text();
+    storeSrc = await Bun.file(`${import.meta.dir}/../../store/workspaceStore.ts`).text();
+  });
+
+  test("FileTree reads expansion from workspaceStore, not a local useState", () => {
+    expect(src).toContain("useWorkspaceStore((s) => s.expandedOverrides)");
+    expect(src).toContain("useWorkspaceStore((s) => s.setFolderExpanded)");
+    expect(src).not.toMatch(/useState.*expandedOverrides/);
+    expect(src).not.toContain("setExpandedOverrides");
+  });
+
+  test("workspaceStore owns expandedOverrides and the setFolderExpanded action", () => {
+    expect(storeSrc).toContain("expandedOverrides: Set<string> | null");
+    expect(storeSrc).toContain("setFolderExpanded");
+  });
+
+  test("loadWorkspace resets expandedOverrides alongside other per-workspace state", () => {
+    expect(storeSrc).toMatch(/loadWorkspace[\s\S]*?expandedOverrides: null/);
+  });
+});

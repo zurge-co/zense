@@ -107,14 +107,17 @@ export function FileTree() {
   const moveEntries = useWorkspaceStore((s) => s.moveEntries);
   const [refreshing, setRefreshing] = useState(false);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
-  const [expandedOverrides, setExpandedOverrides] = useState<Set<string> | null>(null);
+  // Expansion lives in workspaceStore so it survives sidebar unmounts
+  // (Files ↔ Search, Editor ↔ History); loadWorkspace resets it on a
+  // workspace switch.
+  const expandedOverrides = useWorkspaceStore((s) => s.expandedOverrides);
+  const setFolderExpanded = useWorkspaceStore((s) => s.setFolderExpanded);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [anchorPath, setAnchorPath] = useState<string | null>(null);
   const expandedPaths = expandedOverrides ?? defaultExpandedPaths(fileTree);
 
-  // Reset explorer-local selection and expansion on a workspace switch.
+  // Reset explorer-local selection on a workspace switch.
   useEffect(() => {
-    setExpandedOverrides(null);
     setSelectedPaths(new Set());
     setAnchorPath(null);
     setDropTargetPath(null);
@@ -164,15 +167,6 @@ export function FileTree() {
       void unlistenPromise.then((unlisten) => unlisten()).catch(() => undefined);
     };
   }, [workspacePath, importEntries]);
-
-  const setFolderExpanded = (path: string, expanded: boolean) => {
-    setExpandedOverrides((current) => {
-      const next = new Set(current ?? defaultExpandedPaths(fileTree));
-      if (expanded) next.add(path);
-      else next.delete(path);
-      return next;
-    });
-  };
 
   const selectNode = (node: FileNode, e: React.MouseEvent<HTMLElement>) => {
     if (e.shiftKey) {

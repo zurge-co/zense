@@ -53,6 +53,10 @@ interface WorkspaceFsState {
   pendingDelete: { path: string; type: "file" | "folder" } | null;
   /** Directory that should show the inline create input (⌘N); "" = workspace root. */
   pendingCreate: { parentPath: string; isDir: boolean } | null;
+  /** Explorer folder-expansion overrides (null = all top-level folders open by
+   *  default). Lives in the store so it survives FileTree unmounts when the
+   *  sidebar switches panels (Files ↔ Search) or activities (Editor ↔ History). */
+  expandedOverrides: Set<string> | null;
   /** Path awaiting user confirmation to overwrite an externally-changed file (ADR-003). */
   pendingConflictSave: string | null;
 
@@ -93,6 +97,8 @@ interface WorkspaceFsState {
   setPendingRename: (path: string | null) => void;
   /** Set/clear the pending delete node (consumed by TreeNode). */
   setPendingDelete: (node: { path: string; type: "file" | "folder" } | null) => void;
+  /** Expand/collapse an explorer folder; persists across sidebar unmounts. */
+  setFolderExpanded: (path: string, expanded: boolean) => void;
 
   /** Discard the buffer and reload from disk (also clears conflict). */
   revertFile: (root: string, path: string) => Promise<void>;
@@ -134,6 +140,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   pendingRename: null,
   pendingDelete: null,
   pendingCreate: null,
+  expandedOverrides: null,
   pendingConflictSave: null,
   conflicts: {},
   autoSave: false,
@@ -154,7 +161,7 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
         listFiles(root, includeHidden),
       ]);
       // Drop contents of any previous workspace along with the tree.
-      set({ fileTree, fileIndex, fileContents: {}, fileErrors: {}, originalContents: {}, dirtyPaths: new Set(), clipboard: null, selectedTreeNode: null, pendingRename: null, pendingDelete: null, pendingCreate: null, conflicts: {} });
+      set({ fileTree, fileIndex, fileContents: {}, fileErrors: {}, originalContents: {}, dirtyPaths: new Set(), clipboard: null, selectedTreeNode: null, pendingRename: null, pendingDelete: null, pendingCreate: null, expandedOverrides: null, conflicts: {} });
     } catch (err) {
       console.error("failed to load workspace:", err);
     }
@@ -443,6 +450,19 @@ export const useWorkspaceStore = create<WorkspaceFsState>((set, get) => ({
   setPendingRename: (path) => set({ pendingRename: path }),
 
   setPendingDelete: (node) => set({ pendingDelete: node }),
+
+  setFolderExpanded: (path, expanded) =>
+    set((s) => {
+      // Same default as defaultExpandedPaths in FileTree: top-level folders
+      // open until the user overrides.
+      const base =
+        s.expandedOverrides ??
+        new Set(s.fileTree.filter((n) => n.type === "folder").map((n) => n.path));
+      const next = new Set(base);
+      if (expanded) next.add(path);
+      else next.delete(path);
+      return { expandedOverrides: next };
+    }),
 }));
 
 // ── Auto-save (debounced, per path) ─────────────────────────────────────────
